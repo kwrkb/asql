@@ -5,12 +5,11 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-	"time"
-	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/kwrkb/asql/internal/db"
+	"github.com/kwrkb/asql/internal/db/dbutil"
 )
 
 type Adapter struct {
@@ -30,6 +29,8 @@ func Open(path string) (*Adapter, error) {
 
 	return &Adapter{conn: conn}, nil
 }
+
+func (a *Adapter) Type() string { return "sqlite" }
 
 func (a *Adapter) Close() error {
 	return a.conn.Close()
@@ -106,40 +107,7 @@ func (a *Adapter) queryRows(ctx context.Context, query string) (db.QueryResult, 
 	}
 	defer rows.Close()
 
-	columns, err := rows.Columns()
-	if err != nil {
-		return db.QueryResult{}, err
-	}
-
-	values := make([]any, len(columns))
-	ptrs := make([]any, len(columns))
-	resultRows := make([][]string, 0)
-
-	for i := range values {
-		ptrs[i] = &values[i]
-	}
-
-	for rows.Next() {
-		if err := rows.Scan(ptrs...); err != nil {
-			return db.QueryResult{}, err
-		}
-
-		record := make([]string, len(columns))
-		for i, value := range values {
-			record[i] = stringifyValue(value)
-		}
-		resultRows = append(resultRows, record)
-	}
-
-	if err := rows.Err(); err != nil {
-		return db.QueryResult{}, err
-	}
-
-	return db.QueryResult{
-		Columns: columns,
-		Rows:    resultRows,
-		Message: fmt.Sprintf("%d row(s) returned", len(resultRows)),
-	}, nil
+	return dbutil.ScanRows(rows)
 }
 
 // returnsRows determines whether a SQL statement will produce a result set.
@@ -147,7 +115,7 @@ func (a *Adapter) queryRows(ctx context.Context, query string) (db.QueryResult, 
 //  1. Leading keyword: SELECT, PRAGMA, WITH, EXPLAIN, VALUES always return rows.
 //  2. RETURNING clause: any DML with a RETURNING clause returns rows.
 func returnsRows(query string) bool {
-	keyword := leadingKeyword(query)
+	keyword := dbutil.LeadingKeyword(query)
 	if keyword == "" {
 		return false
 	}
@@ -247,50 +215,3 @@ func containsReturning(query string) bool {
 	return false
 }
 
-func leadingKeyword(query string) string {
-	trimmed := strings.TrimSpace(query)
-
-	for trimmed != "" {
-		switch {
-		case strings.HasPrefix(trimmed, "--"):
-			if idx := strings.Index(trimmed, "\n"); idx >= 0 {
-				trimmed = strings.TrimSpace(trimmed[idx+1:])
-				continue
-			}
-			return ""
-		case strings.HasPrefix(trimmed, "/*"):
-			if idx := strings.Index(trimmed, "*/"); idx >= 0 {
-				trimmed = strings.TrimSpace(trimmed[idx+2:])
-				continue
-			}
-			return ""
-		case strings.HasPrefix(trimmed, ";"):
-			trimmed = strings.TrimSpace(trimmed[1:])
-			continue
-		}
-		break
-	}
-
-	fields := strings.Fields(strings.ToLower(trimmed))
-	if len(fields) == 0 {
-		return ""
-	}
-
-	return fields[0]
-}
-
-func stringifyValue(value any) string {
-	switch v := value.(type) {
-	case nil:
-		return "NULL"
-	case []byte:
-		if utf8.Valid(v) {
-			return string(v)
-		}
-		return fmt.Sprintf("%x", v)
-	case time.Time:
-		return v.Format(time.RFC3339)
-	default:
-		return fmt.Sprint(v)
-	}
-}

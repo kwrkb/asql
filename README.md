@@ -2,7 +2,7 @@
 
 # asql
 
-A terminal UI SQL client built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). Currently supports SQLite, with MySQL/PostgreSQL planned. Includes an AI assistant that generates SQL from natural language via OpenAI-compatible APIs (Ollama, LM Studio, etc.).
+A terminal UI SQL client built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). Supports SQLite, MySQL, and PostgreSQL. Includes an AI assistant that generates SQL from natural language via OpenAI-compatible APIs (Ollama, LM Studio, etc.).
 
 ## Demo
 
@@ -29,7 +29,14 @@ go build -o asql .
 ## Usage
 
 ```bash
+# SQLite
 asql <path-to-sqlite-file>
+
+# MySQL
+asql "mysql://user:password@host:3306/dbname"
+
+# PostgreSQL
+asql "postgres://user:password@host:5432/dbname"
 ```
 
 ### Key Bindings

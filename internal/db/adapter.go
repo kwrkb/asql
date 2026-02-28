@@ -9,6 +9,7 @@ type QueryResult struct {
 }
 
 type DBAdapter interface {
+	Type() string
 	Query(context.Context, string) (QueryResult, error)
 	Tables(context.Context) ([]string, error)
 	Schema(context.Context) (string, error)

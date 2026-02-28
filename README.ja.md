@@ -2,7 +2,7 @@
 
 # asql
 
-[Bubble Tea](https://github.com/charmbracelet/bubbletea) で構築されたターミナル UI SQL クライアント。現在は SQLite をサポートし、MySQL/PostgreSQL への対応を計画中。OpenAI 互換 API（Ollama、LM Studio 等）を利用した自然言語からの SQL 生成機能を搭載。
+[Bubble Tea](https://github.com/charmbracelet/bubbletea) で構築されたターミナル UI SQL クライアント。SQLite、MySQL、PostgreSQL をサポート。OpenAI 互換 API（Ollama、LM Studio 等）を利用した自然言語からの SQL 生成機能を搭載。
 
 ## デモ
 
@@ -29,7 +29,14 @@ go build -o asql .
 ## 使い方
 
 ```bash
+# SQLite
 asql <sqlite-ファイルパス>
+
+# MySQL
+asql "mysql://user:password@host:3306/dbname"
+
+# PostgreSQL
+asql "postgres://user:password@host:5432/dbname"
 ```
 
 ### キーバインド

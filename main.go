@@ -3,12 +3,15 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/kwrkb/asql/internal/ai"
 	"github.com/kwrkb/asql/internal/config"
 	dbpkg "github.com/kwrkb/asql/internal/db"
+	"github.com/kwrkb/asql/internal/db/mysql"
+	"github.com/kwrkb/asql/internal/db/postgres"
 	"github.com/kwrkb/asql/internal/db/sqlite"
 	"github.com/kwrkb/asql/internal/ui"
 )
@@ -21,7 +24,7 @@ var (
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Fprintf(os.Stderr, "usage: %s <sqlite-file>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s <database-path-or-dsn>\n", os.Args[0])
 		os.Exit(1)
 	}
 
@@ -29,7 +32,15 @@ func main() {
 
 	var err error
 	var adapter dbpkg.DBAdapter
-	adapter, err = sqlite.Open(dbPath)
+
+	switch {
+	case strings.HasPrefix(dbPath, "mysql://"):
+		adapter, err = mysql.Open(dbPath)
+	case strings.HasPrefix(dbPath, "postgres://"), strings.HasPrefix(dbPath, "postgresql://"):
+		adapter, err = postgres.Open(dbPath)
+	default:
+		adapter, err = sqlite.Open(dbPath)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to open database %q: %v\n", dbPath, err)
 		os.Exit(1)

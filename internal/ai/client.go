@@ -45,11 +45,11 @@ type chatResponse struct {
 	} `json:"choices"`
 }
 
-func (c *Client) GenerateSQL(ctx context.Context, schema, userPrompt string) (string, error) {
-	systemPrompt := fmt.Sprintf(`You are a SQL assistant. Given the following database schema, generate a single SQL query that answers the user's request. Return ONLY the SQL query, nothing else. No explanations, no markdown.
+func (c *Client) GenerateSQL(ctx context.Context, dbType, schema, userPrompt string) (string, error) {
+	systemPrompt := fmt.Sprintf(`You are a SQL assistant for a %s database. Given the following database schema, generate a single SQL query that answers the user's request. Return ONLY the SQL query, nothing else. No explanations, no markdown.
 
 Schema:
-%s`, schema)
+%s`, dbType, schema)
 
 	body := chatRequest{
 		Model: c.model,
