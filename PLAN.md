@@ -28,6 +28,14 @@
 - [x] モード別キーバインドヒント表示
   > NORMAL: `t:tables i:insert q:quit` / INSERT: `C-Enter:exec Esc:normal` / SIDEBAR: `j/k:nav Enter:select Esc:close`
 
+### Phase 4: README デモ GIF & レビュー対応（完了）
+- [x] VHS tape ファイル作成 (`docs/demo.tape`, `docs/setup-demo-db.py`)
+- [x] `vhs docs/demo.tape` で `docs/demo.gif` 生成（181KB, 340フレーム）
+- [x] README.md / README.ja.md: Screenshot→Demo、サイドバーキーバインド追加
+- [x] `docs/screenshot.svg` 削除
+- [x] サイドバースクロール修正（Gemini レビュー指摘対応）
+
 ## 検証
 - `go test ./...` 全テスト通過
 - `go build` 成功
+- PR #6 squash マージ完了

@@ -90,3 +90,59 @@ rows = []table.Row{sentinel}
 **bot 指摘の判断基準**: コードをトレースして実際に false positive / false negative が発生するか確認してから対応を決める。「bot だから無視」はしない。
 
 ---
+
+## VHS (GIF 録画)
+
+### VHS v0.10.0 の Width/Height はピクセル値
+
+**文脈**: `Set Width 120` `Set Height 35` と指定したら `Dimensions must be at least 120 x 120` や ffmpeg の pad エラーが発生した。
+
+**学び**: VHS v0.10.0 では `Set Width` / `Set Height` はピクセル単位。ドキュメントのデフォルト値（80/24）は古いバージョンの文字単位の名残。最低 120x120 ピクセルが必要。
+
+**パターン**:
+```
+Set Width 1200
+Set Height 600
+Set FontSize 16
+```
+
+### Hide ブロック後に clear が必要
+
+**文脈**: `Hide` / `Show` でセットアップコマンドを隠したが、Show 後の最初のフレームにセットアップコマンドの出力が残っていた。
+
+**学び**: `Hide` は VHS のフレームキャプチャを停止するだけで、ターミナルの表示状態はリセットしない。Show 前に `clear` を入れてターミナルをクリーンにする。
+
+**パターン**:
+```
+Hide
+Set TypingSpeed 1ms
+Type "setup-command"
+Enter
+Sleep 500ms
+Type "clear"
+Enter
+Sleep 200ms
+Show
+```
+
+---
+
+## TUI 設計
+
+### リストUIにはスクロールオフセットが必須
+
+**文脈**: サイドバーのテーブル一覧が常にインデックス 0 から描画されていたため、テーブル数が表示可能行数を超えるとカーソルが画面外に出てしまうバグ（Gemini bot が検出）。
+
+**学び**: カーソル付きリスト UI を実装する際、表示範囲外にカーソルが出るケースを必ず考慮する。描画開始位置（スクロールオフセット）をカーソル位置に追従させる。
+
+**パターン**:
+```go
+maxVisible := height - headerLines
+scrollOffset := 0
+if m.cursor >= maxVisible {
+    scrollOffset = m.cursor - maxVisible + 1
+}
+for i := scrollOffset; i < len(items); i++ { ... }
+```
+
+---
