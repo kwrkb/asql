@@ -524,6 +524,7 @@ func (m *model) applyResult(result db.QueryResult) {
 		}
 	}
 
+	m.table.SetRows([]table.Row{})
 	m.table.SetColumns(columns)
 	m.table.SetRows(rows)
 	m.setStatus(result.Message, false)
