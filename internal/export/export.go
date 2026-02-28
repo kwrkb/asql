@@ -30,15 +30,17 @@ func FormatCSV(headers []string, rows [][]string) (string, error) {
 }
 
 // FormatJSON formats query results as a JSON array of objects.
+// Duplicate column names get a numeric suffix (e.g. "id", "id_2").
 func FormatJSON(headers []string, rows [][]string) (string, error) {
+	keys := deduplicateHeaders(headers)
 	records := make([]map[string]string, 0, len(rows))
 	for _, row := range rows {
-		record := make(map[string]string, len(headers))
-		for i, h := range headers {
+		record := make(map[string]string, len(keys))
+		for i, k := range keys {
 			if i < len(row) {
-				record[h] = row[i]
+				record[k] = row[i]
 			} else {
-				record[h] = ""
+				record[k] = ""
 			}
 		}
 		records = append(records, record)
@@ -48,6 +50,20 @@ func FormatJSON(headers []string, rows [][]string) (string, error) {
 		return "", fmt.Errorf("marshaling JSON: %w", err)
 	}
 	return string(b), nil
+}
+
+func deduplicateHeaders(headers []string) []string {
+	counts := make(map[string]int, len(headers))
+	result := make([]string, len(headers))
+	for i, h := range headers {
+		counts[h]++
+		if counts[h] > 1 {
+			result[i] = fmt.Sprintf("%s_%d", h, counts[h])
+		} else {
+			result[i] = h
+		}
+	}
+	return result
 }
 
 // FormatMarkdown formats query results as a GitHub Flavored Markdown table.

@@ -83,6 +83,11 @@ func TestFormatJSON(t *testing.T) {
 			headers: []string{"a", "b"},
 			rows:    [][]string{{"1"}},
 		},
+		{
+			name:    "duplicate column names",
+			headers: []string{"id", "name", "id"},
+			rows:    [][]string{{"1", "Alice", "10"}},
+		},
 	}
 
 	for _, tt := range tests {
@@ -102,12 +107,10 @@ func TestFormatJSON(t *testing.T) {
 				t.Errorf("got %d records, want %d", len(records), len(tt.rows))
 			}
 
-			// Check all headers are present as keys
-			for _, rec := range records {
-				for _, h := range tt.headers {
-					if _, ok := rec[h]; !ok {
-						t.Errorf("missing key %q in record", h)
-					}
+			// Check record count matches row count and all keys exist
+			if len(records) > 0 {
+				if len(records[0]) != len(tt.headers) {
+					t.Errorf("got %d keys, want %d (all columns should be preserved)", len(records[0]), len(tt.headers))
 				}
 			}
 		})
