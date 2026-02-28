@@ -214,6 +214,54 @@ func TestTables(t *testing.T) {
 	})
 }
 
+func TestSchema(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("empty database returns empty string", func(t *testing.T) {
+		a, err := Open(":memory:")
+		if err != nil {
+			t.Fatalf("Open failed: %v", err)
+		}
+		defer a.Close()
+
+		schema, err := a.Schema(ctx)
+		if err != nil {
+			t.Fatalf("Schema() failed: %v", err)
+		}
+		if schema != "" {
+			t.Errorf("expected empty schema, got %q", schema)
+		}
+	})
+
+	t.Run("returns CREATE TABLE statements", func(t *testing.T) {
+		a, err := Open(":memory:")
+		if err != nil {
+			t.Fatalf("Open failed: %v", err)
+		}
+		defer a.Close()
+
+		a.conn.ExecContext(ctx, "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+		a.conn.ExecContext(ctx, "CREATE TABLE posts (id INTEGER, user_id INTEGER, body TEXT)")
+
+		schema, err := a.Schema(ctx)
+		if err != nil {
+			t.Fatalf("Schema() failed: %v", err)
+		}
+		if !strings.Contains(schema, "CREATE TABLE posts") {
+			t.Errorf("schema missing posts table: %q", schema)
+		}
+		if !strings.Contains(schema, "CREATE TABLE users") {
+			t.Errorf("schema missing users table: %q", schema)
+		}
+		// Sorted by name: posts before users
+		postsIdx := strings.Index(schema, "posts")
+		usersIdx := strings.Index(schema, "users")
+		if postsIdx > usersIdx {
+			t.Error("expected tables sorted by name (posts before users)")
+		}
+	})
+}
+
 func TestQuery(t *testing.T) {
 	ctx := context.Background()
 
