@@ -51,6 +51,7 @@ sqly <sqlite-ファイルパス>
 | `Ctrl+K` | NORMAL | AI アシスタントを開く |
 | `Enter` | AI | SQL を生成 |
 | `Esc` | AI | キャンセル |
+| `Ctrl+C` | *全モード* | 実行中のクエリ/AI をキャンセル、または終了 |
 | `q` | NORMAL | 終了 |
 
 ## エクスポート

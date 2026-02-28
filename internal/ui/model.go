@@ -47,6 +47,7 @@ const (
 )
 
 type queryExecutedMsg struct {
+	seq    uint64
 	result db.QueryResult
 	err    error
 }
@@ -57,6 +58,7 @@ type tablesLoadedMsg struct {
 }
 
 type aiResponseMsg struct {
+	seq uint64
 	sql string
 	err error
 }
@@ -81,6 +83,8 @@ type model struct {
 	aiSpinner     spinner.Model
 	aiLoading     bool
 	aiError       string
+	queryCancel   context.CancelFunc
+	querySeq      uint64
 	lastResult    db.QueryResult
 	exportCursor  int
 	modeStyle     lipgloss.Style
@@ -187,6 +191,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resize()
 		return m, nil
 	case tea.KeyMsg:
+		if msg.String() == "ctrl+c" {
+			if m.queryCancel != nil {
+				m.queryCancel()
+				m.queryCancel = nil
+				m.aiLoading = false
+				m.mode = normalMode
+				m.textarea.Blur()
+				m.setStatus("Cancelled", false)
+				return m, nil
+			}
+			return m, tea.Quit
+		}
 		switch m.mode {
 		case normalMode:
 			return m.updateNormal(msg)
@@ -200,8 +216,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateExport(msg)
 		}
 	case aiResponseMsg:
+		if msg.seq != m.querySeq {
+			return m, nil
+		}
+		m.queryCancel = nil
 		m.aiLoading = false
 		if msg.err != nil {
+			if errors.Is(msg.err, context.Canceled) {
+				return m, nil
+			}
 			m.aiError = msg.err.Error()
 			return m, nil
 		}
@@ -226,7 +249,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case queryExecutedMsg:
+		if msg.seq != m.querySeq {
+			return m, nil
+		}
+		m.queryCancel = nil
 		if msg.err != nil {
+			if errors.Is(msg.err, context.Canceled) {
+				return m, nil
+			}
 			errMsg := msg.err.Error()
 			if errors.Is(msg.err, context.DeadlineExceeded) {
 				errMsg = fmt.Sprintf("query timed out after %s", queryTimeout)
@@ -350,8 +380,14 @@ func (m model) updateInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "ctrl+enter", "ctrl+j":
 		query := strings.TrimSpace(m.textarea.Value())
+		if m.queryCancel != nil {
+			m.queryCancel()
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		m.querySeq++
+		m.queryCancel = cancel
 		m.setStatus("Executing query...", false)
-		return m, executeQueryCmd(m.db, query)
+		return m, executeQueryCmd(ctx, m.db, query, m.querySeq)
 	}
 
 	var cmd tea.Cmd
@@ -394,6 +430,16 @@ func (m model) updateSidebar(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m model) updateAI(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.aiLoading {
+		if msg.String() == "esc" {
+			if m.queryCancel != nil {
+				m.queryCancel()
+				m.queryCancel = nil
+			}
+			m.aiLoading = false
+			m.mode = normalMode
+			m.setStatus("Cancelled", false)
+			return m, nil
+		}
 		return m, nil
 	}
 	switch msg.String() {
@@ -407,27 +453,33 @@ func (m model) updateAI(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if prompt == "" {
 			return m, nil
 		}
+		if m.queryCancel != nil {
+			m.queryCancel()
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		m.querySeq++
+		m.queryCancel = cancel
 		m.aiLoading = true
 		m.aiError = ""
-		return m, tea.Batch(m.aiSpinner.Tick, generateSQLCmd(m.aiClient, m.db, prompt))
+		return m, tea.Batch(m.aiSpinner.Tick, generateSQLCmd(ctx, m.aiClient, m.db, prompt, m.querySeq))
 	}
 	var cmd tea.Cmd
 	m.aiInput, cmd = m.aiInput.Update(msg)
 	return m, cmd
 }
 
-func generateSQLCmd(client *ai.Client, adapter db.DBAdapter, prompt string) tea.Cmd {
+func generateSQLCmd(parent context.Context, client *ai.Client, adapter db.DBAdapter, prompt string, seq uint64) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 		defer cancel()
 
 		schema, err := adapter.Schema(ctx)
 		if err != nil {
-			return aiResponseMsg{err: fmt.Errorf("fetching schema: %w", err)}
+			return aiResponseMsg{seq: seq, err: fmt.Errorf("fetching schema: %w", err)}
 		}
 
 		sql, err := client.GenerateSQL(ctx, schema, prompt)
-		return aiResponseMsg{sql: sql, err: err}
+		return aiResponseMsg{seq: seq, sql: sql, err: err}
 	}
 }
 
@@ -641,21 +693,29 @@ func (m model) renderStatusBar() string {
 	}
 
 	var hints string
-	switch m.mode {
-	case normalMode:
-		if m.aiEnabled {
-			hints = "t:tables i:insert e:export C-k:AI q:quit"
+	if m.queryCancel != nil {
+		if m.aiLoading {
+			hints = "C-c/Esc:cancel"
 		} else {
-			hints = "t:tables i:insert e:export q:quit"
+			hints = "C-c:cancel"
 		}
-	case insertMode:
-		hints = "C-Enter/C-j:exec Esc:normal"
-	case sidebarMode:
-		hints = "j/k:nav Enter:select Esc:close"
-	case aiMode:
-		hints = "Enter:generate Esc:cancel"
-	case exportMode:
-		hints = "j/k:nav Enter:select Esc:cancel"
+	} else {
+		switch m.mode {
+		case normalMode:
+			if m.aiEnabled {
+				hints = "t:tables i:insert e:export C-k:AI q:quit"
+			} else {
+				hints = "t:tables i:insert e:export q:quit"
+			}
+		case insertMode:
+			hints = "C-Enter/C-j:exec Esc:normal"
+		case sidebarMode:
+			hints = "j/k:nav Enter:select Esc:close"
+		case aiMode:
+			hints = "Enter:generate Esc:cancel"
+		case exportMode:
+			hints = "j/k:nav Enter:select Esc:cancel"
+		}
 	}
 	hintStyle := lipgloss.NewStyle().Foreground(mutedTextColor).Background(statusBackground).Padding(0, 1)
 
@@ -674,13 +734,13 @@ func (m model) renderStatusBar() string {
 		Render(bar)
 }
 
-func executeQueryCmd(adapter db.DBAdapter, query string) tea.Cmd {
+func executeQueryCmd(parent context.Context, adapter db.DBAdapter, query string, seq uint64) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
+		ctx, cancel := context.WithTimeout(parent, queryTimeout)
 		defer cancel()
 
 		result, err := adapter.Query(ctx, query)
-		return queryExecutedMsg{result: result, err: err}
+		return queryExecutedMsg{seq: seq, result: result, err: err}
 	}
 }
 

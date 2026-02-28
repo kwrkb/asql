@@ -51,6 +51,7 @@ sqly <path-to-sqlite-file>
 | `Ctrl+K` | NORMAL | Open AI assistant |
 | `Enter` | AI | Generate SQL |
 | `Esc` | AI | Cancel |
+| `Ctrl+C` | *any* | Cancel running query/AI, or quit |
 | `q` | NORMAL | Quit |
 
 ## Export
