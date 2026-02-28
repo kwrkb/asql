@@ -1,9 +1,6 @@
 # Binary
 sqly
 
-# Development notes
-PLAN.md
-
 # SQLite databases
 *.sqlite
 *.sqlite3
