@@ -25,7 +25,7 @@ func (c Config) AIEnabled() bool {
 func Load() (Config, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
-		return Config{}, nil
+		return Config{}, fmt.Errorf("finding user config dir: %w", err)
 	}
 
 	data, err := os.ReadFile(filepath.Join(dir, "sqly", "config.yaml"))
