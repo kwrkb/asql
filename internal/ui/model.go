@@ -78,7 +78,7 @@ func NewModel(adapter db.DBAdapter, dbPath string) tea.Model {
 	input.ShowLineNumbers = true
 	input.SetHeight(8)
 	input.CharLimit = 0
-	input.SetValue("-- Press Esc for NORMAL mode, Ctrl+Enter to execute.\nSELECT sqlite_version();")
+	input.SetValue("-- Press Esc for NORMAL mode, Ctrl+Enter (or Ctrl+J) to execute.\nSELECT sqlite_version();")
 	input.Cursor.Style = lipgloss.NewStyle().Foreground(accentColor)
 	input.FocusedStyle.Base = lipgloss.NewStyle().
 		Foreground(textColor).
@@ -485,7 +485,7 @@ func (m model) renderStatusBar() string {
 	case normalMode:
 		hints = "t:tables i:insert q:quit"
 	case insertMode:
-		hints = "C-Enter:exec Esc:normal"
+		hints = "C-Enter/C-j:exec Esc:normal"
 	case sidebarMode:
 		hints = "j/k:nav Enter:select Esc:close"
 	}
