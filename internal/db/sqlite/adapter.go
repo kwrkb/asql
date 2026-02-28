@@ -120,8 +120,16 @@ func returnsRows(query string) bool {
 		return false
 	}
 	switch keyword {
-	case "select", "pragma", "with", "explain", "values":
+	case "select", "pragma", "explain", "values":
 		return true
+	case "with":
+		body := dbutil.CteBodyKeyword(query)
+		switch body {
+		case "select", "values", "pragma", "explain":
+			return true
+		default:
+			return containsReturning(query)
+		}
 	default:
 		return containsReturning(query)
 	}

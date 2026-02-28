@@ -52,6 +52,9 @@ func TestLeadingKeyword(t *testing.T) {
 		{"unclosed block comment", "/* unclosed SELECT 1", ""},
 		{"mixed comments", "-- line\n/* block */\nDELETE FROM t", "delete"},
 		{"uppercase", "PRAGMA table_info(t)", "pragma"},
+		{"hash comment", "# comment\nSELECT 1", "select"},
+		{"hash comment only", "# nothing", ""},
+		{"hash then block comment", "# line\n/* block */\nDELETE FROM t", "delete"},
 	}
 
 	for _, tt := range tests {
@@ -59,6 +62,38 @@ func TestLeadingKeyword(t *testing.T) {
 			got := LeadingKeyword(tt.query)
 			if got != tt.want {
 				t.Errorf("LeadingKeyword(%q) = %q, want %q", tt.query, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCteBodyKeyword(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{"cte select", "WITH cte AS (SELECT 1) SELECT * FROM cte", "select"},
+		{"cte insert", "WITH cte AS (SELECT 1) INSERT INTO t SELECT * FROM cte", "insert"},
+		{"cte update", "WITH cte AS (SELECT 1) UPDATE t SET a=1", "update"},
+		{"cte delete", "WITH cte AS (SELECT 1) DELETE FROM t", "delete"},
+		{"recursive cte", "WITH RECURSIVE cte AS (SELECT 1) SELECT * FROM cte", "select"},
+		{"multiple ctes", "WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a, b", "select"},
+		{"nested parens", "WITH cte AS (SELECT (1+2) FROM t) DELETE FROM t2", "delete"},
+		{"string in cte", "WITH cte AS (SELECT 'hello)world' FROM t) SELECT * FROM cte", "select"},
+		{"comment in cte", "WITH cte AS (/* ) */ SELECT 1) SELECT * FROM cte", "select"},
+		{"cte values", "WITH cte AS (SELECT 1) VALUES (1, 2)", "values"},
+		{"cte table", "WITH cte AS (SELECT 1) TABLE users", "table"},
+		{"cte explain", "WITH cte AS (SELECT 1) EXPLAIN SELECT 1", "explain"},
+		{"empty", "", ""},
+		{"only with", "WITH", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CteBodyKeyword(tt.query)
+			if got != tt.want {
+				t.Errorf("CteBodyKeyword(%q) = %q, want %q", tt.query, got, tt.want)
 			}
 		})
 	}

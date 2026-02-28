@@ -45,7 +45,11 @@ func TestReturnsRows(t *testing.T) {
 	}{
 		{"select", "SELECT 1", true},
 		{"pragma", "PRAGMA table_info(t)", true},
-		{"with", "WITH cte AS (SELECT 1) SELECT * FROM cte", true},
+		{"with select", "WITH cte AS (SELECT 1) SELECT * FROM cte", true},
+		{"with delete", "WITH cte AS (SELECT 1) DELETE FROM t WHERE id IN (SELECT * FROM cte)", false},
+		{"with delete returning", "WITH cte AS (SELECT 1) DELETE FROM t WHERE id IN (SELECT * FROM cte) RETURNING *", true},
+		{"with update", "WITH cte AS (SELECT 1) UPDATE t SET a=1", false},
+		{"with insert returning", "WITH cte AS (SELECT 1) INSERT INTO t SELECT * FROM cte RETURNING id", true},
 		{"explain", "EXPLAIN SELECT 1", true},
 		{"values", "VALUES (1, 2)", true},
 		{"insert", "INSERT INTO t VALUES (1)", false},

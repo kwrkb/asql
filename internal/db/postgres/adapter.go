@@ -149,8 +149,16 @@ func (a *Adapter) Query(ctx context.Context, query string) (db.QueryResult, erro
 func returnsRows(query string) bool {
 	keyword := dbutil.LeadingKeyword(query)
 	switch keyword {
-	case "select", "show", "explain", "with", "values", "table":
+	case "select", "show", "explain", "values", "table":
 		return true
+	case "with":
+		body := dbutil.CteBodyKeyword(query)
+		switch body {
+		case "select", "values", "table", "show", "explain":
+			return true
+		default:
+			return containsReturning(query)
+		}
 	default:
 		return containsReturning(query)
 	}
