@@ -4,7 +4,7 @@ A terminal UI SQL client built with [Bubble Tea](https://github.com/charmbracele
 
 ## Screenshot
 
-<!-- TODO: add screenshot -->
+![sqly screenshot](docs/screenshot.svg)
 
 ## Installation
 
