@@ -35,6 +35,24 @@ func (a *Adapter) Close() error {
 	return a.conn.Close()
 }
 
+func (a *Adapter) Tables(ctx context.Context) ([]string, error) {
+	rows, err := a.conn.QueryContext(ctx, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		tables = append(tables, name)
+	}
+	return tables, rows.Err()
+}
+
 func (a *Adapter) Query(ctx context.Context, query string) (db.QueryResult, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
