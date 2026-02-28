@@ -444,17 +444,10 @@ func (m model) renderWithAIOverlay(background string) string {
 
 	modal := boxStyle.Render(content)
 
-	// Center the modal
-	modalH := lipgloss.Height(modal)
-	modalW := lipgloss.Width(modal)
 	bgH := lipgloss.Height(background)
 
-	topPad := max((bgH-modalH)/2, 0)
-	leftPad := max((m.width-modalW)/2, 0)
-
-	positioned := strings.Repeat("\n", topPad) + strings.Repeat(" ", leftPad) + modal
-
-	return lipgloss.Place(m.width, bgH, lipgloss.Left, lipgloss.Top, positioned)
+	return lipgloss.Place(m.width, bgH, lipgloss.Center, lipgloss.Center, modal,
+		lipgloss.WithWhitespaceBackground(appBackground))
 }
 
 func (m *model) contentWidth() int {
