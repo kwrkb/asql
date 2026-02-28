@@ -29,7 +29,11 @@ go test ./internal/db/sqlite/
 - **main.go** — エントリポイント。引数解析 → DB接続 → Bubble Tea起動
 - **internal/db/** — データベース抽象層
   - `adapter.go`: `DBAdapter` インターフェース（`Query()`, `Close()`）と `QueryResult` 型
-  - `sqlite/adapter.go`: SQLite 実装。SQL文の種別判定（`leadingKeyword()` でコメントをスキップして先頭キーワードを取得）、値の文字列化（NULL, []byte, time.Time 対応）
+  - `sqlite/adapter.go`: SQLite 実装。
+    - `returnsRows()`: 先頭キーワード（SELECT/PRAGMA/WITH/EXPLAIN/VALUES）か、DML に `RETURNING` 句があるかで判定
+    - `leadingKeyword()`: コメント・セミコロンをスキップして先頭キーワードを返す
+    - `containsReturning()`: 文字列リテラル・引用符識別子・コメントをスキップしつつ `RETURNING` キーワードを単語境界で検出
+    - `stringifyValue()`: NULL, []byte（UTF-8有効→文字列、無効→hex）, time.Time, その他に対応
 - **internal/ui/** — TUI層
   - `model.go`: Bubble Tea Model。textarea（エディタ）+ table（結果表示）+ viewport + ステータスバー。NORMAL/INSERT の2モード切替
 

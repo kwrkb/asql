@@ -2,6 +2,8 @@ package ui
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -19,19 +21,21 @@ type mode string
 const (
 	normalMode mode = "NORMAL"
 	insertMode mode = "INSERT"
+
+	queryTimeout = 5 * time.Second
 )
 
-var (
-	appBackground    = lipgloss.Color("#111827")
-	panelBackground  = lipgloss.Color("#0F172A")
-	panelBorder      = lipgloss.Color("#334155")
-	statusBackground = lipgloss.Color("#1E293B")
-	accentColor      = lipgloss.Color("#38BDF8")
-	textColor        = lipgloss.Color("#E2E8F0")
-	mutedTextColor   = lipgloss.Color("#94A3B8")
-	successColor     = lipgloss.Color("#22C55E")
-	errorColor       = lipgloss.Color("#F87171")
-	keywordColor     = lipgloss.Color("#F59E0B")
+const (
+	appBackground    lipgloss.Color = "#111827"
+	panelBackground  lipgloss.Color = "#0F172A"
+	panelBorder      lipgloss.Color = "#334155"
+	statusBackground lipgloss.Color = "#1E293B"
+	accentColor      lipgloss.Color = "#38BDF8"
+	textColor        lipgloss.Color = "#E2E8F0"
+	mutedTextColor   lipgloss.Color = "#94A3B8"
+	successColor     lipgloss.Color = "#22C55E"
+	errorColor       lipgloss.Color = "#F87171"
+	keywordColor     lipgloss.Color = "#F59E0B"
 )
 
 type queryExecutedMsg struct {
@@ -40,16 +44,19 @@ type queryExecutedMsg struct {
 }
 
 type model struct {
-	db          db.DBAdapter
-	dbPath      string
-	mode        mode
-	textarea    textarea.Model
-	table       table.Model
-	viewport    viewport.Model
-	width       int
-	height      int
-	statusText  string
-	statusError bool
+	db           db.DBAdapter
+	dbPath       string
+	mode         mode
+	textarea     textarea.Model
+	table        table.Model
+	viewport     viewport.Model
+	width        int
+	height       int
+	statusText   string
+	statusError  bool
+	modeStyle    lipgloss.Style
+	messageStyle lipgloss.Style
+	pathStyle    lipgloss.Style
 }
 
 func NewModel(adapter db.DBAdapter, dbPath string) tea.Model {
@@ -110,6 +117,9 @@ func NewModel(adapter db.DBAdapter, dbPath string) tea.Model {
 		viewport:   vp,
 		statusText: "Ready",
 	}
+	m.modeStyle = lipgloss.NewStyle().Bold(true).Padding(0, 1).Background(accentColor).Foreground(panelBackground)
+	m.messageStyle = lipgloss.NewStyle().Padding(0, 1).Foreground(textColor).Background(statusBackground)
+	m.pathStyle = lipgloss.NewStyle().Padding(0, 1).Foreground(mutedTextColor).Background(statusBackground)
 	m.syncViewport()
 	return m
 }
@@ -134,7 +144,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case queryExecutedMsg:
 		if msg.err != nil {
-			m.setStatus(msg.err.Error(), true)
+			errMsg := msg.err.Error()
+			if errors.Is(msg.err, context.DeadlineExceeded) {
+				errMsg = fmt.Sprintf("query timed out after %s", queryTimeout)
+			}
+			m.setStatus(errMsg, true)
 			return m, nil
 		}
 		m.applyResult(msg.result)
@@ -262,7 +276,9 @@ func (m *model) applyResult(result db.QueryResult) {
 			rows = append(rows, table.Row(row))
 		}
 		if len(rows) == 0 {
-			rows = []table.Row{{"(no rows)"}}
+			sentinel := make(table.Row, len(columns))
+			sentinel[0] = "(no rows)"
+			rows = []table.Row{sentinel}
 		}
 	}
 
@@ -278,30 +294,18 @@ func (m *model) setStatus(text string, isError bool) {
 }
 
 func (m model) renderStatusBar() string {
-	modeStyle := lipgloss.NewStyle().
-		Foreground(panelBackground).
-		Background(accentColor).
-		Padding(0, 1).
-		Bold(true)
+	modeStr := m.modeStyle.Render(string(m.mode))
 
-	messageStyle := lipgloss.NewStyle().
-		Foreground(textColor).
-		Background(statusBackground).
-		Padding(0, 1)
+	msgStyle := m.messageStyle
 	if m.statusError {
-		messageStyle = messageStyle.Foreground(errorColor)
+		msgStyle = msgStyle.Foreground(errorColor)
 	} else if strings.TrimSpace(m.statusText) != "" {
-		messageStyle = messageStyle.Foreground(successColor)
+		msgStyle = msgStyle.Foreground(successColor)
 	}
 
-	pathStyle := lipgloss.NewStyle().
-		Foreground(mutedTextColor).
-		Background(statusBackground).
-		Padding(0, 1)
-
-	left := modeStyle.Render(string(m.mode))
-	center := pathStyle.Render(m.dbPath)
-	right := messageStyle.Render(m.statusText)
+	left := modeStr
+	center := m.pathStyle.Render(m.dbPath)
+	right := msgStyle.Render(m.statusText)
 
 	bar := lipgloss.JoinHorizontal(lipgloss.Left, left, center, right)
 	return lipgloss.NewStyle().
@@ -312,7 +316,7 @@ func (m model) renderStatusBar() string {
 
 func executeQueryCmd(adapter db.DBAdapter, query string) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 		defer cancel()
 
 		result, err := adapter.Query(ctx, query)
