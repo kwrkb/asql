@@ -26,6 +26,7 @@ const (
 	insertMode  mode = "INSERT"
 	sidebarMode mode = "SIDEBAR"
 	aiMode      mode = "AI"
+	exportMode  mode = "EXPORT"
 
 	queryTimeout = 5 * time.Second
 	sidebarWidth = 25
@@ -80,6 +81,8 @@ type model struct {
 	aiSpinner     spinner.Model
 	aiLoading     bool
 	aiError       string
+	lastResult    db.QueryResult
+	exportCursor  int
 	modeStyle     lipgloss.Style
 	messageStyle  lipgloss.Style
 	pathStyle     lipgloss.Style
@@ -193,6 +196,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateSidebar(msg)
 		case aiMode:
 			return m.updateAI(msg)
+		case exportMode:
+			return m.updateExport(msg)
 		}
 	case aiResponseMsg:
 		m.aiLoading = false
@@ -229,6 +234,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setStatus(errMsg, true)
 			return m, nil
 		}
+		m.lastResult = msg.result
 		m.applyResult(msg.result)
 		return m, loadTablesCmd(m.db)
 	}
@@ -280,6 +286,10 @@ func (m model) View() string {
 		view = m.renderWithAIOverlay(view)
 	}
 
+	if m.mode == exportMode {
+		view = m.renderWithExportOverlay(view)
+	}
+
 	return view
 }
 
@@ -301,6 +311,14 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.resize()
 		} else {
 			m.setStatus("Terminal too narrow for sidebar", true)
+		}
+	case "e":
+		if len(m.lastResult.Columns) == 0 {
+			m.setStatus("No query results to export", true)
+		} else {
+			m.mode = exportMode
+			m.exportCursor = 0
+			m.setStatus("Export mode", false)
 		}
 	case "ctrl+k":
 		if m.aiEnabled {
@@ -626,9 +644,9 @@ func (m model) renderStatusBar() string {
 	switch m.mode {
 	case normalMode:
 		if m.aiEnabled {
-			hints = "t:tables i:insert C-k:AI q:quit"
+			hints = "t:tables i:insert e:export C-k:AI q:quit"
 		} else {
-			hints = "t:tables i:insert q:quit"
+			hints = "t:tables i:insert e:export q:quit"
 		}
 	case insertMode:
 		hints = "C-Enter/C-j:exec Esc:normal"
@@ -636,6 +654,8 @@ func (m model) renderStatusBar() string {
 		hints = "j/k:nav Enter:select Esc:close"
 	case aiMode:
 		hints = "Enter:generate Esc:cancel"
+	case exportMode:
+		hints = "j/k:nav Enter:select Esc:cancel"
 	}
 	hintStyle := lipgloss.NewStyle().Foreground(mutedTextColor).Background(statusBackground).Padding(0, 1)
 

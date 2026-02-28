@@ -147,6 +147,33 @@ for i := scrollOffset; i < len(items); i++ { ... }
 
 ---
 
+## データエクスポート
+
+### map キーによる JSON 変換は重複カラム名でデータ損失する
+
+**文脈**: `FormatJSON` で `map[string]string` にカラム名をキーとして格納していた。`SELECT a.id, b.id FROM ...` のように同名カラムがあると、後の値が前の値を上書きし、片方のデータがサイレントに失われた。
+
+**学び**: SQL クエリ結果のカラム名は一意とは限らない。`map` のキーに使う場合は重複を検出してサフィックスを付与する必要がある。CSV/Markdown は配列ベースなので影響なし。
+
+**パターン**:
+```go
+func deduplicateHeaders(headers []string) []string {
+    counts := make(map[string]int, len(headers))
+    result := make([]string, len(headers))
+    for i, h := range headers {
+        counts[h]++
+        if counts[h] > 1 {
+            result[i] = fmt.Sprintf("%s_%d", h, counts[h])
+        } else {
+            result[i] = h
+        }
+    }
+    return result
+}
+```
+
+---
+
 ## LLM 統合（AI 機能）
 
 ### http.Client にはデフォルトタイムアウトを設定する

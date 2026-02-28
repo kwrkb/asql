@@ -44,10 +44,23 @@ sqly <sqlite-ファイルパス>
 | `j` / `k` | SIDEBAR | テーブルを移動 |
 | `Enter` | SIDEBAR | テーブルの SELECT クエリを挿入 |
 | `Esc` / `t` | SIDEBAR | サイドバーを閉じる |
+| `e` | NORMAL | エクスポートメニューを開く |
+| `j` / `k` | EXPORT | 選択肢を移動 |
+| `Enter` | EXPORT | エクスポート実行 |
+| `Esc` | EXPORT | キャンセル |
 | `Ctrl+K` | NORMAL | AI アシスタントを開く |
 | `Enter` | AI | SQL を生成 |
 | `Esc` | AI | キャンセル |
 | `q` | NORMAL | 終了 |
+
+## エクスポート
+
+クエリ実行後、NORMAL モードで `e` を押すとエクスポートメニューが開きます。対応フォーマット:
+
+- **Copy as CSV** — クリップボードにコピー
+- **Copy as JSON** — クリップボードにコピー（オブジェクト配列）
+- **Copy as Markdown** — クリップボードにコピー（GFM テーブル）
+- **Save to File (CSV)** — カレントディレクトリに `result_YYYYMMDD_HHMMSS.csv` を保存
 
 ## AI アシスタント（Text-to-SQL）
 
