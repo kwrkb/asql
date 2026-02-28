@@ -195,6 +195,56 @@ httpClient: &http.Client{Timeout: 30 * time.Second},
 
 **パターン**: ステータスに `"AI generated SQL — review before executing"` のように行動指示を含める。
 
+### 非同期操作のキャンセルには stale msg 対策が必須
+
+**文脈**: `context.WithCancel` で操作をキャンセル可能にしたが、キャンセル後に即再実行すると、古いリクエストの遅延 msg が新しい操作の `queryCancel` を `nil` クリアしてしまい、新しい操作がキャンセル不能になった。Codex レビューで検出。
+
+**学び**: Bubble Tea の非同期 Cmd は完了順序が保証されない。キャンセル→再実行のフローでは、古い msg が新しい状態を壊す可能性がある。操作ごとにシーケンス番号を振り、msg ハンドラで照合して stale msg を破棄する。
+
+**パターン**:
+```go
+// model に seq カウンタを持つ
+type model struct {
+    querySeq    uint64
+    queryCancel context.CancelFunc
+}
+
+// 操作開始時にインクリメント
+m.querySeq++
+ctx, cancel := context.WithCancel(context.Background())
+m.queryCancel = cancel
+return m, executeQueryCmd(ctx, m.db, query, m.querySeq)
+
+// msg に seq を含める
+type queryExecutedMsg struct {
+    seq    uint64
+    result db.QueryResult
+    err    error
+}
+
+// ハンドラで照合
+case queryExecutedMsg:
+    if msg.seq != m.querySeq {
+        return m, nil // stale msg → 無視
+    }
+```
+
+### 新規リクエスト開始時に既存 context を明示的にキャンセルする
+
+**文脈**: 実行中の操作がある状態で新しいリクエストを発行すると、古い context の `CancelFunc` が上書きされ、古い goroutine がタイムアウトまでリソースを消費し続けた。Gemini レビューで検出。
+
+**学び**: `CancelFunc` を上書きする前に必ず既存のものを呼び出す。seq による stale msg 破棄だけでは不十分で、リソースリーク防止には明示的キャンセルが必要。
+
+**パターン**:
+```go
+if m.queryCancel != nil {
+    m.queryCancel()
+}
+ctx, cancel := context.WithCancel(context.Background())
+m.querySeq++
+m.queryCancel = cancel
+```
+
 ### os.UserConfigDir() 等の環境エラーを握りつぶさない
 
 **文脈**: `os.UserConfigDir()` がエラーを返した場合に `Config{}, nil` を返していた。設定ディレクトリのパーミッションエラー等がサイレントに無視され、デバッグ困難に。
