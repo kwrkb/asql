@@ -11,6 +11,12 @@ import (
 	"github.com/kwrkb/sqly/internal/ui"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	if len(os.Args) != 2 {
 		fmt.Fprintf(os.Stderr, "usage: %s <sqlite-file>\n", os.Args[0])

@@ -10,6 +10,10 @@ A terminal UI SQL client built with [Bubble Tea](https://github.com/charmbracele
 
 ## Installation
 
+Download a prebuilt binary from [GitHub Releases](https://github.com/kwrkb/sqly/releases).
+
+Or install with Go:
+
 ```bash
 go install github.com/kwrkb/sqly@latest
 ```
