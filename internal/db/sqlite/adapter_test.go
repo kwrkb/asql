@@ -51,6 +51,9 @@ func TestContainsReturning(t *testing.T) {
 		{"returning in block comment", "INSERT INTO t VALUES (1) /* RETURNING */", false},
 		{"partial match in name", "INSERT INTO t_returning_log VALUES (1)", false},
 		{"mixed case", "UPDATE t SET a=1 Returning a", true},
+		{"returning in escaped double-quoted identifier", `UPDATE t SET name = "a ""returning"" name"`, false},
+		{"returning as backtick-quoted identifier", "INSERT INTO `returning` VALUES (1)", false},
+		{"returning as bracket-quoted identifier", "INSERT INTO [returning] VALUES (1)", false},
 	}
 
 	for _, tt := range tests {

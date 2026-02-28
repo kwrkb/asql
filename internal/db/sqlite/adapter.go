@@ -163,13 +163,36 @@ func containsReturning(query string) bool {
 				i++
 			}
 		case query[i] == '"':
-			// double-quoted identifier
+			// double-quoted identifier ("" is an escaped quote)
 			i++
-			for i < n && query[i] != '"' {
+			for i < n {
+				if query[i] == '"' {
+					i++
+					if i < n && query[i] == '"' {
+						i++ // escaped quote, continue
+						continue
+					}
+					break
+				}
+				i++
+			}
+		case query[i] == '`':
+			// backtick-quoted identifier (SQLite also accepts MySQL-style backticks)
+			i++
+			for i < n && query[i] != '`' {
 				i++
 			}
 			if i < n {
-				i++ // skip closing "
+				i++ // skip closing `
+			}
+		case query[i] == '[':
+			// bracket-quoted identifier ([id], SQLite/MSSQL style)
+			i++
+			for i < n && query[i] != ']' {
+				i++
+			}
+			if i < n {
+				i++ // skip closing ]
 			}
 		default:
 			if i+len(kw) <= n && strings.EqualFold(query[i:i+len(kw)], kw) {
