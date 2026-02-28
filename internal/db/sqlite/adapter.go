@@ -10,7 +10,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/kwrkb/sqly/internal/db"
+	"github.com/kwrkb/asql/internal/db"
 )
 
 type Adapter struct {

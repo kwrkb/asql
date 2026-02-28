@@ -8,7 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/kwrkb/sqly/internal/export"
+	"github.com/kwrkb/asql/internal/export"
 )
 
 var exportOptions = []string{

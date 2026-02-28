@@ -28,7 +28,7 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("finding user config dir: %w", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, "sqly", "config.yaml"))
+	data, err := os.ReadFile(filepath.Join(dir, "asql", "config.yaml"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return Config{}, nil

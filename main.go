@@ -6,11 +6,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/kwrkb/sqly/internal/ai"
-	"github.com/kwrkb/sqly/internal/config"
-	dbpkg "github.com/kwrkb/sqly/internal/db"
-	"github.com/kwrkb/sqly/internal/db/sqlite"
-	"github.com/kwrkb/sqly/internal/ui"
+	"github.com/kwrkb/asql/internal/ai"
+	"github.com/kwrkb/asql/internal/config"
+	dbpkg "github.com/kwrkb/asql/internal/db"
+	"github.com/kwrkb/asql/internal/db/sqlite"
+	"github.com/kwrkb/asql/internal/ui"
 )
 
 var (
@@ -52,7 +52,7 @@ func main() {
 	)
 
 	if _, err := program.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "sqly exited with error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "asql exited with error: %v\n", err)
 		os.Exit(1)
 	}
 }

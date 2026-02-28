@@ -24,9 +24,9 @@ func TestLoad(t *testing.T) {
 		dir := t.TempDir()
 		t.Setenv("XDG_CONFIG_HOME", dir)
 
-		sqlyDir := filepath.Join(dir, "sqly")
-		os.MkdirAll(sqlyDir, 0o755)
-		os.WriteFile(filepath.Join(sqlyDir, "config.yaml"), []byte(`
+		asqlDir := filepath.Join(dir, "asql")
+		os.MkdirAll(asqlDir, 0o755)
+		os.WriteFile(filepath.Join(asqlDir, "config.yaml"), []byte(`
 ai:
   ai_endpoint: http://localhost:11434/v1
   ai_model: llama3
@@ -55,9 +55,9 @@ ai:
 		dir := t.TempDir()
 		t.Setenv("XDG_CONFIG_HOME", dir)
 
-		sqlyDir := filepath.Join(dir, "sqly")
-		os.MkdirAll(sqlyDir, 0o755)
-		os.WriteFile(filepath.Join(sqlyDir, "config.yaml"), []byte(`{invalid`), 0o644)
+		asqlDir := filepath.Join(dir, "asql")
+		os.MkdirAll(asqlDir, 0o755)
+		os.WriteFile(filepath.Join(asqlDir, "config.yaml"), []byte(`{invalid`), 0o644)
 
 		_, err := Load()
 		if err == nil {
@@ -69,9 +69,9 @@ ai:
 		dir := t.TempDir()
 		t.Setenv("XDG_CONFIG_HOME", dir)
 
-		sqlyDir := filepath.Join(dir, "sqly")
-		os.MkdirAll(sqlyDir, 0o755)
-		os.WriteFile(filepath.Join(sqlyDir, "config.yaml"), []byte(`
+		asqlDir := filepath.Join(dir, "asql")
+		os.MkdirAll(asqlDir, 0o755)
+		os.WriteFile(filepath.Join(asqlDir, "config.yaml"), []byte(`
 ai:
   ai_endpoint: http://localhost:11434/v1
 `), 0o644)

@@ -1,24 +1,39 @@
-# Ctrl+C による操作キャンセル機能
+# sqly → asql リネーム
 
 ## 目的
-Ctrl+C で実行中の操作（クエリ/AI生成）をキャンセルし、アプリは終了せず normalMode に戻る挙動を実装する。
+プロジェクト名・バイナリ名・モジュールパス・設定パスをすべて `sqly` から `asql` に変更する。
 
 ## タスク
-- [x] 1. `model` 構造体に `queryCancel context.CancelFunc` フィールド追加
-- [x] 2. `executeQueryCmd` を変更: 外部から context を受け取る形に
-- [x] 3. `generateSQLCmd` を変更: 同様に外部 context 受取り
-- [x] 4. `updateInsert` の `ctrl+enter`/`ctrl+j` ハンドラで cancelable context を生成して model に保存
-- [x] 5. `updateAI` の `enter` ハンドラで同様に cancelable context を生成
-- [x] 6. `Update()` の `tea.KeyMsg` 分岐冒頭で `ctrl+c` をインターセプト
-- [x] 7. `updateAI` の `aiLoading` ガードで `esc` を通す
-- [x] 8. `queryExecutedMsg` / `aiResponseMsg` ハンドラで `queryCancel = nil` クリア + context.Canceled 処理
-- [x] 9. ステータスバーのヒントに `C-c:cancel` 追加（クエリ/AI実行中の表示）
-- [x] 10. ドキュメント更新（README.md, README.ja.md, CLAUDE.md）
+
+### Phase 1: Go コード変更（コア）
+- [x] `go.mod` — module パスを `github.com/kwrkb/asql` に変更
+- [x] `main.go` — import パス 5箇所 + エラーメッセージ「sqly exited」→「asql exited」
+- [x] `internal/db/sqlite/adapter.go` — import パス 1箇所
+- [x] `internal/ui/model.go` — import パス 2箇所
+- [x] `internal/ui/export.go` — import パス 1箇所
+- [x] `internal/ui/model_test.go` — import パス 1箇所
+- [x] `internal/config/config.go` — 設定ディレクトリ `"sqly"` → `"asql"`
+- [x] `internal/config/config_test.go` — テスト内ディレクトリ名 `"sqly"` → `"asql"`
+
+### Phase 2: ドキュメント・設定ファイル
+- [x] `README.md` — プロジェクト名、URL、コマンド例、設定パス
+- [x] `README.ja.md` — 同上（日本語版）
+- [x] `CLAUDE.md` — プロジェクト説明、コマンド例、設定パス
+- [x] `.gitignore` — バイナリ名 `sqly` → `asql`
+
+### Phase 3: デモ・テストデータ
+- [x] `docs/demo.tape` — タイトル、DB パス名、コマンド
+- [x] `docs/setup-demo-db.py` — DB パス名
+- [x] `testdata/sample.sql` — コメント内の参照 + プロダクト名
+
+### Phase 4: クリーンアップ
+- [x] `status/quality-report.md` — パス参照の更新
+- [x] 旧バイナリ `sqly` を削除
+- [x] `go build` でビルド確認
+- [x] `go test ./...` で全テスト通過確認
+- [x] `grep -r "sqly"` でリネーム漏れなし確認
 
 ## 検証
-- `go build` 成功 ✅
-- `go test ./...` 全パス ✅
-- `go vet ./...` 成功 ✅
-
-## 変更履歴
-- (なし)
+- `go build` 成功 ✓
+- `go test ./...` 全パス ✓
+- `grep -r "sqly" --include="*.go" --include="*.md" --include="*.mod"` で漏れなし ✓

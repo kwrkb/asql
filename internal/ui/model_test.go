@@ -6,7 +6,7 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/viewport"
 
-	"github.com/kwrkb/sqly/internal/db"
+	"github.com/kwrkb/asql/internal/db"
 )
 
 func TestColumnWidth(t *testing.T) {

@@ -1,4 +1,4 @@
-# sqly — TUI SQL Client Demo
+# asql — TUI SQL Client Demo
 Output docs/demo.gif
 
 Set Shell "bash"
@@ -13,7 +13,7 @@ Set Padding 20
 # --- Setup: create demo database with sample tables ---
 Hide
 Set TypingSpeed 1ms
-Type "python3 docs/setup-demo-db.py /tmp/sqly-demo.db"
+Type "python3 docs/setup-demo-db.py /tmp/asql-demo.db"
 Enter
 Sleep 500ms
 Type "clear"
@@ -24,8 +24,8 @@ Set TypingSpeed 30ms
 
 # --- Demo starts ---
 
-# 1. Launch sqly (INSERT mode, initial query visible)
-Type "./sqly /tmp/sqly-demo.db"
+# 1. Launch asql (INSERT mode, initial query visible)
+Type "./asql /tmp/asql-demo.db"
 Enter
 Sleep 2s
 

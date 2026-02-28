@@ -1,4 +1,4 @@
-module github.com/kwrkb/sqly
+module github.com/kwrkb/asql
 
 go 1.26
 

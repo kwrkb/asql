@@ -1,5 +1,5 @@
--- sqly サンプルデータ
--- 使い方: sqly 起動後にエディタに貼り付けて実行
+-- asql サンプルデータ
+-- 使い方: asql 起動後にエディタに貼り付けて実行
 
 CREATE TABLE departments (
     id INTEGER PRIMARY KEY,
@@ -38,7 +38,7 @@ INSERT INTO employees (id, name, department_id, salary) VALUES
     (8, 'Kobayashi Sakura', 3, 5200000);
 
 INSERT INTO projects (id, title, lead_id, budget) VALUES
-    (1, 'sqly v2.0', 1, 5000000),
+    (1, 'asql v2.0', 1, 5000000),
     (2, 'Customer Portal', 5, 12000000),
     (3, 'New Hire Onboarding', 4, 2000000),
     (4, 'Brand Refresh', 7, 3500000);

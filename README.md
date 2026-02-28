@@ -1,35 +1,35 @@
 [日本語](README.ja.md)
 
-# sqly
+# asql
 
 A terminal UI SQL client built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). Currently supports SQLite, with MySQL/PostgreSQL planned. Includes an AI assistant that generates SQL from natural language via OpenAI-compatible APIs (Ollama, LM Studio, etc.).
 
 ## Demo
 
-![sqly demo](docs/demo.gif)
+![asql demo](docs/demo.gif)
 
 ## Installation
 
-Download a prebuilt binary from [GitHub Releases](https://github.com/kwrkb/sqly/releases).
+Download a prebuilt binary from [GitHub Releases](https://github.com/kwrkb/asql/releases).
 
 Or install with Go:
 
 ```bash
-go install github.com/kwrkb/sqly@latest
+go install github.com/kwrkb/asql@latest
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/kwrkb/sqly
-cd sqly
-go build -o sqly .
+git clone https://github.com/kwrkb/asql
+cd asql
+go build -o asql .
 ```
 
 ## Usage
 
 ```bash
-sqly <path-to-sqlite-file>
+asql <path-to-sqlite-file>
 ```
 
 ### Key Bindings
@@ -65,7 +65,7 @@ Press `e` in NORMAL mode after executing a query to open the export menu. Suppor
 
 ## AI Assistant (Text-to-SQL)
 
-sqly can generate SQL from natural language using any OpenAI-compatible API. Create a config file at `~/.config/sqly/config.yaml`:
+asql can generate SQL from natural language using any OpenAI-compatible API. Create a config file at `~/.config/asql/config.yaml`:
 
 ```yaml
 ai:
@@ -76,7 +76,7 @@ ai:
 
 Press `Ctrl+K` in NORMAL mode to open the AI prompt. The database schema is automatically included in the context for accurate table/column names.
 
-If no config file is present, AI features are silently disabled and sqly works as before.
+If no config file is present, AI features are silently disabled and asql works as before.
 
 ## Development
 

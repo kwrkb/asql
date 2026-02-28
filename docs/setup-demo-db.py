@@ -4,7 +4,7 @@ import os
 import sqlite3
 import sys
 
-db_path = sys.argv[1] if len(sys.argv) > 1 else "/tmp/sqly-demo.db"
+db_path = sys.argv[1] if len(sys.argv) > 1 else "/tmp/asql-demo.db"
 if os.path.exists(db_path):
     os.remove(db_path)
 

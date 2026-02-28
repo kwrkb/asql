@@ -15,8 +15,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/kwrkb/sqly/internal/ai"
-	"github.com/kwrkb/sqly/internal/db"
+	"github.com/kwrkb/asql/internal/ai"
+	"github.com/kwrkb/asql/internal/db"
 )
 
 type mode string

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-sqly は Go 製の TUI SQL クライアント。Bubble Tea (Charmbracelet) フレームワークで構築され、現在は SQLite をサポート。将来的に MySQL/PostgreSQL への拡張を想定した設計。OpenAI 互換 API（Ollama / LM Studio）による自然言語→SQL 生成機能を搭載。
+asql は Go 製の TUI SQL クライアント。Bubble Tea (Charmbracelet) フレームワークで構築され、現在は SQLite をサポート。将来的に MySQL/PostgreSQL への拡張を想定した設計。OpenAI 互換 API（Ollama / LM Studio）による自然言語→SQL 生成機能を搭載。
 
 ## Commands
 
@@ -13,7 +13,7 @@ sqly は Go 製の TUI SQL クライアント。Bubble Tea (Charmbracelet) フ�
 go build
 
 # 実行
-./sqly <sqlite-file-path>
+./asql <sqlite-file-path>
 
 # テスト
 go test ./...
@@ -43,7 +43,7 @@ go test ./internal/db/sqlite/
 - **internal/ai/** — AI 層
   - `client.go`: OpenAI Chat Completions API クライアント。スキーマをシステムプロンプトに注入し SQL を生成
 - **internal/config/** — 設定管理
-  - `config.go`: `~/.config/sqly/config.yaml` から AI 設定（endpoint, model, api_key）を読み込み
+  - `config.go`: `~/.config/asql/config.yaml` から AI 設定（endpoint, model, api_key）を読み込み
 
 **設計ポイント**: `DBAdapter` インターフェースにより、UI層はDB実装に依存しない。新しいDBドライバは `internal/db/<driver>/adapter.go` に追加する。AI 機能はオプションで、設定未構成時はサイレントに無効化される。
 

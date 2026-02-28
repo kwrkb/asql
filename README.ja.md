@@ -1,35 +1,35 @@
 [English](README.md)
 
-# sqly
+# asql
 
 [Bubble Tea](https://github.com/charmbracelet/bubbletea) で構築されたターミナル UI SQL クライアント。現在は SQLite をサポートし、MySQL/PostgreSQL への対応を計画中。OpenAI 互換 API（Ollama、LM Studio 等）を利用した自然言語からの SQL 生成機能を搭載。
 
 ## デモ
 
-![sqly デモ](docs/demo.gif)
+![asql デモ](docs/demo.gif)
 
 ## インストール
 
-[GitHub Releases](https://github.com/kwrkb/sqly/releases) からビルド済みバイナリをダウンロードできます。
+[GitHub Releases](https://github.com/kwrkb/asql/releases) からビルド済みバイナリをダウンロードできます。
 
 Go でインストール:
 
 ```bash
-go install github.com/kwrkb/sqly@latest
+go install github.com/kwrkb/asql@latest
 ```
 
 またはソースからビルド:
 
 ```bash
-git clone https://github.com/kwrkb/sqly
-cd sqly
-go build -o sqly .
+git clone https://github.com/kwrkb/asql
+cd asql
+go build -o asql .
 ```
 
 ## 使い方
 
 ```bash
-sqly <sqlite-ファイルパス>
+asql <sqlite-ファイルパス>
 ```
 
 ### キーバインド
@@ -65,7 +65,7 @@ sqly <sqlite-ファイルパス>
 
 ## AI アシスタント（Text-to-SQL）
 
-OpenAI 互換 API を利用して、自然言語から SQL を生成できます。`~/.config/sqly/config.yaml` に設定ファイルを作成してください:
+OpenAI 互換 API を利用して、自然言語から SQL を生成できます。`~/.config/asql/config.yaml` に設定ファイルを作成してください:
 
 ```yaml
 ai:
