@@ -4,9 +4,9 @@
 
 A terminal UI SQL client built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). Currently supports SQLite, with MySQL/PostgreSQL planned.
 
-## Screenshot
+## Demo
 
-![sqly screenshot](docs/screenshot.svg)
+![sqly demo](docs/demo.gif)
 
 ## Installation
 
@@ -36,6 +36,10 @@ sqly <path-to-sqlite-file>
 | `Esc` | INSERT | Return to NORMAL mode |
 | `Ctrl+Enter` / `Ctrl+J` | INSERT | Execute query |
 | `j` / `k` | NORMAL | Navigate result rows |
+| `t` | NORMAL | Open table sidebar |
+| `j` / `k` | SIDEBAR | Navigate tables |
+| `Enter` | SIDEBAR | Insert SELECT query for table |
+| `Esc` / `t` | SIDEBAR | Close sidebar |
 | `q` | NORMAL | Quit |
 
 ## Development

@@ -421,10 +421,18 @@ func (m model) renderSidebar() string {
 	b.WriteByte('\n')
 	lines := 1
 
-	for i, name := range m.sidebarTables {
+	// Calculate scroll offset so cursor stays visible
+	maxVisible := height - 2 // title line + border allowance
+	scrollOffset := 0
+	if maxVisible > 0 && m.sidebarCursor >= maxVisible {
+		scrollOffset = m.sidebarCursor - maxVisible + 1
+	}
+
+	for i := scrollOffset; i < len(m.sidebarTables); i++ {
 		if lines >= height-1 {
 			break
 		}
+		name := m.sidebarTables[i]
 		if i == m.sidebarCursor {
 			b.WriteString(selectedStyle.Render(name))
 		} else {
