@@ -36,7 +36,10 @@ go test ./internal/db/sqlite/
     - `stringifyValue()`: NULL, []byte（UTF-8有効→文字列、無効→hex）, time.Time, その他に対応
     - `Schema()`: `sqlite_master` から CREATE TABLE 文を取得して連結
 - **internal/ui/** — TUI層
-  - `model.go`: Bubble Tea Model。textarea（エディタ）+ table（結果表示）+ viewport + ステータスバー。NORMAL/INSERT/SIDEBAR/AI の4モード切替
+  - `model.go`: Bubble Tea Model。textarea（エディタ）+ table（結果表示）+ viewport + ステータスバー。NORMAL/INSERT/SIDEBAR/AI/EXPORT の5モード切替
+  - `export.go`: エクスポートモードのキーバインド・実行ロジック・モーダル描画
+- **internal/export/** — エクスポート層
+  - `export.go`: CSV/JSON/Markdown フォーマット変換 + ファイル書き出し。UI/DB に依存しない純粋関数パッケージ
 - **internal/ai/** — AI 層
   - `client.go`: OpenAI Chat Completions API クライアント。スキーマをシステムプロンプトに注入し SQL を生成
 - **internal/config/** — 設定管理
@@ -49,6 +52,7 @@ go test ./internal/db/sqlite/
 - `charmbracelet/bubbletea` + `bubbles` + `lipgloss` — TUIフレームワーク・スタイリング
 - `modernc.org/sqlite` — Pure Go SQLite ドライバ（CGO不要）
 - `gopkg.in/yaml.v3` — 設定ファイルパーサ
+- `github.com/atotto/clipboard` — クリップボードアクセス（エクスポート機能）
 
 ## Workflow Files
 

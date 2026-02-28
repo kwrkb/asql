@@ -44,10 +44,23 @@ sqly <path-to-sqlite-file>
 | `j` / `k` | SIDEBAR | Navigate tables |
 | `Enter` | SIDEBAR | Insert SELECT query for table |
 | `Esc` / `t` | SIDEBAR | Close sidebar |
+| `e` | NORMAL | Open export menu |
+| `j` / `k` | EXPORT | Navigate options |
+| `Enter` | EXPORT | Execute export |
+| `Esc` | EXPORT | Cancel |
 | `Ctrl+K` | NORMAL | Open AI assistant |
 | `Enter` | AI | Generate SQL |
 | `Esc` | AI | Cancel |
 | `q` | NORMAL | Quit |
+
+## Export
+
+Press `e` in NORMAL mode after executing a query to open the export menu. Supported formats:
+
+- **Copy as CSV** — clipboard
+- **Copy as JSON** — clipboard (array of objects)
+- **Copy as Markdown** — clipboard (GFM table)
+- **Save to File (CSV)** — writes `result_YYYYMMDD_HHMMSS.csv` to current directory
 
 ## AI Assistant (Text-to-SQL)
 
