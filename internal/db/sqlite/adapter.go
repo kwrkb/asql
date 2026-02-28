@@ -53,6 +53,27 @@ func (a *Adapter) Tables(ctx context.Context) ([]string, error) {
 	return tables, rows.Err()
 }
 
+func (a *Adapter) Schema(ctx context.Context) (string, error) {
+	rows, err := a.conn.QueryContext(ctx, "SELECT sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL ORDER BY name")
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	var stmts []string
+	for rows.Next() {
+		var sql string
+		if err := rows.Scan(&sql); err != nil {
+			return "", err
+		}
+		stmts = append(stmts, sql+";")
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	return strings.Join(stmts, "\n\n"), nil
+}
+
 func (a *Adapter) Query(ctx context.Context, query string) (db.QueryResult, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {

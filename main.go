@@ -6,6 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/kwrkb/sqly/internal/ai"
+	"github.com/kwrkb/sqly/internal/config"
 	dbpkg "github.com/kwrkb/sqly/internal/db"
 	"github.com/kwrkb/sqly/internal/db/sqlite"
 	"github.com/kwrkb/sqly/internal/ui"
@@ -34,8 +36,18 @@ func main() {
 	}
 	defer adapter.Close()
 
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load config: %v\n", err)
+	}
+
+	var aiClient *ai.Client
+	if cfg.AIEnabled() {
+		aiClient = ai.NewClient(cfg.AI.Endpoint, cfg.AI.Model, cfg.AI.APIKey)
+	}
+
 	program := tea.NewProgram(
-		ui.NewModel(adapter, dbPath),
+		ui.NewModel(adapter, dbPath, aiClient),
 		tea.WithAltScreen(),
 	)
 

@@ -7,12 +7,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/kwrkb/sqly/internal/ai"
 	"github.com/kwrkb/sqly/internal/db"
 )
 
@@ -22,6 +25,7 @@ const (
 	normalMode  mode = "NORMAL"
 	insertMode  mode = "INSERT"
 	sidebarMode mode = "SIDEBAR"
+	aiMode      mode = "AI"
 
 	queryTimeout = 5 * time.Second
 	sidebarWidth = 25
@@ -51,6 +55,11 @@ type tablesLoadedMsg struct {
 	err    error
 }
 
+type aiResponseMsg struct {
+	sql string
+	err error
+}
+
 type model struct {
 	db           db.DBAdapter
 	dbPath       string
@@ -65,12 +74,18 @@ type model struct {
 	sidebarOpen   bool
 	sidebarTables []string
 	sidebarCursor int
+	aiEnabled     bool
+	aiClient      *ai.Client
+	aiInput       textinput.Model
+	aiSpinner     spinner.Model
+	aiLoading     bool
+	aiError       string
 	modeStyle     lipgloss.Style
 	messageStyle  lipgloss.Style
 	pathStyle     lipgloss.Style
 }
 
-func NewModel(adapter db.DBAdapter, dbPath string) tea.Model {
+func NewModel(adapter db.DBAdapter, dbPath string, aiClient *ai.Client) tea.Model {
 	input := textarea.New()
 	input.Placeholder = "SELECT name FROM sqlite_master WHERE type = 'table';"
 	input.Prompt = lipgloss.NewStyle().Foreground(keywordColor).Render("sql> ")
@@ -119,6 +134,15 @@ func NewModel(adapter db.DBAdapter, dbPath string) tea.Model {
 
 	vp := viewport.New(0, 0)
 
+	aiIn := textinput.New()
+	aiIn.Placeholder = "Describe what you want to query..."
+	aiIn.CharLimit = 500
+	aiIn.Width = 50
+
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(accentColor)
+
 	m := model{
 		db:         adapter,
 		dbPath:     dbPath,
@@ -127,6 +151,10 @@ func NewModel(adapter db.DBAdapter, dbPath string) tea.Model {
 		table:      tbl,
 		viewport:   vp,
 		statusText: "Ready",
+		aiEnabled:  aiClient != nil,
+		aiClient:   aiClient,
+		aiInput:    aiIn,
+		aiSpinner:  sp,
 	}
 	m.modeStyle = lipgloss.NewStyle().Bold(true).Padding(0, 1).Background(accentColor).Foreground(panelBackground)
 	m.messageStyle = lipgloss.NewStyle().Padding(0, 1).Foreground(textColor).Background(statusBackground)
@@ -163,7 +191,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateInsert(msg)
 		case sidebarMode:
 			return m.updateSidebar(msg)
+		case aiMode:
+			return m.updateAI(msg)
 		}
+	case aiResponseMsg:
+		m.aiLoading = false
+		if msg.err != nil {
+			m.aiError = msg.err.Error()
+			return m, nil
+		}
+		m.textarea.SetValue(msg.sql)
+		m.mode = insertMode
+		m.textarea.Focus()
+		m.setStatus("AI generated SQL — review before executing", false)
+		return m, nil
+	case spinner.TickMsg:
+		if m.aiLoading {
+			var cmd tea.Cmd
+			m.aiSpinner, cmd = m.aiSpinner.Update(msg)
+			return m, cmd
+		}
+		return m, nil
 	case tablesLoadedMsg:
 		if msg.err == nil {
 			m.sidebarTables = msg.tables
@@ -226,7 +274,13 @@ func (m model) View() string {
 
 	status := m.renderStatusBar()
 
-	return lipgloss.JoinVertical(lipgloss.Left, main, status)
+	view := lipgloss.JoinVertical(lipgloss.Left, main, status)
+
+	if m.mode == aiMode {
+		view = m.renderWithAIOverlay(view)
+	}
+
+	return view
 }
 
 func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -248,6 +302,17 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.setStatus("Terminal too narrow for sidebar", true)
 		}
+	case "ctrl+k":
+		if m.aiEnabled {
+			m.mode = aiMode
+			m.aiInput.Reset()
+			m.aiInput.Focus()
+			m.aiError = ""
+			m.aiLoading = false
+			m.setStatus("AI mode", false)
+			return m, textinput.Blink
+		}
+		m.setStatus("AI not configured", true)
 	case "j":
 		m.table.MoveDown(1)
 	case "k":
@@ -307,6 +372,89 @@ func (m model) updateSidebar(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	m.syncViewport()
 	return m, nil
+}
+
+func (m model) updateAI(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.aiLoading {
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc":
+		m.mode = normalMode
+		m.aiError = ""
+		m.setStatus("Normal mode", false)
+		return m, nil
+	case "enter":
+		prompt := strings.TrimSpace(m.aiInput.Value())
+		if prompt == "" {
+			return m, nil
+		}
+		m.aiLoading = true
+		m.aiError = ""
+		return m, tea.Batch(m.aiSpinner.Tick, generateSQLCmd(m.aiClient, m.db, prompt))
+	}
+	var cmd tea.Cmd
+	m.aiInput, cmd = m.aiInput.Update(msg)
+	return m, cmd
+}
+
+func generateSQLCmd(client *ai.Client, adapter db.DBAdapter, prompt string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		schema, err := adapter.Schema(ctx)
+		if err != nil {
+			return aiResponseMsg{err: fmt.Errorf("fetching schema: %w", err)}
+		}
+
+		sql, err := client.GenerateSQL(ctx, schema, prompt)
+		return aiResponseMsg{sql: sql, err: err}
+	}
+}
+
+func (m model) renderWithAIOverlay(background string) string {
+	modalWidth := min(m.width-4, 60)
+	if modalWidth < 20 {
+		modalWidth = 20
+	}
+
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(accentColor).
+		MarginBottom(1)
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(accentColor).
+		Padding(1, 2).
+		Width(modalWidth).
+		Background(panelBackground)
+
+	var content string
+	if m.aiLoading {
+		content = titleStyle.Render("AI Generating SQL...") + "\n" + m.aiSpinner.View() + " Thinking..."
+	} else {
+		content = titleStyle.Render("AI Assistant (Text-to-SQL)") + "\n" + m.aiInput.View()
+		if m.aiError != "" {
+			errStyle := lipgloss.NewStyle().Foreground(errorColor).MarginTop(1)
+			content += "\n" + errStyle.Render(m.aiError)
+		}
+	}
+
+	modal := boxStyle.Render(content)
+
+	// Center the modal
+	modalH := lipgloss.Height(modal)
+	modalW := lipgloss.Width(modal)
+	bgH := lipgloss.Height(background)
+
+	topPad := max((bgH-modalH)/2, 0)
+	leftPad := max((m.width-modalW)/2, 0)
+
+	positioned := strings.Repeat("\n", topPad) + strings.Repeat(" ", leftPad) + modal
+
+	return lipgloss.Place(m.width, bgH, lipgloss.Left, lipgloss.Top, positioned)
 }
 
 func (m *model) contentWidth() int {
@@ -483,11 +631,17 @@ func (m model) renderStatusBar() string {
 	var hints string
 	switch m.mode {
 	case normalMode:
-		hints = "t:tables i:insert q:quit"
+		if m.aiEnabled {
+			hints = "t:tables i:insert C-k:AI q:quit"
+		} else {
+			hints = "t:tables i:insert q:quit"
+		}
 	case insertMode:
 		hints = "C-Enter/C-j:exec Esc:normal"
 	case sidebarMode:
 		hints = "j/k:nav Enter:select Esc:close"
+	case aiMode:
+		hints = "Enter:generate Esc:cancel"
 	}
 	hintStyle := lipgloss.NewStyle().Foreground(mutedTextColor).Background(statusBackground).Padding(0, 1)
 
