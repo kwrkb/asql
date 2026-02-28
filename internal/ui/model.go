@@ -19,10 +19,13 @@ import (
 type mode string
 
 const (
-	normalMode mode = "NORMAL"
-	insertMode mode = "INSERT"
+	normalMode  mode = "NORMAL"
+	insertMode  mode = "INSERT"
+	sidebarMode mode = "SIDEBAR"
 
 	queryTimeout = 5 * time.Second
+	sidebarWidth = 25
+	minWidthForSidebar = 60
 )
 
 const (
@@ -43,6 +46,11 @@ type queryExecutedMsg struct {
 	err    error
 }
 
+type tablesLoadedMsg struct {
+	tables []string
+	err    error
+}
+
 type model struct {
 	db           db.DBAdapter
 	dbPath       string
@@ -50,13 +58,16 @@ type model struct {
 	textarea     textarea.Model
 	table        table.Model
 	viewport     viewport.Model
-	width        int
-	height       int
-	statusText   string
-	statusError  bool
-	modeStyle    lipgloss.Style
-	messageStyle lipgloss.Style
-	pathStyle    lipgloss.Style
+	width         int
+	height        int
+	statusText    string
+	statusError   bool
+	sidebarOpen   bool
+	sidebarTables []string
+	sidebarCursor int
+	modeStyle     lipgloss.Style
+	messageStyle  lipgloss.Style
+	pathStyle     lipgloss.Style
 }
 
 func NewModel(adapter db.DBAdapter, dbPath string) tea.Model {
@@ -125,7 +136,16 @@ func NewModel(adapter db.DBAdapter, dbPath string) tea.Model {
 }
 
 func (m model) Init() tea.Cmd {
-	return textarea.Blink
+	return tea.Batch(textarea.Blink, loadTablesCmd(m.db))
+}
+
+func loadTablesCmd(adapter db.DBAdapter) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
+		defer cancel()
+		tables, err := adapter.Tables(ctx)
+		return tablesLoadedMsg{tables: tables, err: err}
+	}
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -141,7 +161,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateNormal(msg)
 		case insertMode:
 			return m.updateInsert(msg)
+		case sidebarMode:
+			return m.updateSidebar(msg)
 		}
+	case tablesLoadedMsg:
+		if msg.err == nil {
+			m.sidebarTables = msg.tables
+			if m.sidebarCursor >= len(msg.tables) {
+				m.sidebarCursor = max(len(msg.tables)-1, 0)
+			}
+		}
+		return m, nil
 	case queryExecutedMsg:
 		if msg.err != nil {
 			errMsg := msg.err.Error()
@@ -152,7 +182,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.applyResult(msg.result)
-		return m, nil
+		return m, loadTablesCmd(m.db)
 	}
 
 	var cmd tea.Cmd
@@ -161,6 +191,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.textarea, cmd = m.textarea.Update(msg)
 	case normalMode:
 		m.table, cmd = m.table.Update(msg)
+	case sidebarMode:
+		// no passthrough needed
 	}
 	m.syncViewport()
 	return m, cmd
@@ -171,21 +203,30 @@ func (m model) View() string {
 		return "Loading..."
 	}
 
+	contentWidth := m.contentWidth()
+
 	editor := lipgloss.NewStyle().
-		Width(m.width).
+		Width(contentWidth).
 		Height(m.editorHeight()).
 		Background(appBackground).
 		Render(m.textarea.View())
 
 	results := lipgloss.NewStyle().
-		Width(m.width).
+		Width(contentWidth).
 		Height(m.resultsHeight()).
 		Background(appBackground).
 		Render(m.viewport.View())
 
+	main := lipgloss.JoinVertical(lipgloss.Left, editor, results)
+
+	if m.sidebarOpen {
+		sidebar := m.renderSidebar()
+		main = lipgloss.JoinHorizontal(lipgloss.Top, sidebar, main)
+	}
+
 	status := m.renderStatusBar()
 
-	return lipgloss.JoinVertical(lipgloss.Left, editor, results, status)
+	return lipgloss.JoinVertical(lipgloss.Left, main, status)
 }
 
 func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -196,6 +237,15 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = insertMode
 		m.textarea.Focus()
 		m.setStatus("Insert mode", false)
+	case "t":
+		if m.width >= minWidthForSidebar {
+			m.sidebarOpen = true
+			m.mode = sidebarMode
+			m.textarea.Blur()
+			m.sidebarCursor = 0
+			m.setStatus("Sidebar", false)
+			m.resize()
+		}
 	case "j":
 		m.table.MoveDown(1)
 	case "k":
@@ -225,15 +275,64 @@ func (m model) updateInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m model) updateSidebar(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "t":
+		m.sidebarOpen = false
+		m.mode = normalMode
+		m.setStatus("Normal mode", false)
+		m.resize()
+	case "j", "down":
+		if len(m.sidebarTables) > 0 {
+			m.sidebarCursor = min(m.sidebarCursor+1, len(m.sidebarTables)-1)
+		}
+	case "k", "up":
+		if m.sidebarCursor > 0 {
+			m.sidebarCursor--
+		}
+	case "enter":
+		if len(m.sidebarTables) > 0 {
+			name := m.sidebarTables[m.sidebarCursor]
+			quoted := `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+			query := fmt.Sprintf("SELECT * FROM %s LIMIT 100;", quoted)
+			m.textarea.SetValue(query)
+			m.sidebarOpen = false
+			m.mode = insertMode
+			m.textarea.Focus()
+			m.setStatus("Insert mode", false)
+			m.resize()
+		}
+	}
+	m.syncViewport()
+	return m, nil
+}
+
+func (m *model) contentWidth() int {
+	if m.sidebarOpen {
+		return max(m.width-sidebarWidth, 20)
+	}
+	return m.width
+}
+
 func (m *model) resize() {
+	contentWidth := m.contentWidth()
 	editorHeight := m.editorHeight()
 	resultsHeight := m.resultsHeight()
 
-	m.textarea.SetWidth(max(m.width-4, 20))
+	// Auto-close sidebar if terminal too narrow
+	if m.sidebarOpen && m.width < minWidthForSidebar {
+		m.sidebarOpen = false
+		if m.mode == sidebarMode {
+			m.mode = normalMode
+		}
+		contentWidth = m.width
+	}
+
+	m.textarea.SetWidth(max(contentWidth-4, 20))
 	m.textarea.SetHeight(max(editorHeight-2, 5))
 
 	m.table.SetHeight(max(resultsHeight-4, 3))
-	m.viewport.Width = m.width
+	m.viewport.Width = contentWidth
 	m.viewport.Height = resultsHeight
 	m.syncViewport()
 }
@@ -250,7 +349,7 @@ func (m *model) resultsHeight() int {
 
 func (m *model) syncViewport() {
 	panel := lipgloss.NewStyle().
-		Width(max(m.width, 0)).
+		Width(max(m.contentWidth(), 0)).
 		Height(max(m.resultsHeight(), 0)).
 		Background(panelBackground).
 		BorderStyle(lipgloss.RoundedBorder()).
@@ -293,6 +392,74 @@ func (m *model) setStatus(text string, isError bool) {
 	m.statusError = isError
 }
 
+func (m model) renderSidebar() string {
+	height := m.height - 1 // exclude status bar
+	w := sidebarWidth
+
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(accentColor).
+		Background(panelBackground).
+		Width(w).
+		Padding(0, 1)
+
+	itemStyle := lipgloss.NewStyle().
+		Foreground(textColor).
+		Background(panelBackground).
+		Width(w).
+		Padding(0, 1)
+
+	selectedStyle := lipgloss.NewStyle().
+		Foreground(panelBackground).
+		Background(accentColor).
+		Bold(true).
+		Width(w).
+		Padding(0, 1)
+
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("Tables"))
+	b.WriteByte('\n')
+	lines := 1
+
+	for i, name := range m.sidebarTables {
+		if lines >= height-1 {
+			break
+		}
+		if i == m.sidebarCursor {
+			b.WriteString(selectedStyle.Render(name))
+		} else {
+			b.WriteString(itemStyle.Render(name))
+		}
+		b.WriteByte('\n')
+		lines++
+	}
+
+	if len(m.sidebarTables) == 0 {
+		b.WriteString(itemStyle.Foreground(mutedTextColor).Render("(no tables)"))
+		b.WriteByte('\n')
+		lines++
+	}
+
+	// Fill remaining space
+	emptyStyle := lipgloss.NewStyle().
+		Background(panelBackground).
+		Width(w)
+	for lines < height {
+		b.WriteString(emptyStyle.Render(""))
+		b.WriteByte('\n')
+		lines++
+	}
+
+	return lipgloss.NewStyle().
+		Width(w).
+		Height(height).
+		Background(panelBackground).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(panelBorder).
+		BorderRight(true).
+		Render(strings.TrimRight(b.String(), "\n"))
+}
+
 func (m model) renderStatusBar() string {
 	modeStr := m.modeStyle.Render(string(m.mode))
 
@@ -303,11 +470,26 @@ func (m model) renderStatusBar() string {
 		msgStyle = msgStyle.Foreground(successColor)
 	}
 
+	var hints string
+	switch m.mode {
+	case normalMode:
+		hints = "t:tables i:insert q:quit"
+	case insertMode:
+		hints = "C-Enter:exec Esc:normal"
+	case sidebarMode:
+		hints = "j/k:nav Enter:select Esc:close"
+	}
+	hintStyle := lipgloss.NewStyle().Foreground(mutedTextColor).Background(statusBackground).Padding(0, 1)
+
 	left := modeStr
 	center := m.pathStyle.Render(m.dbPath)
-	right := msgStyle.Render(m.statusText)
+	middle := msgStyle.Render(m.statusText)
+	right := hintStyle.Render(hints)
 
-	bar := lipgloss.JoinHorizontal(lipgloss.Left, left, center, right)
+	leftPart := lipgloss.JoinHorizontal(lipgloss.Left, left, center, middle)
+	gap := max(m.width-lipgloss.Width(leftPart)-lipgloss.Width(right), 0)
+	bar := leftPart + strings.Repeat(" ", gap) + right
+
 	return lipgloss.NewStyle().
 		Width(m.width).
 		Background(statusBackground).

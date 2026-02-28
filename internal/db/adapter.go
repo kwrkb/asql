@@ -10,5 +10,6 @@ type QueryResult struct {
 
 type DBAdapter interface {
 	Query(context.Context, string) (QueryResult, error)
+	Tables(context.Context) ([]string, error)
 	Close() error
 }

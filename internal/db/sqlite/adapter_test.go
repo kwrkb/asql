@@ -147,6 +147,73 @@ func TestOpen(t *testing.T) {
 	})
 }
 
+func TestTables(t *testing.T) {
+	ctx := context.Background()
+
+	setup := func(t *testing.T) *Adapter {
+		t.Helper()
+		a, err := Open(":memory:")
+		if err != nil {
+			t.Fatalf("Open failed: %v", err)
+		}
+		t.Cleanup(func() { a.Close() })
+		return a
+	}
+
+	t.Run("empty database returns no tables", func(t *testing.T) {
+		a := setup(t)
+		tables, err := a.Tables(ctx)
+		if err != nil {
+			t.Fatalf("Tables() failed: %v", err)
+		}
+		if len(tables) != 0 {
+			t.Errorf("expected 0 tables, got %d: %v", len(tables), tables)
+		}
+	})
+
+	t.Run("returns tables sorted by name", func(t *testing.T) {
+		a := setup(t)
+		for _, ddl := range []string{
+			"CREATE TABLE zebra (id INTEGER)",
+			"CREATE TABLE alpha (id INTEGER)",
+			"CREATE TABLE middle (id INTEGER)",
+		} {
+			if _, err := a.Query(ctx, ddl); err != nil {
+				t.Fatalf("failed: %v", err)
+			}
+		}
+
+		tables, err := a.Tables(ctx)
+		if err != nil {
+			t.Fatalf("Tables() failed: %v", err)
+		}
+		if len(tables) != 3 {
+			t.Fatalf("expected 3 tables, got %d", len(tables))
+		}
+		if tables[0] != "alpha" || tables[1] != "middle" || tables[2] != "zebra" {
+			t.Errorf("expected [alpha middle zebra], got %v", tables)
+		}
+	})
+
+	t.Run("excludes views", func(t *testing.T) {
+		a := setup(t)
+		if _, err := a.Query(ctx, "CREATE TABLE t (id INTEGER)"); err != nil {
+			t.Fatalf("CREATE TABLE failed: %v", err)
+		}
+		if _, err := a.Query(ctx, "CREATE VIEW v AS SELECT * FROM t"); err != nil {
+			t.Fatalf("CREATE VIEW failed: %v", err)
+		}
+
+		tables, err := a.Tables(ctx)
+		if err != nil {
+			t.Fatalf("Tables() failed: %v", err)
+		}
+		if len(tables) != 1 || tables[0] != "t" {
+			t.Errorf("expected [t], got %v", tables)
+		}
+	})
+}
+
 func TestQuery(t *testing.T) {
 	ctx := context.Background()
 
