@@ -380,6 +380,9 @@ func (m model) updateInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "ctrl+enter", "ctrl+j":
 		query := strings.TrimSpace(m.textarea.Value())
+		if m.queryCancel != nil {
+			m.queryCancel()
+		}
 		ctx, cancel := context.WithCancel(context.Background())
 		m.querySeq++
 		m.queryCancel = cancel
@@ -449,6 +452,9 @@ func (m model) updateAI(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		prompt := strings.TrimSpace(m.aiInput.Value())
 		if prompt == "" {
 			return m, nil
+		}
+		if m.queryCancel != nil {
+			m.queryCancel()
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		m.querySeq++
