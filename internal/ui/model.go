@@ -245,6 +245,8 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.sidebarCursor = 0
 			m.setStatus("Sidebar", false)
 			m.resize()
+		} else {
+			m.setStatus("Terminal too narrow for sidebar", true)
 		}
 	case "j":
 		m.table.MoveDown(1)
