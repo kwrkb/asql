@@ -1,4 +1,4 @@
-package sqlite
+package postgres
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/kwrkb/asql/internal/db"
 	"github.com/kwrkb/asql/internal/db/dbutil"
@@ -16,8 +16,10 @@ type Adapter struct {
 	conn *sql.DB
 }
 
-func Open(path string) (*Adapter, error) {
-	conn, err := sql.Open("sqlite", path)
+// Open connects to a PostgreSQL database using the given DSN.
+// Accepts postgres:// or postgresql:// URL format.
+func Open(dsn string) (*Adapter, error) {
+	conn, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -30,14 +32,15 @@ func Open(path string) (*Adapter, error) {
 	return &Adapter{conn: conn}, nil
 }
 
-func (a *Adapter) Type() string { return "sqlite" }
+func (a *Adapter) Type() string { return "postgres" }
 
 func (a *Adapter) Close() error {
 	return a.conn.Close()
 }
 
 func (a *Adapter) Tables(ctx context.Context) ([]string, error) {
-	rows, err := a.conn.QueryContext(ctx, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+	rows, err := a.conn.QueryContext(ctx,
+		"SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename")
 	if err != nil {
 		return nil, err
 	}
@@ -55,24 +58,60 @@ func (a *Adapter) Tables(ctx context.Context) ([]string, error) {
 }
 
 func (a *Adapter) Schema(ctx context.Context) (string, error) {
-	rows, err := a.conn.QueryContext(ctx, "SELECT sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL ORDER BY name")
+	// Build CREATE TABLE statements from information_schema.columns
+	tables, err := a.Tables(ctx)
 	if err != nil {
 		return "", err
 	}
-	defer rows.Close()
 
 	var stmts []string
-	for rows.Next() {
-		var sql string
-		if err := rows.Scan(&sql); err != nil {
+	for _, t := range tables {
+		ddl, err := a.buildCreateTable(ctx, t)
+		if err != nil {
 			return "", err
 		}
-		stmts = append(stmts, sql+";")
+		stmts = append(stmts, ddl+";")
+	}
+	return strings.Join(stmts, "\n\n"), nil
+}
+
+func (a *Adapter) buildCreateTable(ctx context.Context, tableName string) (string, error) {
+	rows, err := a.conn.QueryContext(ctx, `
+		SELECT column_name, data_type, is_nullable, column_default
+		FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = $1
+		ORDER BY ordinal_position`, tableName)
+	if err != nil {
+		return "", fmt.Errorf("querying columns for %s: %w", tableName, err)
+	}
+	defer rows.Close()
+
+	var cols []string
+	for rows.Next() {
+		var name, dataType, nullable string
+		var defaultVal *string
+		if err := rows.Scan(&name, &dataType, &nullable, &defaultVal); err != nil {
+			return "", err
+		}
+		col := fmt.Sprintf("  %s %s", name, dataType)
+		if nullable == "NO" {
+			col += " NOT NULL"
+		}
+		if defaultVal != nil {
+			col += " DEFAULT " + *defaultVal
+		}
+		cols = append(cols, col)
 	}
 	if err := rows.Err(); err != nil {
 		return "", err
 	}
-	return strings.Join(stmts, "\n\n"), nil
+
+	quoted := `"` + strings.ReplaceAll(tableName, `"`, `""`) + `"`
+	if len(cols) == 0 {
+		return fmt.Sprintf("CREATE TABLE %s ()", quoted), nil
+	}
+
+	return fmt.Sprintf("CREATE TABLE %s (\n%s\n)", quoted, strings.Join(cols, ",\n")), nil
 }
 
 func (a *Adapter) Query(ctx context.Context, query string) (db.QueryResult, error) {
@@ -82,7 +121,12 @@ func (a *Adapter) Query(ctx context.Context, query string) (db.QueryResult, erro
 	}
 
 	if returnsRows(query) {
-		return a.queryRows(ctx, query)
+		rows, err := a.conn.QueryContext(ctx, query)
+		if err != nil {
+			return db.QueryResult{}, err
+		}
+		defer rows.Close()
+		return dbutil.ScanRows(rows)
 	}
 
 	res, err := a.conn.ExecContext(ctx, query)
@@ -100,32 +144,17 @@ func (a *Adapter) Query(ctx context.Context, query string) (db.QueryResult, erro
 	}, nil
 }
 
-func (a *Adapter) queryRows(ctx context.Context, query string) (db.QueryResult, error) {
-	rows, err := a.conn.QueryContext(ctx, query)
-	if err != nil {
-		return db.QueryResult{}, err
-	}
-	defer rows.Close()
-
-	return dbutil.ScanRows(rows)
-}
-
-// returnsRows determines whether a SQL statement will produce a result set.
-// Two strategies:
-//  1. Leading keyword: SELECT, PRAGMA, WITH, EXPLAIN, VALUES always return rows.
-//  2. RETURNING clause: any DML with a RETURNING clause returns rows.
+// returnsRows determines whether a SQL statement returns a result set.
+// PostgreSQL supports RETURNING clause.
 func returnsRows(query string) bool {
 	keyword := dbutil.LeadingKeyword(query)
-	if keyword == "" {
-		return false
-	}
 	switch keyword {
-	case "select", "pragma", "explain", "values":
+	case "select", "show", "explain", "values", "table":
 		return true
 	case "with":
 		body := dbutil.CteBodyKeyword(query)
 		switch body {
-		case "select", "values", "pragma", "explain":
+		case "select", "values", "table", "show", "explain":
 			return true
 		default:
 			return containsReturning(query)
@@ -141,7 +170,7 @@ func isIdentChar(c byte) bool {
 }
 
 // containsReturning scans query for the RETURNING keyword, correctly skipping
-// string literals, quoted identifiers, and comments.
+// string literals, quoted identifiers, comments, and dollar-quoted strings.
 func containsReturning(query string) bool {
 	const kw = "returning"
 	i := 0
@@ -149,12 +178,10 @@ func containsReturning(query string) bool {
 	for i < n {
 		switch {
 		case query[i] == '-' && i+1 < n && query[i+1] == '-':
-			// line comment: skip to end of line
 			for i < n && query[i] != '\n' {
 				i++
 			}
 		case query[i] == '/' && i+1 < n && query[i+1] == '*':
-			// block comment
 			i += 2
 			for i < n {
 				if query[i] == '*' && i+1 < n && query[i+1] == '/' {
@@ -164,13 +191,12 @@ func containsReturning(query string) bool {
 				i++
 			}
 		case query[i] == '\'':
-			// single-quoted string literal ('' is an escaped quote)
 			i++
 			for i < n {
 				if query[i] == '\'' {
 					i++
 					if i < n && query[i] == '\'' {
-						i++ // escaped quote, continue
+						i++
 						continue
 					}
 					break
@@ -178,36 +204,32 @@ func containsReturning(query string) bool {
 				i++
 			}
 		case query[i] == '"':
-			// double-quoted identifier ("" is an escaped quote)
 			i++
 			for i < n {
 				if query[i] == '"' {
 					i++
 					if i < n && query[i] == '"' {
-						i++ // escaped quote, continue
+						i++
 						continue
 					}
 					break
 				}
 				i++
 			}
-		case query[i] == '`':
-			// backtick-quoted identifier (SQLite also accepts MySQL-style backticks)
-			i++
-			for i < n && query[i] != '`' {
+		case query[i] == '$' && i+1 < n:
+			// Dollar-quoted string: $tag$...$tag$
+			tag := parseDollarTag(query, i)
+			if tag != "" {
+				i += len(tag)
+				for i+len(tag) <= n {
+					if query[i:i+len(tag)] == tag {
+						i += len(tag)
+						break
+					}
+					i++
+				}
+			} else {
 				i++
-			}
-			if i < n {
-				i++ // skip closing `
-			}
-		case query[i] == '[':
-			// bracket-quoted identifier ([id], SQLite/MSSQL style)
-			i++
-			for i < n && query[i] != ']' {
-				i++
-			}
-			if i < n {
-				i++ // skip closing ]
 			}
 		default:
 			if i+len(kw) <= n && strings.EqualFold(query[i:i+len(kw)], kw) {
@@ -223,3 +245,22 @@ func containsReturning(query string) bool {
 	return false
 }
 
+// parseDollarTag extracts a dollar-quote tag like $$ or $tag$ starting at position i.
+// Returns the full tag string (e.g. "$$" or "$tag$"), or "" if not a valid dollar-quote.
+func parseDollarTag(query string, i int) string {
+	if i >= len(query) || query[i] != '$' {
+		return ""
+	}
+	j := i + 1
+	for j < len(query) && query[j] != '$' {
+		c := query[j]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+			return ""
+		}
+		j++
+	}
+	if j >= len(query) {
+		return ""
+	}
+	return query[i : j+1] // includes closing $
+}

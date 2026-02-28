@@ -1,39 +1,37 @@
-# sqly → asql リネーム
+# Multi-DB 対応 (MySQL / PostgreSQL)
 
 ## 目的
-プロジェクト名・バイナリ名・モジュールパス・設定パスをすべて `sqly` から `asql` に変更する。
+asql を SQLite 専用から MySQL/PostgreSQL 対応に拡張する。
 
 ## タスク
 
-### Phase 1: Go コード変更（コア）
-- [x] `go.mod` — module パスを `github.com/kwrkb/asql` に変更
-- [x] `main.go` — import パス 5箇所 + エラーメッセージ「sqly exited」→「asql exited」
-- [x] `internal/db/sqlite/adapter.go` — import パス 1箇所
-- [x] `internal/ui/model.go` — import パス 2箇所
-- [x] `internal/ui/export.go` — import パス 1箇所
-- [x] `internal/ui/model_test.go` — import パス 1箇所
-- [x] `internal/config/config.go` — 設定ディレクトリ `"sqly"` → `"asql"`
-- [x] `internal/config/config_test.go` — テスト内ディレクトリ名 `"sqly"` → `"asql"`
+### Phase 0: リファクタ
+- [x] 0-1. `DBAdapter` に `Type() string` を追加
+- [x] 0-2. `internal/db/dbutil/` 共通ユーティリティ作成
+- [x] 0-3. SQLite adapter を dbutil 利用にリファクタ
+- [x] 0-4. AI プロンプトに DB 種別注入
+- [x] 0-5. TUI 初期テキストを DB 種別で分岐
+- [x] 0-6. Phase 0 検証
 
-### Phase 2: ドキュメント・設定ファイル
-- [x] `README.md` — プロジェクト名、URL、コマンド例、設定パス
-- [x] `README.ja.md` — 同上（日本語版）
-- [x] `CLAUDE.md` — プロジェクト説明、コマンド例、設定パス
-- [x] `.gitignore` — バイナリ名 `sqly` → `asql`
+### Phase 1: MySQL 対応
+- [x] 1-1. 依存追加
+- [x] 1-2. MySQL adapter 実装
+- [x] 1-3. main.go に DSN 自動判定追加
+- [x] 1-4. ステータスバーに DB 種別表示
+- [x] 1-5. ドキュメント更新
+- [x] 1-6. Phase 1 検証
 
-### Phase 3: デモ・テストデータ
-- [x] `docs/demo.tape` — タイトル、DB パス名、コマンド
-- [x] `docs/setup-demo-db.py` — DB パス名
-- [x] `testdata/sample.sql` — コメント内の参照 + プロダクト名
-
-### Phase 4: クリーンアップ
-- [x] `status/quality-report.md` — パス参照の更新
-- [x] 旧バイナリ `sqly` を削除
-- [x] `go build` でビルド確認
-- [x] `go test ./...` で全テスト通過確認
-- [x] `grep -r "sqly"` でリネーム漏れなし確認
+### Phase 2: PostgreSQL 対応
+- [x] 2-1. 依存追加
+- [x] 2-2. PostgreSQL adapter 実装
+- [x] 2-3. main.go の PostgreSQL 分岐有効化
+- [x] 2-4. ドキュメント更新
+- [x] 2-5. Phase 2 検証
 
 ## 検証
-- `go build` 成功 ✓
 - `go test ./...` 全パス ✓
-- `grep -r "sqly" --include="*.go" --include="*.md" --include="*.mod"` で漏れなし ✓
+- `go vet ./...` クリーン ✓
+- `go build` 成功 ✓
+
+## 変更履歴
+- Phase 0-2: 全フェーズ一括実装完了

@@ -42,7 +42,7 @@ func TestGenerateSQL(t *testing.T) {
 		defer srv.Close()
 
 		client := NewClient(srv.URL, "test-model", "test-key")
-		sql, err := client.GenerateSQL(context.Background(), "CREATE TABLE users (id INT);", "show all users")
+		sql, err := client.GenerateSQL(context.Background(), "sqlite", "CREATE TABLE users (id INT);", "show all users")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -71,7 +71,7 @@ func TestGenerateSQL(t *testing.T) {
 		defer srv.Close()
 
 		client := NewClient(srv.URL, "model", "")
-		_, err := client.GenerateSQL(context.Background(), "", "test")
+		_, err := client.GenerateSQL(context.Background(), "sqlite", "", "test")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -85,7 +85,7 @@ func TestGenerateSQL(t *testing.T) {
 		defer srv.Close()
 
 		client := NewClient(srv.URL, "model", "")
-		_, err := client.GenerateSQL(context.Background(), "", "test")
+		_, err := client.GenerateSQL(context.Background(), "sqlite", "", "test")
 		if err == nil {
 			t.Error("expected error for 500 status")
 		}
@@ -98,7 +98,7 @@ func TestGenerateSQL(t *testing.T) {
 		defer srv.Close()
 
 		client := NewClient(srv.URL, "model", "")
-		_, err := client.GenerateSQL(context.Background(), "", "test")
+		_, err := client.GenerateSQL(context.Background(), "sqlite", "", "test")
 		if err == nil {
 			t.Error("expected error for empty choices")
 		}

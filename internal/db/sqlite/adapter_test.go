@@ -4,36 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 )
-
-func TestLeadingKeyword(t *testing.T) {
-	tests := []struct {
-		name  string
-		query string
-		want  string
-	}{
-		{"plain select", "SELECT * FROM t", "select"},
-		{"leading whitespace", "  INSERT INTO t VALUES (1)", "insert"},
-		{"line comment", "-- comment\nSELECT 1", "select"},
-		{"block comment", "/* comment */ UPDATE t SET a=1", "update"},
-		{"leading semicolon", ";; SELECT 1", "select"},
-		{"empty string", "", ""},
-		{"only comment", "-- nothing", ""},
-		{"unclosed block comment", "/* unclosed SELECT 1", ""},
-		{"mixed comments", "-- line\n/* block */\nDELETE FROM t", "delete"},
-		{"uppercase", "PRAGMA table_info(t)", "pragma"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := leadingKeyword(tt.query)
-			if got != tt.want {
-				t.Errorf("leadingKeyword(%q) = %q, want %q", tt.query, got, tt.want)
-			}
-		})
-	}
-}
 
 func TestContainsReturning(t *testing.T) {
 	tests := []struct {
@@ -74,7 +45,11 @@ func TestReturnsRows(t *testing.T) {
 	}{
 		{"select", "SELECT 1", true},
 		{"pragma", "PRAGMA table_info(t)", true},
-		{"with", "WITH cte AS (SELECT 1) SELECT * FROM cte", true},
+		{"with select", "WITH cte AS (SELECT 1) SELECT * FROM cte", true},
+		{"with delete", "WITH cte AS (SELECT 1) DELETE FROM t WHERE id IN (SELECT * FROM cte)", false},
+		{"with delete returning", "WITH cte AS (SELECT 1) DELETE FROM t WHERE id IN (SELECT * FROM cte) RETURNING *", true},
+		{"with update", "WITH cte AS (SELECT 1) UPDATE t SET a=1", false},
+		{"with insert returning", "WITH cte AS (SELECT 1) INSERT INTO t SELECT * FROM cte RETURNING id", true},
 		{"explain", "EXPLAIN SELECT 1", true},
 		{"values", "VALUES (1, 2)", true},
 		{"insert", "INSERT INTO t VALUES (1)", false},
@@ -93,38 +68,6 @@ func TestReturnsRows(t *testing.T) {
 			got := returnsRows(tt.query)
 			if got != tt.want {
 				t.Errorf("returnsRows(%q) = %v, want %v", tt.query, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestStringifyValue(t *testing.T) {
-	fixedTime := time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)
-
-	tests := []struct {
-		name  string
-		value any
-		want  string
-	}{
-		{"nil", nil, "NULL"},
-		{"byte slice", []byte("hello"), "hello"},
-		{"time", fixedTime, "2024-01-15T12:00:00Z"},
-		{"int", 42, "42"},
-		{"int64", int64(100), "100"},
-		{"float64", 3.14, "3.14"},
-		{"string", "world", "world"},
-		{"bool true", true, "true"},
-		{"bool false", false, "false"},
-		{"custom struct", struct{ X int }{42}, "{42}"},
-		{"binary blob", []byte{0xDE, 0xAD, 0xBE, 0xEF}, "deadbeef"},
-		{"empty byte slice", []byte{}, ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := stringifyValue(tt.value)
-			if got != tt.want {
-				t.Errorf("stringifyValue(%v) = %q, want %q", tt.value, got, tt.want)
 			}
 		})
 	}

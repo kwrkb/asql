@@ -94,13 +94,27 @@ type model struct {
 
 func NewModel(adapter db.DBAdapter, dbPath string, aiClient *ai.Client) tea.Model {
 	input := textarea.New()
-	input.Placeholder = "SELECT name FROM sqlite_master WHERE type = 'table';"
+
+	var placeholder, initialQuery string
+	switch adapter.Type() {
+	case "mysql":
+		placeholder = "SHOW TABLES;"
+		initialQuery = "SELECT VERSION();"
+	case "postgres":
+		placeholder = "SELECT tablename FROM pg_tables WHERE schemaname = 'public';"
+		initialQuery = "SELECT version();"
+	default:
+		placeholder = "SELECT name FROM sqlite_master WHERE type = 'table';"
+		initialQuery = "SELECT sqlite_version();"
+	}
+
+	input.Placeholder = placeholder
 	input.Prompt = lipgloss.NewStyle().Foreground(keywordColor).Render("sql> ")
 	input.Focus()
 	input.ShowLineNumbers = true
 	input.SetHeight(8)
 	input.CharLimit = 0
-	input.SetValue("-- Press Esc for NORMAL mode, Ctrl+Enter (or Ctrl+J) to execute.\nSELECT sqlite_version();")
+	input.SetValue("-- Press Esc for NORMAL mode, Ctrl+Enter (or Ctrl+J) to execute.\n" + initialQuery)
 	input.Cursor.Style = lipgloss.NewStyle().Foreground(accentColor)
 	input.FocusedStyle.Base = lipgloss.NewStyle().
 		Foreground(textColor).
@@ -478,7 +492,7 @@ func generateSQLCmd(parent context.Context, client *ai.Client, adapter db.DBAdap
 			return aiResponseMsg{seq: seq, err: fmt.Errorf("fetching schema: %w", err)}
 		}
 
-		sql, err := client.GenerateSQL(ctx, schema, prompt)
+		sql, err := client.GenerateSQL(ctx, adapter.Type(), schema, prompt)
 		return aiResponseMsg{seq: seq, sql: sql, err: err}
 	}
 }
@@ -719,8 +733,11 @@ func (m model) renderStatusBar() string {
 	}
 	hintStyle := lipgloss.NewStyle().Foreground(mutedTextColor).Background(statusBackground).Padding(0, 1)
 
+	dbLabel := strings.ToUpper(m.db.Type())
+	dbLabelStyle := lipgloss.NewStyle().Padding(0, 1).Foreground(keywordColor).Background(statusBackground)
+
 	left := modeStr
-	center := m.pathStyle.Render(m.dbPath)
+	center := dbLabelStyle.Render("["+dbLabel+"]") + m.pathStyle.Render(m.dbPath)
 	middle := msgStyle.Render(m.statusText)
 	right := hintStyle.Render(hints)
 
