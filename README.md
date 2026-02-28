@@ -1,3 +1,5 @@
+[日本語](README.ja.md)
+
 # sqly
 
 A terminal UI SQL client built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). Currently supports SQLite, with MySQL/PostgreSQL planned.
