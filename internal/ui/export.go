@@ -43,17 +43,17 @@ func (m *model) executeExport() {
 	headers := m.lastResult.Columns
 	rows := m.lastResult.Rows
 
+	defer func() { m.mode = normalMode }()
+
 	switch m.exportCursor {
 	case 0: // CSV to clipboard
 		content, err := export.FormatCSV(headers, rows)
 		if err != nil {
 			m.setStatus(fmt.Sprintf("Export failed: %v", err), true)
-			m.mode = normalMode
 			return
 		}
 		if err := clipboard.WriteAll(content); err != nil {
 			m.setStatus(fmt.Sprintf("Clipboard failed: %v", err), true)
-			m.mode = normalMode
 			return
 		}
 		m.setStatus("Copied as CSV to clipboard!", false)
@@ -62,12 +62,10 @@ func (m *model) executeExport() {
 		content, err := export.FormatJSON(headers, rows)
 		if err != nil {
 			m.setStatus(fmt.Sprintf("Export failed: %v", err), true)
-			m.mode = normalMode
 			return
 		}
 		if err := clipboard.WriteAll(content); err != nil {
 			m.setStatus(fmt.Sprintf("Clipboard failed: %v", err), true)
-			m.mode = normalMode
 			return
 		}
 		m.setStatus("Copied as JSON to clipboard!", false)
@@ -76,7 +74,6 @@ func (m *model) executeExport() {
 		content := export.FormatMarkdown(headers, rows)
 		if err := clipboard.WriteAll(content); err != nil {
 			m.setStatus(fmt.Sprintf("Clipboard failed: %v", err), true)
-			m.mode = normalMode
 			return
 		}
 		m.setStatus("Copied as Markdown to clipboard!", false)
@@ -85,13 +82,10 @@ func (m *model) executeExport() {
 		filename, err := export.SaveCSVFile(headers, rows)
 		if err != nil {
 			m.setStatus(fmt.Sprintf("Export failed: %v", err), true)
-			m.mode = normalMode
 			return
 		}
 		m.setStatus(fmt.Sprintf("Saved to %s", filename), false)
 	}
-
-	m.mode = normalMode
 }
 
 func (m model) renderWithExportOverlay(background string) string {
