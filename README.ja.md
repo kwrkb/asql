@@ -10,6 +10,10 @@
 
 ## インストール
 
+[GitHub Releases](https://github.com/kwrkb/sqly/releases) からビルド済みバイナリをダウンロードできます。
+
+Go でインストール:
+
 ```bash
 go install github.com/kwrkb/sqly@latest
 ```
