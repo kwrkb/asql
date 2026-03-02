@@ -75,10 +75,11 @@ func newTestModel() *model {
 	tbl := table.New()
 	vp := viewport.New(0, 0)
 	return &model{
-		table:    tbl,
-		viewport: vp,
-		width:    80,
-		height:   24,
+		table:      tbl,
+		viewport:   vp,
+		width:      80,
+		height:     24,
+		historyIdx: -1,
 	}
 }
 
@@ -144,6 +145,100 @@ func TestApplyResult(t *testing.T) {
 		}
 		if m.statusText != "3 row(s) affected" {
 			t.Errorf("unexpected status: %q", m.statusText)
+		}
+	})
+
+	t.Run("column headers include type info", func(t *testing.T) {
+		m := newTestModel()
+		result := db.QueryResult{
+			Columns:     []string{"id", "name"},
+			ColumnTypes: []string{"INTEGER", "TEXT"},
+			Rows:        [][]string{{"1", "alice"}},
+			Message:     "1 row(s) returned",
+		}
+		m.applyResult(result)
+
+		cols := m.table.Columns()
+		if cols[0].Title != "id integer" {
+			t.Errorf("expected 'id integer', got %q", cols[0].Title)
+		}
+		if cols[1].Title != "name text" {
+			t.Errorf("expected 'name text', got %q", cols[1].Title)
+		}
+	})
+
+	t.Run("column headers without type info", func(t *testing.T) {
+		m := newTestModel()
+		result := db.QueryResult{
+			Columns: []string{"id", "name"},
+			Rows:    [][]string{{"1", "alice"}},
+			Message: "1 row(s) returned",
+		}
+		m.applyResult(result)
+
+		cols := m.table.Columns()
+		if cols[0].Title != "id" {
+			t.Errorf("expected 'id', got %q", cols[0].Title)
+		}
+	})
+}
+
+func TestQueryHistory(t *testing.T) {
+	t.Run("history stores executed queries", func(t *testing.T) {
+		m := newTestModel()
+		m.queryHistory = append(m.queryHistory, "SELECT 1")
+		m.queryHistory = append(m.queryHistory, "SELECT 2")
+
+		if len(m.queryHistory) != 2 {
+			t.Fatalf("expected 2 history entries, got %d", len(m.queryHistory))
+		}
+		if m.queryHistory[0] != "SELECT 1" {
+			t.Errorf("expected 'SELECT 1', got %q", m.queryHistory[0])
+		}
+	})
+
+	t.Run("history navigation with ctrl+p and ctrl+n", func(t *testing.T) {
+		m := newTestModel()
+		m.mode = insertMode
+		m.queryHistory = []string{"SELECT 1", "SELECT 2", "SELECT 3"}
+		m.historyIdx = -1
+
+		// ctrl+p: go to last entry
+		m.historyDraft = "current input"
+		m.historyIdx = len(m.queryHistory) - 1
+		if m.queryHistory[m.historyIdx] != "SELECT 3" {
+			t.Errorf("expected 'SELECT 3', got %q", m.queryHistory[m.historyIdx])
+		}
+
+		// ctrl+p again: go to previous
+		m.historyIdx--
+		if m.queryHistory[m.historyIdx] != "SELECT 2" {
+			t.Errorf("expected 'SELECT 2', got %q", m.queryHistory[m.historyIdx])
+		}
+
+		// ctrl+n: go to next
+		m.historyIdx++
+		if m.queryHistory[m.historyIdx] != "SELECT 3" {
+			t.Errorf("expected 'SELECT 3', got %q", m.queryHistory[m.historyIdx])
+		}
+
+		// ctrl+n at end: back to draft
+		m.historyIdx = -1
+		if m.historyDraft != "current input" {
+			t.Errorf("expected draft 'current input', got %q", m.historyDraft)
+		}
+	})
+
+	t.Run("history cap at maxHistory", func(t *testing.T) {
+		m := newTestModel()
+		for i := 0; i < maxHistory+10; i++ {
+			m.queryHistory = append(m.queryHistory, "q")
+			if len(m.queryHistory) > maxHistory {
+				m.queryHistory = m.queryHistory[1:]
+			}
+		}
+		if len(m.queryHistory) != maxHistory {
+			t.Errorf("expected %d entries, got %d", maxHistory, len(m.queryHistory))
 		}
 	})
 }

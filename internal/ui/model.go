@@ -86,6 +86,12 @@ type model struct {
 	queryCancel   context.CancelFunc
 	querySeq      uint64
 	lastResult    db.QueryResult
+	queryHistory  []string // executed queries (newest at end)
+	historyIdx    int      // -1 = new input, 0..n = history position
+	historyDraft  string   // input saved before navigating history
+	sortCol       int
+	sortDir       sortOrder
+	colCursor     int // column cursor in NORMAL mode
 	exportCursor  int
 	modeStyle     lipgloss.Style
 	messageStyle  lipgloss.Style
@@ -172,6 +178,7 @@ func NewModel(adapter db.DBAdapter, dbPath string, aiClient *ai.Client) tea.Mode
 		table:      tbl,
 		viewport:   vp,
 		statusText: "Ready",
+		historyIdx: -1,
 		aiEnabled:  aiClient != nil,
 		aiClient:   aiClient,
 		aiInput:    aiIn,
@@ -279,6 +286,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.lastResult = msg.result
+		m.sortDir = sortNone
+		m.sortCol = 0
+		m.colCursor = 0
 		m.applyResult(msg.result)
 		return m, loadTablesCmd(m.db)
 	}
@@ -379,10 +389,24 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.table.MoveDown(1)
 	case "k":
 		m.table.MoveUp(1)
+	case "h", "left":
+		if m.colCursor > 0 {
+			m.colCursor--
+		}
+	case "l", "right":
+		if len(m.lastResult.Columns) > 0 && m.colCursor < len(m.lastResult.Columns)-1 {
+			m.colCursor++
+		}
+	case "s":
+		if len(m.lastResult.Columns) > 0 {
+			m.toggleSort()
+		}
 	}
 	m.syncViewport()
 	return m, nil
 }
+
+const maxHistory = 100
 
 func (m model) updateInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
@@ -397,11 +421,43 @@ func (m model) updateInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.queryCancel != nil {
 			m.queryCancel()
 		}
+		// Add to history (skip duplicates of last entry)
+		if query != "" && (len(m.queryHistory) == 0 || m.queryHistory[len(m.queryHistory)-1] != query) {
+			m.queryHistory = append(m.queryHistory, query)
+			if len(m.queryHistory) > maxHistory {
+				m.queryHistory = m.queryHistory[1:]
+			}
+		}
+		m.historyIdx = -1
 		ctx, cancel := context.WithCancel(context.Background())
 		m.querySeq++
 		m.queryCancel = cancel
 		m.setStatus("Executing query...", false)
 		return m, executeQueryCmd(ctx, m.db, query, m.querySeq)
+	case "ctrl+p":
+		if len(m.queryHistory) == 0 {
+			return m, nil
+		}
+		if m.historyIdx == -1 {
+			m.historyDraft = m.textarea.Value()
+			m.historyIdx = len(m.queryHistory) - 1
+		} else if m.historyIdx > 0 {
+			m.historyIdx--
+		}
+		m.textarea.SetValue(m.queryHistory[m.historyIdx])
+		return m, nil
+	case "ctrl+n":
+		if m.historyIdx == -1 {
+			return m, nil
+		}
+		if m.historyIdx < len(m.queryHistory)-1 {
+			m.historyIdx++
+			m.textarea.SetValue(m.queryHistory[m.historyIdx])
+		} else {
+			m.historyIdx = -1
+			m.textarea.SetValue(m.historyDraft)
+		}
+		return m, nil
 	}
 
 	var cmd tea.Cmd
@@ -587,32 +643,7 @@ func (m *model) syncViewport() {
 }
 
 func (m *model) applyResult(result db.QueryResult) {
-	columns := make([]table.Column, 0, len(result.Columns))
-	rows := make([]table.Row, 0, len(result.Rows))
-
-	if len(result.Columns) == 0 {
-		columns = []table.Column{{Title: "Result", Width: max(m.width-6, 20)}}
-		rows = []table.Row{{result.Message}}
-	} else {
-		for i, title := range result.Columns {
-			width := columnWidth(title, result.Rows, i)
-			columns = append(columns, table.Column{Title: title, Width: width})
-		}
-		for _, row := range result.Rows {
-			rows = append(rows, table.Row(row))
-		}
-		if len(rows) == 0 {
-			sentinel := make(table.Row, len(columns))
-			sentinel[0] = "(no rows)"
-			rows = []table.Row{sentinel}
-		}
-	}
-
-	m.table.SetRows([]table.Row{})
-	m.table.SetColumns(columns)
-	m.table.SetRows(rows)
-	m.setStatus(result.Message, false)
-	m.syncViewport()
+	m.applyResultWithSort(result)
 }
 
 func (m *model) setStatus(text string, isError bool) {
@@ -717,12 +748,12 @@ func (m model) renderStatusBar() string {
 		switch m.mode {
 		case normalMode:
 			if m.aiEnabled {
-				hints = "t:tables i:insert e:export C-k:AI q:quit"
+				hints = "h/l:col s:sort t:tables i:insert e:export C-k:AI q:quit"
 			} else {
-				hints = "t:tables i:insert e:export q:quit"
+				hints = "h/l:col s:sort t:tables i:insert e:export q:quit"
 			}
 		case insertMode:
-			hints = "C-Enter/C-j:exec Esc:normal"
+			hints = "C-Enter/C-j:exec C-p/C-n:hist Esc:normal"
 		case sidebarMode:
 			hints = "j/k:nav Enter:select Esc:close"
 		case aiMode:
@@ -736,14 +767,26 @@ func (m model) renderStatusBar() string {
 	dbLabel := strings.ToUpper(m.db.Type())
 	dbLabelStyle := lipgloss.NewStyle().Padding(0, 1).Foreground(keywordColor).Background(statusBackground)
 
+	var posInfo string
+	if len(m.lastResult.Columns) > 0 && len(m.lastResult.Rows) > 0 {
+		colName := ""
+		if m.colCursor < len(m.lastResult.Columns) {
+			colName = m.lastResult.Columns[m.colCursor]
+		}
+		posInfo = fmt.Sprintf("col:%s %d/%d", colName, m.table.Cursor()+1, len(m.lastResult.Rows))
+	}
+	posStyle := lipgloss.NewStyle().Foreground(textColor).Background(statusBackground).Padding(0, 1)
+
 	left := modeStr
 	center := dbLabelStyle.Render("["+dbLabel+"]") + m.pathStyle.Render(m.dbPath)
 	middle := msgStyle.Render(m.statusText)
+	pos := posStyle.Render(posInfo)
 	right := hintStyle.Render(hints)
 
 	leftPart := lipgloss.JoinHorizontal(lipgloss.Left, left, center, middle)
-	gap := max(m.width-lipgloss.Width(leftPart)-lipgloss.Width(right), 0)
-	bar := leftPart + strings.Repeat(" ", gap) + right
+	rightPart := lipgloss.JoinHorizontal(lipgloss.Right, pos, right)
+	gap := max(m.width-lipgloss.Width(leftPart)-lipgloss.Width(rightPart), 0)
+	bar := leftPart + strings.Repeat(" ", gap) + rightPart
 
 	return lipgloss.NewStyle().
 		Width(m.width).
@@ -774,4 +817,65 @@ func columnWidth(title string, rows [][]string, idx int) int {
 		return 12
 	}
 	return min(width+2, 32)
+}
+
+func (m *model) toggleSort() {
+	if m.colCursor == m.sortCol {
+		switch m.sortDir {
+		case sortNone:
+			m.sortDir = sortAsc
+		case sortAsc:
+			m.sortDir = sortDesc
+		case sortDesc:
+			m.sortDir = sortNone
+		}
+	} else {
+		m.sortCol = m.colCursor
+		m.sortDir = sortAsc
+	}
+	m.applySortedResult()
+}
+
+func (m *model) applySortedResult() {
+	result := m.lastResult
+	result.Rows = sortedRows(m.lastResult.Rows, m.sortCol, m.sortDir)
+	m.applyResultWithSort(result)
+	m.table.GotoTop()
+}
+
+// applyResultWithSort is like applyResult but adds sort indicators to headers.
+func (m *model) applyResultWithSort(result db.QueryResult) {
+	columns := make([]table.Column, 0, len(result.Columns))
+	rows := make([]table.Row, 0, len(result.Rows))
+
+	if len(result.Columns) == 0 {
+		columns = []table.Column{{Title: "Result", Width: max(m.width-6, 20)}}
+		rows = []table.Row{{result.Message}}
+	} else {
+		for i, title := range result.Columns {
+			header := title
+			if i < len(result.ColumnTypes) && result.ColumnTypes[i] != "" {
+				header = fmt.Sprintf("%s %s", title, strings.ToLower(result.ColumnTypes[i]))
+			}
+			if i == m.sortCol && m.sortDir != sortNone {
+				header += sortIndicator(m.sortDir)
+			}
+			width := columnWidth(header, result.Rows, i)
+			columns = append(columns, table.Column{Title: header, Width: width})
+		}
+		for _, row := range result.Rows {
+			rows = append(rows, table.Row(row))
+		}
+		if len(rows) == 0 {
+			sentinel := make(table.Row, len(columns))
+			sentinel[0] = "(no rows)"
+			rows = []table.Row{sentinel}
+		}
+	}
+
+	m.table.SetRows([]table.Row{})
+	m.table.SetColumns(columns)
+	m.table.SetRows(rows)
+	m.setStatus(result.Message, false)
+	m.syncViewport()
 }

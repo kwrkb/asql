@@ -404,4 +404,54 @@ func TestQuery(t *testing.T) {
 			t.Errorf("expected 'NULL', got %v", result.Rows)
 		}
 	})
+
+	t.Run("empty string is displayed as double-quoted empty", func(t *testing.T) {
+		a := setup(t)
+		result, err := a.Query(ctx, "SELECT '', NULL, 0")
+		if err != nil {
+			t.Fatalf("SELECT failed: %v", err)
+		}
+		if len(result.Rows) != 1 {
+			t.Fatalf("expected 1 row, got %d", len(result.Rows))
+		}
+		row := result.Rows[0]
+		if row[0] != `""` {
+			t.Errorf("empty string: expected %q, got %q", `""`, row[0])
+		}
+		if row[1] != "NULL" {
+			t.Errorf("NULL: expected %q, got %q", "NULL", row[1])
+		}
+		if row[2] != "0" {
+			t.Errorf("zero: expected %q, got %q", "0", row[2])
+		}
+	})
+
+	t.Run("ColumnTypes are populated for typed columns", func(t *testing.T) {
+		a := setup(t)
+		_, err := a.Query(ctx, "CREATE TABLE typed (id INTEGER, name TEXT, val REAL)")
+		if err != nil {
+			t.Fatalf("CREATE TABLE failed: %v", err)
+		}
+		_, err = a.Query(ctx, "INSERT INTO typed VALUES (1, 'a', 1.5)")
+		if err != nil {
+			t.Fatalf("INSERT failed: %v", err)
+		}
+		result, err := a.Query(ctx, "SELECT id, name, val FROM typed")
+		if err != nil {
+			t.Fatalf("SELECT failed: %v", err)
+		}
+		if len(result.ColumnTypes) != 3 {
+			t.Fatalf("expected 3 column types, got %d", len(result.ColumnTypes))
+		}
+		// SQLite driver returns "INTEGER", "TEXT", "REAL"
+		if result.ColumnTypes[0] != "INTEGER" {
+			t.Errorf("expected INTEGER, got %q", result.ColumnTypes[0])
+		}
+		if result.ColumnTypes[1] != "TEXT" {
+			t.Errorf("expected TEXT, got %q", result.ColumnTypes[1])
+		}
+		if result.ColumnTypes[2] != "REAL" {
+			t.Errorf("expected REAL, got %q", result.ColumnTypes[2])
+		}
+	})
 }

@@ -35,6 +35,15 @@ func ScanRows(rows *sql.Rows) (db.QueryResult, error) {
 		return db.QueryResult{}, err
 	}
 
+	// Retrieve column type names (best-effort; driver-dependent).
+	var colTypes []string
+	if cts, err := rows.ColumnTypes(); err == nil {
+		colTypes = make([]string, len(cts))
+		for i, ct := range cts {
+			colTypes[i] = ct.DatabaseTypeName()
+		}
+	}
+
 	values := make([]any, len(columns))
 	ptrs := make([]any, len(columns))
 	for i := range values {
@@ -48,7 +57,11 @@ func ScanRows(rows *sql.Rows) (db.QueryResult, error) {
 		}
 		record := make([]string, len(columns))
 		for i, value := range values {
-			record[i] = StringifyValue(value)
+			s := StringifyValue(value)
+			if s == "" {
+				s = `""`
+			}
+			record[i] = s
 		}
 		resultRows = append(resultRows, record)
 	}
@@ -57,9 +70,10 @@ func ScanRows(rows *sql.Rows) (db.QueryResult, error) {
 	}
 
 	return db.QueryResult{
-		Columns: columns,
-		Rows:    resultRows,
-		Message: fmt.Sprintf("%d row(s) returned", len(resultRows)),
+		Columns:     columns,
+		ColumnTypes: colTypes,
+		Rows:        resultRows,
+		Message:     fmt.Sprintf("%d row(s) returned", len(resultRows)),
 	}, nil
 }
 

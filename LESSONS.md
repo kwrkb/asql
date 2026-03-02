@@ -145,6 +145,33 @@ if m.cursor >= maxVisible {
 for i := scrollOffset; i < len(items); i++ { ... }
 ```
 
+### ソートで NULL を「常に末尾」にするには比較関数の外で処理する
+
+**文脈**: `smartCompare` で NULL に `+1`（末尾）を返していたが、DESC ソート時に `cmp = -cmp` で符号反転され、NULL が先頭に来てしまった。
+
+**学び**: 「NULL は方向に関係なく常に末尾」のようなソート不変条件は、比較関数の返り値を反転する前に独立して処理する必要がある。比較関数内の NULL ハンドリングだけでは DESC 反転で壊れる。
+
+**パターン**:
+```go
+sort.SliceStable(indices, func(i, j int) bool {
+    // NULL は方向に関係なく常に末尾 — 比較反転の外で処理
+    if aNULL != bNULL {
+        return bNULL // bがNULLならaが前
+    }
+    cmp := smartCompare(a, b)
+    if dir == sortDesc {
+        cmp = -cmp
+    }
+    return cmp < 0
+})
+```
+
+### 表示ロジックの重複は早期に統合する
+
+**文脈**: `applyResult` と `applyResultWithSort` で列ヘッダ構築・行変換・sentinel 処理が完全に重複していた。自己レビューで検出し、`applyResult` を `applyResultWithSort` への委譲に統合。
+
+**学び**: 「ソートインジケータの有無」程度の差分で関数を複製すると、片方の修正がもう片方に反映されないバグの温床になる。差分が小さい場合は条件分岐で一本化する。
+
 ---
 
 ## データエクスポート
