@@ -57,15 +57,11 @@ func ScanRows(rows *sql.Rows) (db.QueryResult, error) {
 		}
 		record := make([]string, len(columns))
 		for i, value := range values {
-			if value == nil {
-				record[i] = "NULL"
-			} else {
-				s := StringifyValue(value)
-				if s == "" {
-					s = `""`
-				}
-				record[i] = s
+			s := StringifyValue(value)
+			if s == "" {
+				s = `""`
 			}
+			record[i] = s
 		}
 		resultRows = append(resultRows, record)
 	}
