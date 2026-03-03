@@ -91,8 +91,9 @@ type model struct {
 	historyDraft  string   // input saved before navigating history
 	sortCol       int
 	sortDir       sortOrder
-	colCursor     int // column cursor in NORMAL mode
-	exportCursor  int
+	colCursor      int // column cursor in NORMAL mode
+	cachedColWidths []int // cached column widths (recomputed only when result changes)
+	exportCursor   int
 	modeStyle     lipgloss.Style
 	messageStyle  lipgloss.Style
 	pathStyle     lipgloss.Style
@@ -388,6 +389,7 @@ func (m *model) resultsHeight() int {
 }
 
 func (m *model) syncViewport() {
+	m.updateColumnHeaders()
 	panel := lipgloss.NewStyle().
 		Width(max(m.contentWidth(), 0)).
 		Height(max(m.resultsHeight(), 0)).
@@ -397,6 +399,74 @@ func (m *model) syncViewport() {
 		Padding(0, 1).
 		Render(m.table.View())
 	m.viewport.SetContent(panel)
+}
+
+// updateColumnHeaders rebuilds column headers to highlight the selected column.
+// Column widths are taken from cache (computed once per result set in applyResultWithSort).
+func (m *model) updateColumnHeaders() {
+	if len(m.lastResult.Columns) == 0 {
+		return
+	}
+	columns := make([]table.Column, 0, len(m.lastResult.Columns))
+	selectedStyle := lipgloss.NewStyle().Reverse(true)
+	for i, title := range m.lastResult.Columns {
+		header := sanitize(title)
+		if i < len(m.lastResult.ColumnTypes) && m.lastResult.ColumnTypes[i] != "" {
+			header = fmt.Sprintf("%s %s", header, strings.ToLower(sanitize(m.lastResult.ColumnTypes[i])))
+		}
+		if i == m.sortCol && m.sortDir != sortNone {
+			header += sortIndicator(m.sortDir)
+		}
+		if m.mode == normalMode && i == m.colCursor {
+			header = selectedStyle.Render(header)
+		}
+		w := 12
+		if i < len(m.cachedColWidths) {
+			w = m.cachedColWidths[i]
+		}
+		columns = append(columns, table.Column{Title: header, Width: w})
+	}
+	m.table.SetColumns(columns)
+}
+
+// sanitize strips ANSI escape sequences and control characters from s.
+func sanitize(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	i := 0
+	for i < len(s) {
+		if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '[' {
+			// skip CSI sequence: ESC [ ... final byte
+			j := i + 2
+			for j < len(s) && s[j] >= 0x20 && s[j] <= 0x3F {
+				j++
+			}
+			if j < len(s) {
+				j++ // skip final byte
+			}
+			i = j
+			continue
+		}
+		if s[i] == '\x1b' {
+			// skip other escape sequences (OSC, etc.): ESC ... ST/BEL
+			j := i + 1
+			for j < len(s) && s[j] != '\x1b' && s[j] != '\a' {
+				j++
+			}
+			if j < len(s) {
+				j++
+			}
+			i = j
+			continue
+		}
+		if s[i] < 0x20 && s[i] != '\t' {
+			i++
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
 }
 
 func (m *model) applyResult(result db.QueryResult) {
@@ -532,16 +602,19 @@ func (m *model) applyResultWithSort(result db.QueryResult) {
 	if len(result.Columns) == 0 {
 		columns = []table.Column{{Title: "Result", Width: max(m.width-6, 20)}}
 		rows = []table.Row{{result.Message}}
+		m.cachedColWidths = nil
 	} else {
+		m.cachedColWidths = make([]int, len(result.Columns))
 		for i, title := range result.Columns {
-			header := title
+			header := sanitize(title)
 			if i < len(result.ColumnTypes) && result.ColumnTypes[i] != "" {
-				header = fmt.Sprintf("%s %s", title, strings.ToLower(result.ColumnTypes[i]))
+				header = fmt.Sprintf("%s %s", header, strings.ToLower(sanitize(result.ColumnTypes[i])))
 			}
 			if i == m.sortCol && m.sortDir != sortNone {
 				header += sortIndicator(m.sortDir)
 			}
 			width := columnWidth(header, result.Rows, i)
+			m.cachedColWidths[i] = width
 			columns = append(columns, table.Column{Title: header, Width: width})
 		}
 		for _, row := range result.Rows {
