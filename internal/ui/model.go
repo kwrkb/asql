@@ -28,6 +28,7 @@ const (
 	sidebarMode mode = "SIDEBAR"
 	aiMode      mode = "AI"
 	exportMode  mode = "EXPORT"
+	detailMode  mode = "DETAIL"
 
 	queryTimeout = 5 * time.Second
 	sidebarWidth = 25
@@ -96,8 +97,10 @@ type model struct {
 	sortDir       sortOrder
 	colCursor      int // column cursor in NORMAL mode
 	cachedColWidths []int // cached column widths (recomputed only when result changes)
-	exportCursor   int
-	modeStyle     lipgloss.Style
+	exportCursor      int
+	detailFieldCursor int
+	detailScroll      int
+	modeStyle         lipgloss.Style
 	messageStyle  lipgloss.Style
 	pathStyle     lipgloss.Style
 }
@@ -239,6 +242,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateAI(msg)
 		case exportMode:
 			return m.updateExport(msg)
+		case detailMode:
+			return m.updateDetail(msg)
 		}
 	case aiResponseMsg:
 		if msg.seq != m.querySeq {
@@ -346,6 +351,10 @@ func (m model) View() string {
 
 	if m.mode == exportMode {
 		view = m.renderWithExportOverlay(view)
+	}
+
+	if m.mode == detailMode {
+		view = m.renderWithDetailOverlay(view)
 	}
 
 	return view
@@ -515,6 +524,8 @@ func (m model) renderStatusBar() string {
 			hints = "Enter:generate Esc:cancel"
 		case exportMode:
 			hints = "j/k:nav Enter:select Esc:cancel"
+		case detailMode:
+			hints = "j/k:field n/N:row Esc:close"
 		}
 	}
 	hintStyle := lipgloss.NewStyle().Foreground(mutedTextColor).Background(statusBackground).Padding(0, 1)
