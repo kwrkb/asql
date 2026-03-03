@@ -37,6 +37,13 @@ func (m model) updateInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.queryCancel = cancel
 		m.setStatus("Executing query...", false)
 		return m, executeQueryCmd(ctx, m.db, query, m.querySeq)
+	case tea.KeyCtrlR:
+		return m.enterHistorySearchMode()
+	case tea.KeyCtrlL:
+		m.textarea.SetValue("")
+		m.historyIdx = -1
+		m.historyDraft = ""
+		return m, nil
 	case tea.KeyCtrlP:
 		if len(m.queryHistory) == 0 {
 			return m, nil
