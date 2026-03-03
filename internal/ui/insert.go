@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -17,6 +18,20 @@ func (m model) updateInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setStatus("Normal mode", false)
 		m.syncViewport()
 		return m, nil
+	case tea.KeyCtrlS:
+		query := strings.TrimSpace(m.textarea.Value())
+		if query == "" {
+			m.setStatus("No query to save", true)
+			return m, nil
+		}
+		m.snippetPrevMode = insertMode
+		m.mode = snippetMode
+		m.snippetNaming = true
+		m.snippetInput.Reset()
+		m.snippetInput.Focus()
+		m.textarea.Blur()
+		m.setStatus("Save snippet", false)
+		return m, textinput.Blink
 	case tea.KeyCtrlJ:
 		query := strings.TrimSpace(m.textarea.Value())
 		if m.queryCancel != nil {

@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -53,7 +55,27 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if len(m.lastResult.Columns) > 0 {
 				m.toggleSort()
 			}
+		case "S":
+			m.mode = snippetMode
+			m.snippetCursor = 0
+			m.snippetNaming = false
+			m.textarea.Blur()
+			m.setStatus("Snippet mode", false)
 		}
+	case tea.KeyCtrlS:
+		query := strings.TrimSpace(m.textarea.Value())
+		if query == "" {
+			m.setStatus("No query to save", true)
+			return m, nil
+		}
+		m.snippetPrevMode = normalMode
+		m.mode = snippetMode
+		m.snippetNaming = true
+		m.snippetInput.Reset()
+		m.snippetInput.Focus()
+		m.textarea.Blur()
+		m.setStatus("Save snippet", false)
+		return m, textinput.Blink
 	case tea.KeyCtrlK:
 		if m.aiEnabled {
 			m.mode = aiMode
