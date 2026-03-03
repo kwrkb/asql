@@ -67,6 +67,33 @@ func TestLeadingKeyword(t *testing.T) {
 	}
 }
 
+func TestShortenTypeName(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"INTEGER", "int"},
+		{"integer", "int"},
+		{"Integer", "int"},
+		{"UNSIGNED BIGINT", "ubigint"},
+		{"TIMESTAMPTZ", "tstz"},
+		{"TEXT", "text"},
+		{"VARCHAR", "varchar"},
+		{"INT4", "int4"},
+		{"BOOL", "bool"},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := ShortenTypeName(tt.input)
+			if got != tt.want {
+				t.Errorf("ShortenTypeName(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCteBodyKeyword(t *testing.T) {
 	tests := []struct {
 		name  string

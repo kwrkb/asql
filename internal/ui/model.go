@@ -17,6 +17,7 @@ import (
 
 	"github.com/kwrkb/asql/internal/ai"
 	"github.com/kwrkb/asql/internal/db"
+	"github.com/kwrkb/asql/internal/db/dbutil"
 )
 
 type mode string
@@ -27,6 +28,7 @@ const (
 	sidebarMode mode = "SIDEBAR"
 	aiMode      mode = "AI"
 	exportMode  mode = "EXPORT"
+	detailMode  mode = "DETAIL"
 
 	queryTimeout = 5 * time.Second
 	sidebarWidth = 25
@@ -45,6 +47,8 @@ const (
 	errorColor       lipgloss.Color = "#F87171"
 	keywordColor     lipgloss.Color = "#F59E0B"
 )
+
+var typeStyle = lipgloss.NewStyle().Foreground(mutedTextColor)
 
 type queryExecutedMsg struct {
 	seq    uint64
@@ -93,8 +97,10 @@ type model struct {
 	sortDir       sortOrder
 	colCursor      int // column cursor in NORMAL mode
 	cachedColWidths []int // cached column widths (recomputed only when result changes)
-	exportCursor   int
-	modeStyle     lipgloss.Style
+	exportCursor      int
+	detailFieldCursor int
+	detailScroll      int
+	modeStyle         lipgloss.Style
 	messageStyle  lipgloss.Style
 	pathStyle     lipgloss.Style
 }
@@ -236,6 +242,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateAI(msg)
 		case exportMode:
 			return m.updateExport(msg)
+		case detailMode:
+			return m.updateDetail(msg)
 		}
 	case aiResponseMsg:
 		if msg.seq != m.querySeq {
@@ -345,6 +353,10 @@ func (m model) View() string {
 		view = m.renderWithExportOverlay(view)
 	}
 
+	if m.mode == detailMode {
+		view = m.renderWithDetailOverlay(view)
+	}
+
 	return view
 }
 
@@ -412,7 +424,8 @@ func (m *model) updateColumnHeaders() {
 	for i, title := range m.lastResult.Columns {
 		header := sanitize(title)
 		if i < len(m.lastResult.ColumnTypes) && m.lastResult.ColumnTypes[i] != "" {
-			header = fmt.Sprintf("%s %s", header, strings.ToLower(sanitize(m.lastResult.ColumnTypes[i])))
+			shortType := dbutil.ShortenTypeName(sanitize(m.lastResult.ColumnTypes[i]))
+			header = header + " " + typeStyle.Render(shortType)
 		}
 		if i == m.sortCol && m.sortDir != sortNone {
 			header += sortIndicator(m.sortDir)
@@ -511,6 +524,8 @@ func (m model) renderStatusBar() string {
 			hints = "Enter:generate Esc:cancel"
 		case exportMode:
 			hints = "j/k:nav Enter:select Esc:cancel"
+		case detailMode:
+			hints = "j/k:field n/N:row q/Esc:close"
 		}
 	}
 	hintStyle := lipgloss.NewStyle().Foreground(mutedTextColor).Background(statusBackground).Padding(0, 1)
@@ -608,7 +623,8 @@ func (m *model) applyResultWithSort(result db.QueryResult) {
 		for i, title := range result.Columns {
 			header := sanitize(title)
 			if i < len(result.ColumnTypes) && result.ColumnTypes[i] != "" {
-				header = fmt.Sprintf("%s %s", header, strings.ToLower(sanitize(result.ColumnTypes[i])))
+				shortType := dbutil.ShortenTypeName(sanitize(result.ColumnTypes[i]))
+				header = header + " " + typeStyle.Render(shortType)
 			}
 			if i == m.sortCol && m.sortDir != sortNone {
 				header += sortIndicator(m.sortDir)

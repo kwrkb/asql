@@ -65,6 +65,13 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, textinput.Blink
 		}
 		m.setStatus("AI not configured", true)
+	case tea.KeyEnter:
+		if len(m.lastResult.Columns) > 0 && len(m.lastResult.Rows) > 0 {
+			m.mode = detailMode
+			m.detailFieldCursor = 0
+			m.detailScroll = 0
+			m.setStatus("Detail mode", false)
+		}
 	case tea.KeyPgUp, tea.KeyPgDown:
 		m.table, _ = m.table.Update(msg)
 	case tea.KeyLeft:

@@ -303,6 +303,27 @@ func skipDollarQuoted(query string, i int) int {
 	return i + 1
 }
 
+// typeShortNames maps verbose type names to shorter display forms.
+var typeShortNames = map[string]string{
+	"integer":            "int",
+	"unsigned int":       "uint",
+	"unsigned bigint":    "ubigint",
+	"unsigned mediumint": "umedint",
+	"unsigned smallint":  "usmallint",
+	"unsigned tinyint":   "utinyint",
+	"timestamptz":        "tstz",
+}
+
+// ShortenTypeName returns a shortened display name for a database column type.
+// Unknown types are returned lower-cased as-is.
+func ShortenTypeName(typeName string) string {
+	lower := strings.ToLower(typeName)
+	if short, ok := typeShortNames[lower]; ok {
+		return short
+	}
+	return lower
+}
+
 func parseDollarTag(query string, i int) string {
 	n := len(query)
 	if i >= n || query[i] != '$' {

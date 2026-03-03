@@ -1,13 +1,18 @@
 package ui
 
 import (
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/kwrkb/asql/internal/db"
 )
+
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 func TestColumnWidth(t *testing.T) {
 	tests := []struct {
@@ -159,11 +164,13 @@ func TestApplyResult(t *testing.T) {
 		m.applyResult(result)
 
 		cols := m.table.Columns()
-		if cols[0].Title != "id integer" {
-			t.Errorf("expected 'id integer', got %q", cols[0].Title)
+		got0 := ansiRe.ReplaceAllString(cols[0].Title, "")
+		got1 := ansiRe.ReplaceAllString(cols[1].Title, "")
+		if got0 != "id int" {
+			t.Errorf("expected 'id int', got %q", got0)
 		}
-		if cols[1].Title != "name text" {
-			t.Errorf("expected 'name text', got %q", cols[1].Title)
+		if got1 != "name text" {
+			t.Errorf("expected 'name text', got %q", got1)
 		}
 	})
 
@@ -241,4 +248,146 @@ func TestQueryHistory(t *testing.T) {
 			t.Errorf("expected %d entries, got %d", maxHistory, len(m.queryHistory))
 		}
 	})
+}
+
+func TestDetailMode_EnterFromNormal(t *testing.T) {
+	m := newTestModel()
+	m.mode = normalMode
+	m.lastResult = db.QueryResult{
+		Columns: []string{"id", "name"},
+		Rows:    [][]string{{"1", "alice"}, {"2", "bob"}},
+	}
+	m.applyResult(m.lastResult)
+
+	msg := tea.KeyMsg{Type: tea.KeyEnter}
+	result, _ := m.updateNormal(msg)
+	rm := result.(model)
+
+	if rm.mode != detailMode {
+		t.Errorf("expected detailMode, got %q", rm.mode)
+	}
+	if rm.detailFieldCursor != 0 {
+		t.Errorf("expected detailFieldCursor=0, got %d", rm.detailFieldCursor)
+	}
+	if rm.detailScroll != 0 {
+		t.Errorf("expected detailScroll=0, got %d", rm.detailScroll)
+	}
+}
+
+func TestDetailMode_EnterWithNoResults(t *testing.T) {
+	m := newTestModel()
+	m.mode = normalMode
+	m.lastResult = db.QueryResult{}
+
+	msg := tea.KeyMsg{Type: tea.KeyEnter}
+	result, _ := m.updateNormal(msg)
+	rm := result.(model)
+
+	if rm.mode != normalMode {
+		t.Errorf("expected normalMode when no results, got %q", rm.mode)
+	}
+}
+
+func TestDetailMode_EscReturns(t *testing.T) {
+	m := newTestModel()
+	m.mode = detailMode
+	m.lastResult = db.QueryResult{
+		Columns: []string{"id", "name"},
+		Rows:    [][]string{{"1", "alice"}},
+	}
+	m.detailFieldCursor = 1
+
+	msg := tea.KeyMsg{Type: tea.KeyEsc}
+	result, _ := m.updateDetail(msg)
+	rm := result.(model)
+
+	if rm.mode != normalMode {
+		t.Errorf("expected normalMode, got %q", rm.mode)
+	}
+}
+
+func TestDetailMode_FieldNavigation(t *testing.T) {
+	m := newTestModel()
+	m.mode = detailMode
+	m.lastResult = db.QueryResult{
+		Columns: []string{"id", "name", "email"},
+		Rows:    [][]string{{"1", "alice", "alice@example.com"}},
+	}
+	m.detailFieldCursor = 0
+
+	// j moves down
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")}
+	result, _ := m.updateDetail(msg)
+	rm := result.(model)
+	if rm.detailFieldCursor != 1 {
+		t.Errorf("expected cursor=1 after j, got %d", rm.detailFieldCursor)
+	}
+
+	// j again
+	m.detailFieldCursor = 1
+	result, _ = m.updateDetail(msg)
+	rm = result.(model)
+	if rm.detailFieldCursor != 2 {
+		t.Errorf("expected cursor=2 after j, got %d", rm.detailFieldCursor)
+	}
+
+	// j at bottom boundary
+	m.detailFieldCursor = 2
+	result, _ = m.updateDetail(msg)
+	rm = result.(model)
+	if rm.detailFieldCursor != 2 {
+		t.Errorf("expected cursor=2 at boundary, got %d", rm.detailFieldCursor)
+	}
+
+	// k moves up
+	m.detailFieldCursor = 2
+	msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")}
+	result, _ = m.updateDetail(msg)
+	rm = result.(model)
+	if rm.detailFieldCursor != 1 {
+		t.Errorf("expected cursor=1 after k, got %d", rm.detailFieldCursor)
+	}
+
+	// k at top boundary
+	m.detailFieldCursor = 0
+	result, _ = m.updateDetail(msg)
+	rm = result.(model)
+	if rm.detailFieldCursor != 0 {
+		t.Errorf("expected cursor=0 at boundary, got %d", rm.detailFieldCursor)
+	}
+}
+
+func TestDetailMode_ShowsSortedRow(t *testing.T) {
+	m := newTestModel()
+	m.lastResult = db.QueryResult{
+		Columns: []string{"id", "name"},
+		Rows:    [][]string{{"2", "bob"}, {"1", "alice"}},
+		Message: "2 row(s) returned",
+	}
+	m.applyResult(m.lastResult)
+
+	// Sort by column 0 ascending: alice(1) should come first
+	m.colCursor = 0
+	m.sortCol = 0
+	m.sortDir = sortAsc
+	m.applySortedResult()
+
+	// First row in sorted table should be "1", "alice"
+	rows := m.table.Rows()
+	if rows[0][0] != "1" || rows[0][1] != "alice" {
+		t.Fatalf("expected sorted first row [1, alice], got %v", rows[0])
+	}
+
+	// Enter detail mode on sorted first row
+	m.mode = detailMode
+	m.detailFieldCursor = 0
+	m.detailScroll = 0
+	m.width = 80
+	m.height = 24
+
+	// renderWithDetailOverlay should show the sorted row, not original
+	view := m.renderWithDetailOverlay("background")
+	if !strings.Contains(view, "alice") {
+		t.Errorf("expected detail view to show 'alice' (sorted first row), got:\n%s", view)
+	}
 }
