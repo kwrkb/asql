@@ -56,3 +56,16 @@
 - [x] 1-3. ソート (h/l でカラム選択、s でトグル ASC/DESC/None)
 - [x] 1-4. ページング位置表示 (`col:name 1/100` 形式)
 - [x] 1-5. クエリ履歴 (セッション内、Ctrl+P/Ctrl+N ナビゲーション)
+
+---
+
+## Phase 1 P1: Core Observation UX (Should Have)
+**目的**: データ観察の利便性をさらに向上。
+
+- [x] 1-6. Detail View Mode (行詳細表示)
+  > Enter でオーバーレイ表示。j/k でフィールド移動、n/N で行遷移、q/Esc/Enter で閉じる。sanitize() でANSIエスケープ対策済み。
+- [x] 1-12. PgUp/PgDn キーによるテーブル高速スクロール
+- [x] 型名短縮表示 (`ShortenTypeName`: INTEGER→int, TIMESTAMPTZ→tstz 等) + dim スタイル適用
+- [x] ソート時の行表示バグ修正 (Detail View で `table.Rows()` を参照するよう変更)
+- [x] 1-7. 保存クエリ (スニペット機能)
+  > `~/.config/asql/snippets.yaml` に名前付きクエリを永続化。NORMAL モードで `S` でブラウズ、`Ctrl+S` で保存（INSERT モードからも可）。モーダル内で Enter:ロード、d:削除、a:追加。`internal/snippet/` パッケージで永続化層を分離。

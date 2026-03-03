@@ -15,6 +15,7 @@ import (
 	"github.com/kwrkb/asql/internal/db/mysql"
 	"github.com/kwrkb/asql/internal/db/postgres"
 	"github.com/kwrkb/asql/internal/db/sqlite"
+	"github.com/kwrkb/asql/internal/snippet"
 	"github.com/kwrkb/asql/internal/ui"
 )
 
@@ -104,8 +105,13 @@ func main() {
 		aiClient = ai.NewClient(cfg.AI.Endpoint, cfg.AI.Model, cfg.AI.APIKey)
 	}
 
+	snippets, snippetErr := snippet.Load()
+	if snippetErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load snippets: %v\n", snippetErr)
+	}
+
 	program := tea.NewProgram(
-		ui.NewModel(adapter, displayDSN, aiClient),
+		ui.NewModel(adapter, displayDSN, aiClient, snippets),
 		tea.WithAltScreen(),
 	)
 

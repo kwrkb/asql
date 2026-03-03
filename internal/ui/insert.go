@@ -17,6 +17,8 @@ func (m model) updateInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setStatus("Normal mode", false)
 		m.syncViewport()
 		return m, nil
+	case tea.KeyCtrlS:
+		return m.enterSnippetNamingMode()
 	case tea.KeyCtrlJ:
 		query := strings.TrimSpace(m.textarea.Value())
 		if m.queryCancel != nil {

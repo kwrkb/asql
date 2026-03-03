@@ -18,6 +18,7 @@ import (
 	"github.com/kwrkb/asql/internal/ai"
 	"github.com/kwrkb/asql/internal/db"
 	"github.com/kwrkb/asql/internal/db/dbutil"
+	"github.com/kwrkb/asql/internal/snippet"
 )
 
 type mode string
@@ -29,6 +30,7 @@ const (
 	aiMode      mode = "AI"
 	exportMode  mode = "EXPORT"
 	detailMode  mode = "DETAIL"
+	snippetMode mode = "SNIPPET"
 
 	queryTimeout = 5 * time.Second
 	sidebarWidth = 25
@@ -100,12 +102,17 @@ type model struct {
 	exportCursor      int
 	detailFieldCursor int
 	detailScroll      int
+	snippets          []snippet.Snippet
+	snippetCursor     int
+	snippetNaming     bool
+	snippetInput      textinput.Model
+	snippetPrevMode   mode // mode before entering snippet naming via Ctrl+S
 	modeStyle         lipgloss.Style
 	messageStyle  lipgloss.Style
 	pathStyle     lipgloss.Style
 }
 
-func NewModel(adapter db.DBAdapter, dbPath string, aiClient *ai.Client) tea.Model {
+func NewModel(adapter db.DBAdapter, dbPath string, aiClient *ai.Client, snippets []snippet.Snippet) tea.Model {
 	input := textarea.New()
 
 	var placeholder, initialQuery string
@@ -177,19 +184,26 @@ func NewModel(adapter db.DBAdapter, dbPath string, aiClient *ai.Client) tea.Mode
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(accentColor)
 
+	snippetIn := textinput.New()
+	snippetIn.Placeholder = "Snippet name..."
+	snippetIn.CharLimit = 100
+	snippetIn.Width = 30
+
 	m := model{
-		db:         adapter,
-		dbPath:     dbPath,
-		mode:       insertMode,
-		textarea:   input,
-		table:      tbl,
-		viewport:   vp,
-		statusText: "Ready",
-		historyIdx: -1,
-		aiEnabled:  aiClient != nil,
-		aiClient:   aiClient,
-		aiInput:    aiIn,
-		aiSpinner:  sp,
+		db:           adapter,
+		dbPath:       dbPath,
+		mode:         insertMode,
+		textarea:     input,
+		table:        tbl,
+		viewport:     vp,
+		statusText:   "Ready",
+		historyIdx:   -1,
+		aiEnabled:    aiClient != nil,
+		aiClient:     aiClient,
+		aiInput:      aiIn,
+		aiSpinner:    sp,
+		snippets:     snippets,
+		snippetInput: snippetIn,
 	}
 	m.modeStyle = lipgloss.NewStyle().Bold(true).Padding(0, 1).Background(accentColor).Foreground(panelBackground)
 	m.messageStyle = lipgloss.NewStyle().Padding(0, 1).Foreground(textColor).Background(statusBackground)
@@ -244,6 +258,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateExport(msg)
 		case detailMode:
 			return m.updateDetail(msg)
+		case snippetMode:
+			return m.updateSnippet(msg)
 		}
 	case aiResponseMsg:
 		if msg.seq != m.querySeq {
@@ -355,6 +371,10 @@ func (m model) View() string {
 
 	if m.mode == detailMode {
 		view = m.renderWithDetailOverlay(view)
+	}
+
+	if m.mode == snippetMode {
+		view = m.renderWithSnippetOverlay(view)
 	}
 
 	return view
@@ -512,12 +532,12 @@ func (m model) renderStatusBar() string {
 		switch m.mode {
 		case normalMode:
 			if m.aiEnabled {
-				hints = "h/l:col s:sort t:tables i:insert e:export C-k:AI q:quit"
+				hints = "h/l:col s:sort t:tables i:insert e:export S:snippets C-k:AI q:quit"
 			} else {
-				hints = "h/l:col s:sort t:tables i:insert e:export q:quit"
+				hints = "h/l:col s:sort t:tables i:insert e:export S:snippets q:quit"
 			}
 		case insertMode:
-			hints = "C-Enter/C-j:exec C-p/C-n:hist Esc:normal"
+			hints = "C-Enter/C-j:exec C-p/C-n:hist C-s:save Esc:normal"
 		case sidebarMode:
 			hints = "j/k:nav Enter:select Esc:close"
 		case aiMode:
@@ -526,6 +546,12 @@ func (m model) renderStatusBar() string {
 			hints = "j/k:nav Enter:select Esc:cancel"
 		case detailMode:
 			hints = "j/k:field n/N:row q/Esc:close"
+		case snippetMode:
+			if m.snippetNaming {
+				hints = "Enter:save Esc:cancel"
+			} else {
+				hints = "j/k:nav Enter:load d:del a:add Esc:close"
+			}
 		}
 	}
 	hintStyle := lipgloss.NewStyle().Foreground(mutedTextColor).Background(statusBackground).Padding(0, 1)

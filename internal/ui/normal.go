@@ -53,7 +53,15 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if len(m.lastResult.Columns) > 0 {
 				m.toggleSort()
 			}
+		case "S":
+			m.mode = snippetMode
+			m.snippetCursor = 0
+			m.snippetNaming = false
+			m.textarea.Blur()
+			m.setStatus("Snippet mode", false)
 		}
+	case tea.KeyCtrlS:
+		return m.enterSnippetNamingMode()
 	case tea.KeyCtrlK:
 		if m.aiEnabled {
 			m.mode = aiMode
