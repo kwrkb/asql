@@ -36,3 +36,23 @@
 
 - [x] 1-1. 列幅自動調整 (データの長さに合わせる。無駄な余白を排除)
 - [x] 1-8. エクスポート機能 (CSV/JSON/Markdown クリップボード・ファイル保存)
+
+---
+
+## Phase 0: Infrastructure
+**目的**: 品質ゲートとコードベースの健全性を確保し、以降の開発速度を上げる。
+
+- [x] 0-1. CI: GitHub Actions にテスト自動実行 (`go test ./...` + `go vet ./...`)
+- [x] 0-2. refactor: model.go のモード別分割 (normal/insert/sidebar/ai/export に分離)
+- [x] 0-3. security: DSN セキュリティ (環境変数 `ASQL_DSN` / `DATABASE_URL` 対応、パスワードマスキング)
+
+---
+
+## Phase 1 P0: Core Observation UX
+**目的**: データへの気づきを増やす基本的な見やすさと操作性。
+
+- [x] 1-1. NULL / 空文字 / 0 の視覚的な区別
+- [x] 1-2. 型情報表示 (ヘッダに `name text` 形式)
+- [x] 1-3. ソート (h/l でカラム選択、s でトグル ASC/DESC/None)
+- [x] 1-4. ページング位置表示 (`col:name 1/100` 形式)
+- [x] 1-5. クエリ履歴 (セッション内、Ctrl+P/Ctrl+N ナビゲーション)

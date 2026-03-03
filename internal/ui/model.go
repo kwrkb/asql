@@ -388,6 +388,7 @@ func (m *model) resultsHeight() int {
 }
 
 func (m *model) syncViewport() {
+	m.updateColumnHeaders()
 	panel := lipgloss.NewStyle().
 		Width(max(m.contentWidth(), 0)).
 		Height(max(m.resultsHeight(), 0)).
@@ -397,6 +398,30 @@ func (m *model) syncViewport() {
 		Padding(0, 1).
 		Render(m.table.View())
 	m.viewport.SetContent(panel)
+}
+
+// updateColumnHeaders rebuilds column headers to highlight the selected column.
+func (m *model) updateColumnHeaders() {
+	if len(m.lastResult.Columns) == 0 {
+		return
+	}
+	columns := make([]table.Column, 0, len(m.lastResult.Columns))
+	selectedStyle := lipgloss.NewStyle().Reverse(true)
+	for i, title := range m.lastResult.Columns {
+		header := title
+		if i < len(m.lastResult.ColumnTypes) && m.lastResult.ColumnTypes[i] != "" {
+			header = fmt.Sprintf("%s %s", title, strings.ToLower(m.lastResult.ColumnTypes[i]))
+		}
+		if i == m.sortCol && m.sortDir != sortNone {
+			header += sortIndicator(m.sortDir)
+		}
+		if m.mode == normalMode && i == m.colCursor {
+			header = selectedStyle.Render(header)
+		}
+		width := columnWidth(header, m.lastResult.Rows, i)
+		columns = append(columns, table.Column{Title: header, Width: width})
+	}
+	m.table.SetColumns(columns)
 }
 
 func (m *model) applyResult(result db.QueryResult) {

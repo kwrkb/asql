@@ -7,17 +7,9 @@ VISION.md に基づく今後の実装計画。
 - SQLite / MySQL / PostgreSQL 接続対応済み
 - 列幅自動調整、エクスポート (CSV/JSON/Markdown) 実装済み
 - AI Text-to-SQL 補助機能、サイドバー（テーブル一覧）実装済み
-- Phase 1 P0 実装済み: 型情報表示、NULL/空文字区別、ソート、ページング位置表示、クエリ履歴
-
-## Phase 0: Infrastructure (Phase 1 P1 着手前に完了)
-目的：品質ゲートとコードベースの健全性を確保し、以降の開発速度を上げる。
-
-- [ ] 0-1. CI: GitHub Actions にテスト自動実行を追加 (#15)
-  > `push` (main) / `pull_request` で `go test ./...` + `go vet ./...` を実行。
-- [ ] 0-2. refactor: model.go のモード別分割 (#13)
-  > モードごとに Update/View を別ファイルに分離。model.go はディスパッチと共通状態に専念。
-- [ ] 0-3. security: DSN のコマンドライン引数露出を軽減 (#16)
-  > 環境変数 (`ASQL_DSN` / `DATABASE_URL`) からの読み取りを追加。1-8 と統合して接続プロファイルも対応。
+- Phase 0 Infrastructure 完了: CI、model.go分割、DSNセキュリティ
+- Phase 1 P0 完了: 型情報表示、NULL/空文字区別、ソート、ページング位置表示、クエリ履歴
+- **次: Phase 1 P1 (Should Have)**
 
 ## Phase 1: Core Observation UX (最優先: 顕微鏡のピント合わせ)
 目的：とにかく「見やすく」し、データへの気づきを増やす。
@@ -42,6 +34,9 @@ VISION.md に基づく今後の実装計画。
 - [ ] 1-9. テーブル名・カラム名の入力補完 (Tabキー。TUI内で思考を止めない)
 - [ ] 1-10. クエリ履歴のインクリメンタル検索 (Ctrl+R等。TUI内で過去の試行を即座に再利用)
 - [ ] 1-11. TUIエディタ操作の洗練 (行削除やカーソル移動などのショートカット強化)
+- [x] 1-12. PgUp/PgDn キーによるテーブル高速スクロール (bubbles table デフォルトで効かない場合の対応)
+  > `updateNormal` の switch に `tea.KeyPgUp, tea.KeyPgDown` case を追加し `m.table.Update(msg)` に委譲。
+- [ ] 1-13. 多カラムテーブルの表示崩れ修正 (列数が画面幅を超える場合にスキーマ表示が折り返し、データ行が描画崩れする問題。水平スクロール対応 or 表示列の動的制限が必要)
 
 ## Phase 2: Multi-DB Observation (比較の自動化)
 目的：**「観察を加速する」**。本番と検証、あるいは異種DB間での「差」を浮き彫りにする。
