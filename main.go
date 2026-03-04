@@ -15,6 +15,7 @@ import (
 	"github.com/kwrkb/asql/internal/db/mysql"
 	"github.com/kwrkb/asql/internal/db/postgres"
 	"github.com/kwrkb/asql/internal/db/sqlite"
+	"github.com/kwrkb/asql/internal/profile"
 	"github.com/kwrkb/asql/internal/snippet"
 	"github.com/kwrkb/asql/internal/ui"
 )
@@ -25,12 +26,41 @@ var (
 	date    = "unknown"
 )
 
-func resolveDSN(args []string, getenv func(string) string) (string, error) {
+// parseSaveProfile extracts --save-profile <name> from args and returns
+// the profile name and the remaining args.
+func parseSaveProfile(args []string) (string, []string, error) {
+	var remaining []string
+	var profileName string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--save-profile" {
+			if i+1 >= len(args) {
+				return "", nil, fmt.Errorf("--save-profile requires a name argument")
+			}
+			profileName = args[i+1]
+			i++ // skip value
+		} else {
+			remaining = append(remaining, args[i])
+		}
+	}
+	return profileName, remaining, nil
+}
+
+func resolveDSN(args []string, getenv func(string) string, profiles []profile.Profile) (string, error) {
 	if len(args) > 2 {
 		return "", fmt.Errorf("usage: %s [<database-path-or-dsn>]", args[0])
 	}
 	if len(args) == 2 {
-		return args[1], nil
+		arg := args[1]
+		// @profile-name resolution
+		if strings.HasPrefix(arg, "@") {
+			name := arg[1:]
+			p := profile.Find(profiles, name)
+			if p == nil {
+				return "", fmt.Errorf("profile %q not found", name)
+			}
+			return p.DSN, nil
+		}
+		return arg, nil
 	}
 	if dsn := getenv("ASQL_DSN"); dsn != "" {
 		return dsn, nil
@@ -38,12 +68,32 @@ func resolveDSN(args []string, getenv func(string) string) (string, error) {
 	if dsn := getenv("DATABASE_URL"); dsn != "" {
 		return dsn, nil
 	}
-	return "", fmt.Errorf("usage: %s <database-path-or-dsn>\n  or set ASQL_DSN / DATABASE_URL environment variable", args[0])
+	// Interactive profile selection if profiles exist
+	if len(profiles) > 0 {
+		return selectProfile(profiles)
+	}
+	return "", fmt.Errorf("usage: %s <database-path-or-dsn>\n  or set ASQL_DSN / DATABASE_URL environment variable\n  or use @profile-name to connect via saved profile", args[0])
+}
+
+func selectProfile(profiles []profile.Profile) (string, error) {
+	fmt.Fprintln(os.Stderr, "Select a profile:")
+	for i, p := range profiles {
+		fmt.Fprintf(os.Stderr, "  [%d] %s  (%s)\n", i+1, p.Name, MaskDSN(p.DSN))
+	}
+	fmt.Fprint(os.Stderr, "Enter number: ")
+	var choice int
+	if _, err := fmt.Fscan(os.Stdin, &choice); err != nil {
+		return "", fmt.Errorf("invalid selection: %w", err)
+	}
+	if choice < 1 || choice > len(profiles) {
+		return "", fmt.Errorf("selection out of range: %d", choice)
+	}
+	return profiles[choice-1].DSN, nil
 }
 
 var rePasswordInDSN = regexp.MustCompile(`(://[^:]*:)([^@]*)(@)`)
 
-func maskDSN(dsn string) string {
+func MaskDSN(dsn string) string {
 	u, err := url.Parse(dsn)
 	if err != nil {
 		// Best-effort: mask password in malformed URLs
@@ -71,13 +121,36 @@ func maskDSN(dsn string) string {
 }
 
 func main() {
-	dbPath, err := resolveDSN(os.Args, os.Getenv)
+	saveProfileName, args, parseErr := parseSaveProfile(os.Args)
+	if parseErr != nil {
+		fmt.Fprintln(os.Stderr, parseErr)
+		os.Exit(1)
+	}
+
+	profiles, profileErr := profile.Load()
+	if profileErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load profiles: %v\n", profileErr)
+	}
+
+	dbPath, err := resolveDSN(args, os.Getenv, profiles)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
-	displayDSN := maskDSN(dbPath)
+	// --save-profile: save current DSN and continue
+	if saveProfileName != "" {
+		newProfiles := profile.Upsert(profiles, profile.Profile{Name: saveProfileName, DSN: dbPath})
+		if err := profile.Save(newProfiles); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to save profile: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "Profile %q saved.\n", saveProfileName)
+		// Reload profiles for TUI
+		profiles = newProfiles
+	}
+
+	displayDSN := MaskDSN(dbPath)
 
 	var adapter dbpkg.DBAdapter
 
@@ -111,7 +184,7 @@ func main() {
 	}
 
 	program := tea.NewProgram(
-		ui.NewModel(adapter, displayDSN, aiClient, snippets),
+		ui.NewModel(adapter, displayDSN, dbPath, aiClient, snippets, profiles),
 		tea.WithAltScreen(),
 	)
 

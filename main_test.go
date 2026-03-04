@@ -2,22 +2,27 @@ package main
 
 import (
 	"testing"
+
+	"github.com/kwrkb/asql/internal/profile"
 )
 
 func TestResolveDSN(t *testing.T) {
 	noenv := func(string) string { return "" }
+	noprofiles := []profile.Profile(nil)
 
 	tests := []struct {
-		name    string
-		args    []string
-		getenv  func(string) string
-		want    string
-		wantErr bool
+		name     string
+		args     []string
+		getenv   func(string) string
+		profiles []profile.Profile
+		want     string
+		wantErr  bool
 	}{
 		{
 			name: "CLI argument",
 			args: []string{"asql", "test.db"},
 			getenv: noenv,
+			profiles: noprofiles,
 			want:   "test.db",
 		},
 		{
@@ -29,6 +34,7 @@ func TestResolveDSN(t *testing.T) {
 				}
 				return ""
 			},
+			profiles: noprofiles,
 			want: "cli.db",
 		},
 		{
@@ -40,6 +46,7 @@ func TestResolveDSN(t *testing.T) {
 				}
 				return ""
 			},
+			profiles: noprofiles,
 			want: "mysql://user:pass@host/db",
 		},
 		{
@@ -51,6 +58,7 @@ func TestResolveDSN(t *testing.T) {
 				}
 				return ""
 			},
+			profiles: noprofiles,
 			want: "postgres://user:pass@host/db",
 		},
 		{
@@ -65,25 +73,44 @@ func TestResolveDSN(t *testing.T) {
 				}
 				return ""
 			},
+			profiles: noprofiles,
 			want: "asql.db",
 		},
 		{
-			name:    "no argument and no env",
-			args:    []string{"asql"},
-			getenv:  noenv,
-			wantErr: true,
+			name:     "no argument and no env",
+			args:     []string{"asql"},
+			getenv:   noenv,
+			profiles: noprofiles,
+			wantErr:  true,
 		},
 		{
-			name:    "too many arguments",
-			args:    []string{"asql", "a", "b"},
-			getenv:  noenv,
-			wantErr: true,
+			name:     "too many arguments",
+			args:     []string{"asql", "a", "b"},
+			getenv:   noenv,
+			profiles: noprofiles,
+			wantErr:  true,
+		},
+		{
+			name: "@profile resolves to DSN",
+			args: []string{"asql", "@mydb"},
+			getenv: noenv,
+			profiles: []profile.Profile{
+				{Name: "mydb", DSN: "postgres://user:pass@host/db"},
+			},
+			want: "postgres://user:pass@host/db",
+		},
+		{
+			name:     "@profile not found",
+			args:     []string{"asql", "@unknown"},
+			getenv:   noenv,
+			profiles: noprofiles,
+			wantErr:  true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := resolveDSN(tt.args, tt.getenv)
+			got, err := resolveDSN(tt.args, tt.getenv, tt.profiles)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("resolveDSN() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -149,9 +176,63 @@ func TestMaskDSN(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := maskDSN(tt.dsn)
+			got := MaskDSN(tt.dsn)
 			if got != tt.want {
-				t.Errorf("maskDSN(%q) = %q, want %q", tt.dsn, got, tt.want)
+				t.Errorf("MaskDSN(%q) = %q, want %q", tt.dsn, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseSaveProfile(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		wantName string
+		wantArgs []string
+		wantErr  bool
+	}{
+		{
+			name:     "no flag",
+			args:     []string{"asql", "test.db"},
+			wantName: "",
+			wantArgs: []string{"asql", "test.db"},
+		},
+		{
+			name:     "with flag",
+			args:     []string{"asql", "--save-profile", "mydb", "test.db"},
+			wantName: "mydb",
+			wantArgs: []string{"asql", "test.db"},
+		},
+		{
+			name:    "missing name",
+			args:    []string{"asql", "--save-profile"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			name, args, err := parseSaveProfile(tt.args)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if name != tt.wantName {
+				t.Errorf("name = %q, want %q", name, tt.wantName)
+			}
+			if len(args) != len(tt.wantArgs) {
+				t.Fatalf("args len = %d, want %d", len(args), len(tt.wantArgs))
+			}
+			for i := range args {
+				if args[i] != tt.wantArgs[i] {
+					t.Errorf("args[%d] = %q, want %q", i, args[i], tt.wantArgs[i])
+				}
 			}
 		})
 	}

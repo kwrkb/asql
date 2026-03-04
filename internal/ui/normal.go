@@ -55,6 +55,12 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if len(m.lastResult.Columns) > 0 {
 				m.toggleSort()
 			}
+		case "P":
+			m.mode = profileMode
+			m.profileCursor = 0
+			m.profileNaming = false
+			m.textarea.Blur()
+			m.setStatus("Profile mode", false)
 		case "S":
 			m.mode = snippetMode
 			m.snippetCursor = 0

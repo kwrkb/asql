@@ -18,6 +18,7 @@ import (
 	"github.com/kwrkb/asql/internal/ai"
 	"github.com/kwrkb/asql/internal/db"
 	"github.com/kwrkb/asql/internal/db/dbutil"
+	"github.com/kwrkb/asql/internal/profile"
 	"github.com/kwrkb/asql/internal/snippet"
 )
 
@@ -32,6 +33,7 @@ const (
 	detailMode        mode = "DETAIL"
 	snippetMode       mode = "SNIPPET"
 	historySearchMode mode = "SEARCH"
+	profileMode       mode = "PROFILE"
 
 	queryTimeout = 5 * time.Second
 	sidebarWidth = 25
@@ -113,6 +115,11 @@ type model struct {
 	snippetNaming     bool
 	snippetInput      textinput.Model
 	snippetPrevMode      mode // mode before entering snippet naming via Ctrl+S
+	profiles          []profile.Profile
+	rawDSN            string // unmasked DSN for profile save
+	profileCursor     int
+	profileNaming     bool
+	profileInput      textinput.Model
 	historySearchInput   textinput.Model
 	historySearchResults []int // indices into queryHistory (filtered)
 	historySearchCursor  int
@@ -126,7 +133,7 @@ type model struct {
 	pathStyle            lipgloss.Style
 }
 
-func NewModel(adapter db.DBAdapter, dbPath string, aiClient *ai.Client, snippets []snippet.Snippet) tea.Model {
+func NewModel(adapter db.DBAdapter, dbPath string, rawDSN string, aiClient *ai.Client, snippets []snippet.Snippet, profiles []profile.Profile) tea.Model {
 	input := textarea.New()
 
 	var placeholder, initialQuery string
@@ -203,6 +210,11 @@ func NewModel(adapter db.DBAdapter, dbPath string, aiClient *ai.Client, snippets
 	snippetIn.CharLimit = 100
 	snippetIn.Width = 30
 
+	profileIn := textinput.New()
+	profileIn.Placeholder = "Profile name..."
+	profileIn.CharLimit = 100
+	profileIn.Width = 30
+
 	histSearchIn := textinput.New()
 	histSearchIn.Placeholder = "Search history..."
 	histSearchIn.CharLimit = 200
@@ -223,6 +235,9 @@ func NewModel(adapter db.DBAdapter, dbPath string, aiClient *ai.Client, snippets
 		aiSpinner:    sp,
 		snippets:           snippets,
 		snippetInput:       snippetIn,
+		profiles:           profiles,
+		rawDSN:             rawDSN,
+		profileInput:       profileIn,
 		historySearchInput: histSearchIn,
 	}
 	m.modeStyle = lipgloss.NewStyle().Bold(true).Padding(0, 1).Background(accentColor).Foreground(panelBackground)
@@ -280,6 +295,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateDetail(msg)
 		case snippetMode:
 			return m.updateSnippet(msg)
+		case profileMode:
+			return m.updateProfile(msg)
 		case historySearchMode:
 			return m.updateHistorySearch(msg)
 		}
@@ -411,6 +428,10 @@ func (m model) View() string {
 
 	if m.mode == historySearchMode {
 		view = m.renderWithHistorySearchOverlay(view)
+	}
+
+	if m.mode == profileMode {
+		view = m.renderWithProfileOverlay(view)
 	}
 
 	return view
@@ -641,9 +662,9 @@ func (m model) renderStatusBar() string {
 		switch m.mode {
 		case normalMode:
 			if m.aiEnabled {
-				hints = "h/l:col s:sort t:tables i:insert e:export S:snippets C-k:AI q:quit"
+				hints = "h/l:col s:sort t:tables i:insert e:export S:snippets P:profiles C-k:AI q:quit"
 			} else {
-				hints = "h/l:col s:sort t:tables i:insert e:export S:snippets q:quit"
+				hints = "h/l:col s:sort t:tables i:insert e:export S:snippets P:profiles q:quit"
 			}
 		case insertMode:
 			if m.completionActive {
@@ -666,6 +687,12 @@ func (m model) renderStatusBar() string {
 				hints = "Enter:save Esc:cancel"
 			} else {
 				hints = "j/k:nav Enter:load d:del a:add Esc:close"
+			}
+		case profileMode:
+			if m.profileNaming {
+				hints = "Enter:save Esc:cancel"
+			} else {
+				hints = "j/k:nav Enter:copy d:del a:add Esc:close"
 			}
 		}
 	}
