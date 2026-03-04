@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -79,12 +81,15 @@ func TestColumnWidth(t *testing.T) {
 func newTestModel() *model {
 	tbl := table.New()
 	vp := viewport.New(0, 0)
+	ta := textarea.New()
 	return &model{
-		table:      tbl,
-		viewport:   vp,
-		width:      80,
-		height:     24,
-		historyIdx: -1,
+		table:              tbl,
+		viewport:           vp,
+		textarea:           ta,
+		width:              80,
+		height:             24,
+		historyIdx:         -1,
+		historySearchInput: textinput.New(),
 	}
 }
 

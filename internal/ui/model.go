@@ -24,13 +24,14 @@ import (
 type mode string
 
 const (
-	normalMode  mode = "NORMAL"
-	insertMode  mode = "INSERT"
-	sidebarMode mode = "SIDEBAR"
-	aiMode      mode = "AI"
-	exportMode  mode = "EXPORT"
-	detailMode  mode = "DETAIL"
-	snippetMode mode = "SNIPPET"
+	normalMode        mode = "NORMAL"
+	insertMode        mode = "INSERT"
+	sidebarMode       mode = "SIDEBAR"
+	aiMode            mode = "AI"
+	exportMode        mode = "EXPORT"
+	detailMode        mode = "DETAIL"
+	snippetMode       mode = "SNIPPET"
+	historySearchMode mode = "SEARCH"
 
 	queryTimeout = 5 * time.Second
 	sidebarWidth = 25
@@ -106,10 +107,13 @@ type model struct {
 	snippetCursor     int
 	snippetNaming     bool
 	snippetInput      textinput.Model
-	snippetPrevMode   mode // mode before entering snippet naming via Ctrl+S
-	modeStyle         lipgloss.Style
-	messageStyle  lipgloss.Style
-	pathStyle     lipgloss.Style
+	snippetPrevMode      mode // mode before entering snippet naming via Ctrl+S
+	historySearchInput   textinput.Model
+	historySearchResults []int // indices into queryHistory (filtered)
+	historySearchCursor  int
+	modeStyle            lipgloss.Style
+	messageStyle         lipgloss.Style
+	pathStyle            lipgloss.Style
 }
 
 func NewModel(adapter db.DBAdapter, dbPath string, aiClient *ai.Client, snippets []snippet.Snippet) tea.Model {
@@ -189,6 +193,11 @@ func NewModel(adapter db.DBAdapter, dbPath string, aiClient *ai.Client, snippets
 	snippetIn.CharLimit = 100
 	snippetIn.Width = 30
 
+	histSearchIn := textinput.New()
+	histSearchIn.Placeholder = "Search history..."
+	histSearchIn.CharLimit = 200
+	histSearchIn.Width = 40
+
 	m := model{
 		db:           adapter,
 		dbPath:       dbPath,
@@ -202,8 +211,9 @@ func NewModel(adapter db.DBAdapter, dbPath string, aiClient *ai.Client, snippets
 		aiClient:     aiClient,
 		aiInput:      aiIn,
 		aiSpinner:    sp,
-		snippets:     snippets,
-		snippetInput: snippetIn,
+		snippets:           snippets,
+		snippetInput:       snippetIn,
+		historySearchInput: histSearchIn,
 	}
 	m.modeStyle = lipgloss.NewStyle().Bold(true).Padding(0, 1).Background(accentColor).Foreground(panelBackground)
 	m.messageStyle = lipgloss.NewStyle().Padding(0, 1).Foreground(textColor).Background(statusBackground)
@@ -260,6 +270,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateDetail(msg)
 		case snippetMode:
 			return m.updateSnippet(msg)
+		case historySearchMode:
+			return m.updateHistorySearch(msg)
 		}
 	case aiResponseMsg:
 		if msg.seq != m.querySeq {
@@ -324,6 +336,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.textarea, cmd = m.textarea.Update(msg)
 	case normalMode:
 		m.table, cmd = m.table.Update(msg)
+	case historySearchMode:
+		m.historySearchInput, cmd = m.historySearchInput.Update(msg)
 	case sidebarMode:
 		// no passthrough needed
 	}
@@ -375,6 +389,10 @@ func (m model) View() string {
 
 	if m.mode == snippetMode {
 		view = m.renderWithSnippetOverlay(view)
+	}
+
+	if m.mode == historySearchMode {
+		view = m.renderWithHistorySearchOverlay(view)
 	}
 
 	return view
@@ -537,7 +555,7 @@ func (m model) renderStatusBar() string {
 				hints = "h/l:col s:sort t:tables i:insert e:export S:snippets q:quit"
 			}
 		case insertMode:
-			hints = "C-Enter/C-j:exec C-p/C-n:hist C-s:save Esc:normal"
+			hints = "C-Enter/C-j:exec C-r:search C-l:clear C-p/C-n:hist C-s:save Esc:normal"
 		case sidebarMode:
 			hints = "j/k:nav Enter:select Esc:close"
 		case aiMode:
@@ -546,6 +564,8 @@ func (m model) renderStatusBar() string {
 			hints = "j/k:nav Enter:select Esc:cancel"
 		case detailMode:
 			hints = "j/k:field n/N:row q/Esc:close"
+		case historySearchMode:
+			hints = "Enter:select C-p/C-n:nav Esc:cancel"
 		case snippetMode:
 			if m.snippetNaming {
 				hints = "Enter:save Esc:cancel"

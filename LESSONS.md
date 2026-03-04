@@ -145,6 +145,20 @@ if m.cursor >= maxVisible {
 for i := scrollOffset; i < len(items); i++ { ... }
 ```
 
+### スクロール計算では空行・セパレータを含む全描画行数を数える
+
+**文脈**: Detail View の `linesPerField = 2`（label + value）としていたが、実際にはフィールド間にセパレータ用の改行があり3行消費していた。結果 `maxVisibleFields` が過大評価され、短いターミナルで選択フィールドがモーダル外にはみ出るバグ（Claude + Codex の Consensus で検出）。
+
+**学び**: スクロール計算の「1アイテムあたりの行数」は、装飾・空行・セパレータを含めた **実際の描画行数** を数えること。コードコメントの「label + value」のような概念的な記述と実装の乖離に注意。
+
+**パターン**: 描画ループ内で `WriteByte('\n')` を何回呼んでいるか数えて `linesPerField` を決める。
+
+### 新しい描画パスには既存の sanitize() を忘れずに適用する
+
+**文脈**: テーブル描画では `sanitize()` を適用していたが、新規追加した Detail View オーバーレイでは colName / colType / val を未サニタイズで描画していた。Gemini bot のレビューで検出。
+
+**学び**: 同じデータを別の UI コンポーネントで描画する場合、既存パスで適用済みのサニタイズ処理を新パスでも漏れなく適用すること。特に TUI では ANSI エスケープシーケンスによる UI スプーフィングリスクがある。
+
 ### ソートで NULL を「常に末尾」にするには比較関数の外で処理する
 
 **文脈**: `smartCompare` で NULL に `+1`（末尾）を返していたが、DESC ソート時に `cmp = -cmp` で符号反転され、NULL が先頭に来てしまった。
@@ -168,9 +182,15 @@ sort.SliceStable(indices, func(i, j int) bool {
 
 ### 表示ロジックの重複は早期に統合する
 
-**文脈**: `applyResult` と `applyResultWithSort` で列ヘッダ構築・行変換・sentinel 処理が完全に重複していた。自己レビューで検出し、`applyResult` を `applyResultWithSort` への委譲に統合。
+**文脈**: `applyResult` と `applyResultWithSort` で列ヘッダ構築・行変換・sentinel 処理が完全に重複していた。自己レビューで検出し、`applyResult` を `applyResultWithSort` への委譲に統合。同様に `Ctrl+S` のスニペット保存ロジックも `normal.go` / `insert.go` で重複していたため、`enterSnippetNamingMode()` ヘルパーに統合。
 
-**学び**: 「ソートインジケータの有無」程度の差分で関数を複製すると、片方の修正がもう片方に反映されないバグの温床になる。差分が小さい場合は条件分岐で一本化する。
+**学び**: 「モード名の違い」「インジケータの有無」程度の差分で関数を複製すると、片方の修正がもう片方に反映されないバグの温床になる。差分が小さい場合は `m.mode` 等の現在の状態を参照するヘルパーに一本化する。
+
+### import 削除はファイル内の全参照を確認してから行う
+
+**文脈**: `Ctrl+S` ロジックを `snippet.go` のヘルパーに抽出した際、`normal.go` から `strings` と `textinput` の import を削除した。しかし `textinput.Blink` が AI モード（`Ctrl+K`）でも使われており、ビルドエラーになった。
+
+**学び**: コードの一部を別ファイルに移動した際、移動元ファイルから import を削除する前に、同じ import を使う他の箇所がファイル内に残っていないか確認する。Go コンパイラが即座にエラーを出すので致命的ではないが、確認を怠ると手戻りになる。
 
 ---
 
