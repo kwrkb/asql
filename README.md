@@ -46,6 +46,10 @@ asql --save-profile myprofile "postgres://user:pass@host:5432/db"
 
 # No arguments — select from saved profiles interactively
 asql
+
+# Help / version
+asql --help
+asql --version
 ```
 
 ## Features

@@ -46,6 +46,10 @@ asql --save-profile myprofile "postgres://user:pass@host:5432/db"
 
 # 引数なし — 保存済みプロファイルから対話的に選択
 asql
+
+# ヘルプ / バージョン表示
+asql --help
+asql --version
 ```
 
 ## 主な機能
