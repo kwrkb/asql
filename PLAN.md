@@ -11,6 +11,7 @@ VISION.md に基づく今後の実装計画。
 - Phase 1 P0 完了: 型情報表示、NULL/空文字区別、ソート、ページング位置表示、クエリ履歴
 - Phase 1 P1 進行中: Detail View Mode、型名短縮表示、スニペット機能、履歴検索、Tab補完を実装済み
 - Phase 2 進行中: 複数接続同時保持 (2-1) 完了
+- CLI: `--help` / `--version` フラグ追加済み、README 整備済み (v0.6.0)
 - **次: Phase 2 P0 残タスク (2-2 同一クエリ別DB実行)**
 
 ## Phase 1: Core Observation UX (最優先: 顕微鏡のピント合わせ)
