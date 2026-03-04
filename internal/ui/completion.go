@@ -254,7 +254,7 @@ func (m *model) insertCompletion(selected string, prefix string) {
 	suffix := selected
 	if dotIdx := strings.LastIndex(prefix, "."); dotIdx >= 0 {
 		afterDot := prefix[dotIdx+1:]
-		if len(afterDot) < len(suffix) {
+		if len(afterDot) <= len(suffix) {
 			suffix = suffix[len(afterDot):]
 		}
 	} else if len(prefix) <= len(suffix) {

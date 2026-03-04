@@ -59,7 +59,7 @@ func (a *Adapter) Tables(ctx context.Context) ([]string, error) {
 }
 
 func (a *Adapter) Columns(ctx context.Context, tableName string) ([]string, error) {
-	quoted := `"` + strings.ReplaceAll(tableName, `"`, `""`) + `"`
+	quoted := a.QuoteIdentifier(tableName)
 	rows, err := a.conn.QueryContext(ctx, "PRAGMA table_info("+quoted+")")
 	if err != nil {
 		return nil, err
