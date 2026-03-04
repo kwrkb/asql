@@ -25,7 +25,7 @@ func Open(dsn string) (*Adapter, error) {
 	}
 
 	if err := conn.Ping(); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, err
 	}
 

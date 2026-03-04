@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -61,6 +63,14 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.profileNaming = false
 			m.textarea.Blur()
 			m.setStatus("Profile mode", false)
+		case "R":
+			query := strings.TrimSpace(m.textarea.Value())
+			if query == "" {
+				m.setStatus("No query to re-execute", true)
+				break
+			}
+			m.setStatus("Re-executing query...", false)
+			return m, m.prepareAndExecuteQuery(query)
 		case "S":
 			m.mode = snippetMode
 			m.snippetCursor = 0

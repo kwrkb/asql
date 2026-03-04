@@ -17,6 +17,8 @@ func (m model) updateHistorySearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.historyIdx = -1
 			m.historyDraft = ""
 		}
+		m.historySearchResults = nil
+		m.historySearchCursor = 0
 		m.mode = insertMode
 		m.textarea.Focus()
 		m.historySearchInput.Blur()

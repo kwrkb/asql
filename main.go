@@ -177,8 +177,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "failed to open database %q: %v\n", displayDSN, err)
 		os.Exit(1)
 	}
-	defer adapter.Close()
-
 	// Determine connection name from profile or DSN
 	connName := dbpkg.DisplayName(dbPath)
 	for _, p := range profiles {
@@ -203,10 +201,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "warning: failed to load snippets: %v\n", snippetErr)
 	}
 
-	program := tea.NewProgram(
-		ui.NewModel(adapter, displayDSN, dbPath, connName, aiClient, snippets, profiles),
-		tea.WithAltScreen(),
-	)
+	m := ui.NewModel(adapter, displayDSN, dbPath, connName, aiClient, snippets, profiles)
+	defer m.CloseAll()
+
+	program := tea.NewProgram(m, tea.WithAltScreen())
 
 	if _, err := program.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "asql exited with error: %v\n", err)

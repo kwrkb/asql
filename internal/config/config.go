@@ -35,7 +35,16 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("finding user config dir: %w", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, "asql", "config.yaml"))
+	configPath := filepath.Join(dir, "asql", "config.yaml")
+
+	// Check file permissions — warn if too permissive
+	if info, statErr := os.Stat(configPath); statErr == nil {
+		if perm := info.Mode().Perm(); perm&0077 != 0 {
+			fmt.Fprintf(os.Stderr, "warning: config file %s has permissions %o, recommend 0600\n", configPath, perm)
+		}
+	}
+
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return Config{}, nil
@@ -47,5 +56,17 @@ func Load() (Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parsing config: %w", err)
 	}
+
+	// Environment variables override config file values
+	if v := os.Getenv("ASQL_AI_API_KEY"); v != "" {
+		cfg.AI.APIKey = v
+	}
+	if v := os.Getenv("ASQL_AI_ENDPOINT"); v != "" {
+		cfg.AI.Endpoint = v
+	}
+	if v := os.Getenv("ASQL_AI_MODEL"); v != "" {
+		cfg.AI.Model = v
+	}
+
 	return cfg, nil
 }

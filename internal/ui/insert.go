@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -49,22 +48,8 @@ func (m model) updateInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.enterSnippetNamingMode()
 	case tea.KeyCtrlJ:
 		query := strings.TrimSpace(m.textarea.Value())
-		if m.queryCancel != nil {
-			m.queryCancel()
-		}
-		// Add to history (skip duplicates of last entry)
-		if query != "" && (len(m.queryHistory) == 0 || m.queryHistory[len(m.queryHistory)-1] != query) {
-			m.queryHistory = append(m.queryHistory, query)
-			if len(m.queryHistory) > maxHistory {
-				m.queryHistory = m.queryHistory[1:]
-			}
-		}
-		m.historyIdx = -1
-		ctx, cancel := context.WithCancel(context.Background())
-		m.querySeq++
-		m.queryCancel = cancel
 		m.setStatus("Executing query...", false)
-		return m, executeQueryCmd(ctx, m.activeDB(), query, m.querySeq)
+		return m, m.prepareAndExecuteQuery(query)
 	case tea.KeyCtrlR:
 		return m.enterHistorySearchMode()
 	case tea.KeyCtrlL:

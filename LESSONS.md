@@ -155,9 +155,9 @@ for i := scrollOffset; i < len(items); i++ { ... }
 
 ### 新しい描画パスには既存の sanitize() を忘れずに適用する
 
-**文脈**: テーブル描画では `sanitize()` を適用していたが、新規追加した Detail View オーバーレイでは colName / colType / val を未サニタイズで描画していた。Gemini bot のレビューで検出。
+**文脈**: テーブル描画では `sanitize()` を適用していたが、新規追加した Detail View オーバーレイでは colName / colType / val を未サニタイズで描画していた。Gemini bot のレビューで検出。同様に、プロファイル名やステータスバーのテキストもサニタイズ漏れがあった。
 
-**学び**: 同じデータを別の UI コンポーネントで描画する場合、既存パスで適用済みのサニタイズ処理を新パスでも漏れなく適用すること。特に TUI では ANSI エスケープシーケンスによる UI スプーフィングリスクがある。
+**学び**: 同じデータを別の UI コンポーネントで描画する場合、既存パスで適用済みのサニタイズ処理を新パスでも漏れなく適用すること。特に TUI では ANSI エスケープシーケンスによる UI スプーフィングリスクがある。`setStatus` や `fmt.Sprintf` に外部由来の文字列（プロファイル名、DB名等）を渡す際も sanitize する。
 
 ### ソートで NULL を「常に末尾」にするには比較関数の外で処理する
 
@@ -182,15 +182,31 @@ sort.SliceStable(indices, func(i, j int) bool {
 
 ### 表示ロジックの重複は早期に統合する
 
-**文脈**: `applyResult` と `applyResultWithSort` で列ヘッダ構築・行変換・sentinel 処理が完全に重複していた。自己レビューで検出し、`applyResult` を `applyResultWithSort` への委譲に統合。同様に `Ctrl+S` のスニペット保存ロジックも `normal.go` / `insert.go` で重複していたため、`enterSnippetNamingMode()` ヘルパーに統合。
+**文脈**: `applyResult` と `applyResultWithSort` で列ヘッダ構築・行変換・sentinel 処理が完全に重複していた。自己レビューで検出し、`applyResult` を `applyResultWithSort` への委譲に統合。同様に `Ctrl+S` のスニペット保存ロジックも `normal.go` / `insert.go` で重複していたため、`enterSnippetNamingMode()` ヘルパーに統合。クエリ実行ロジック（cancel/history/execute）も4箇所で重複→ `prepareAndExecuteQuery` に統合。
 
-**学び**: 「モード名の違い」「インジケータの有無」程度の差分で関数を複製すると、片方の修正がもう片方に反映されないバグの温床になる。差分が小さい場合は `m.mode` 等の現在の状態を参照するヘルパーに一本化する。
+**学び**: 「モード名の違い」「インジケータの有無」程度の差分で関数を複製すると、片方の修正がもう片方に反映されないバグの温床になる。差分が小さい場合は `m.mode` 等の現在の状態を参照するヘルパーに一本化する。重複に気づくのはレビュー時が多いため、新しいコードパスを追加する際に「既存で同じことをしている箇所はないか」を先に探す。
 
 ### import 削除はファイル内の全参照を確認してから行う
 
 **文脈**: `Ctrl+S` ロジックを `snippet.go` のヘルパーに抽出した際、`normal.go` から `strings` と `textinput` の import を削除した。しかし `textinput.Blink` が AI モード（`Ctrl+K`）でも使われており、ビルドエラーになった。
 
 **学び**: コードの一部を別ファイルに移動した際、移動元ファイルから import を削除する前に、同じ import を使う他の箇所がファイル内に残っていないか確認する。Go コンパイラが即座にエラーを出すので致命的ではないが、確認を怠ると手戻りになる。
+
+---
+
+### connManager 等のリソース管理は終了時の CloseAll を保証する
+
+**文脈**: 初期アダプタは `defer adapter.Close()` で閉じていたが、TUI 内でプロファイル切替により開いた追加接続は `connMgr.CloseAll()` が呼ばれずリーク。コードレビューで検出。
+
+**学び**: リソースマネージャ（接続プール等）を導入した場合、個別リソースの Close ではなくマネージャの CloseAll を `defer` する。個別 Close との二重解放にも注意。
+
+**パターン**: model に `CloseAll()` メソッドを公開し、`main.go` で `defer m.CloseAll()` する。初期アダプタの個別 `defer adapter.Close()` は削除。
+
+### nil チェック vs 境界チェック — メソッドレシーバの nil は実質到達不能
+
+**文脈**: `connManager` の `Active()` 等で `cm == nil` チェックがあったが、mutex ロック取得が先なので nil なら先にパニックする。実質到達不能なのに安心感のための nil チェックが残っていた。
+
+**学び**: ポインタレシーバのメソッドで `cm == nil` チェックを書くより、到達可能な実際のバグ（`cm.active >= len(cm.conns)` 等の境界違反）をガードする方が有用。
 
 ---
 
@@ -202,15 +218,17 @@ sort.SliceStable(indices, func(i, j int) bool {
 
 **学び**: SQL クエリ結果のカラム名は一意とは限らない。`map` のキーに使う場合は重複を検出してサフィックスを付与する必要がある。CSV/Markdown は配列ベースなので影響なし。
 
-**パターン**:
+**パターン**: 2パス方式 — 先に全出現回数を数え、重複があれば全出現に `_1`, `_2` を付与する（最初の出現だけサフィックスなしだと混乱を招く）:
 ```go
 func deduplicateHeaders(headers []string) []string {
-    counts := make(map[string]int, len(headers))
+    total := make(map[string]int, len(headers))
+    for _, h := range headers { total[h]++ }
+    seen := make(map[string]int, len(headers))
     result := make([]string, len(headers))
     for i, h := range headers {
-        counts[h]++
-        if counts[h] > 1 {
-            result[i] = fmt.Sprintf("%s_%d", h, counts[h])
+        seen[h]++
+        if total[h] > 1 {
+            result[i] = fmt.Sprintf("%s_%d", h, seen[h])
         } else {
             result[i] = h
         }
@@ -241,6 +259,12 @@ httpClient: &http.Client{Timeout: 30 * time.Second},
 **学び**: human-in-the-loop であっても、AI 生成コンテンツには明示的な「レビューしてから実行せよ」の警告を出すべき。特に SQL は破壊的操作が可能。
 
 **パターン**: ステータスに `"AI generated SQL — review before executing"` のように行動指示を含める。
+
+### システムプロンプトにユーザーデータを埋め込む際はコードフェンスで区切る
+
+**文脈**: DB スキーマをエスケープなしで system prompt に埋め込んでいた。悪意あるテーブル名・カラム名（例: `"; DROP TABLE users; --`）でプロンプトインジェクションが可能。
+
+**学び**: LLM のプロンプトに外部データを注入する場合、データ部分をコードフェンス（` ``` `）やXML タグで明確に区切る。完全な防御ではないが、LLM がデータと指示の境界を認識しやすくなる。
 
 ### 非同期操作のキャンセルには stale msg 対策が必須
 
@@ -312,6 +336,12 @@ func configDir() (string, error) {
     return os.UserConfigDir()
 }
 ```
+
+### 秘密情報を含む設定ファイルは環境変数オーバーライドとパーミッションチェックを入れる
+
+**文脈**: `config.yaml` に AI API キーが平文保存されていた。環境変数からの読み取り手段がなく、CI やコンテナ環境で不便。
+
+**学び**: API キー等の秘密情報は (1) 環境変数を最優先で読む (`ASQL_AI_API_KEY` 等)、(2) ファイルのパーミッションが 0600 より緩い場合は警告を出す、の2層で防御する。
 
 ### os.UserConfigDir() 等の環境エラーを握りつぶさない
 

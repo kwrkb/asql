@@ -52,7 +52,7 @@ func (m model) updateSnippet(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.snippetCursor--
 			}
 		case "d":
-			if len(m.snippets) > 0 {
+			if len(m.snippets) > 0 && m.snippetCursor < len(m.snippets) {
 				newSnippets := append(m.snippets[:m.snippetCursor], m.snippets[m.snippetCursor+1:]...)
 				if err := snippet.Save(newSnippets); err != nil {
 					m.setStatus(fmt.Sprintf("Save failed: %v", err), true)
@@ -84,7 +84,7 @@ func (m model) updateSnippet(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.snippetCursor--
 		}
 	case tea.KeyEnter:
-		if len(m.snippets) > 0 {
+		if len(m.snippets) > 0 && m.snippetCursor < len(m.snippets) {
 			m.textarea.SetValue(m.snippets[m.snippetCursor].Query)
 			m.mode = insertMode
 			m.textarea.Focus()

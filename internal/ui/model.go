@@ -73,7 +73,8 @@ type aiResponseMsg struct {
 }
 
 type connSwitchedMsg struct {
-	err error
+	err       error
+	reExecute bool
 }
 
 type model struct {
@@ -138,7 +139,15 @@ type model struct {
 	pathStyle            lipgloss.Style
 }
 
-func NewModel(adapter db.DBAdapter, dbPath string, rawDSN string, connName string, aiClient *ai.Client, snippets []snippet.Snippet, profiles []profile.Profile) tea.Model {
+// CloseAll closes all database connections managed by this model.
+// Call this after tea.Program exits to avoid connection leaks.
+func (m model) CloseAll() {
+	if m.connMgr != nil {
+		m.connMgr.CloseAll()
+	}
+}
+
+func NewModel(adapter db.DBAdapter, dbPath string, rawDSN string, connName string, aiClient *ai.Client, snippets []snippet.Snippet, profiles []profile.Profile) model {
 	input := textarea.New()
 
 	placeholder := db.Placeholder(adapter.Type())
@@ -345,9 +354,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rawDSN = m.connMgr.ActiveDSN()
 		m.completionColCache = nil
 		m.sidebarTables = nil
-		m.setStatus(fmt.Sprintf("Connected to %s", m.connMgr.ActiveName()), false)
+		m.setStatus(fmt.Sprintf("Connected to %s", sanitize(m.connMgr.ActiveName())), false)
 		m.mode = normalMode
 		m.textarea.Blur()
+		if msg.reExecute {
+			query := strings.TrimSpace(m.textarea.Value())
+			if query != "" {
+				return m, tea.Batch(loadTablesCmd(m.connMgr.Active()), m.prepareAndExecuteQuery(query))
+			}
+		}
 		return m, loadTablesCmd(m.connMgr.Active())
 	case tablesLoadedMsg:
 		if msg.err == nil {
@@ -686,9 +701,9 @@ func (m model) renderStatusBar() string {
 		switch m.mode {
 		case normalMode:
 			if m.aiEnabled {
-				hints = "h/l:col s:sort t:tables i:insert e:export S:snippets P:profiles C-k:AI q:quit"
+				hints = "h/l:col s:sort R:re-exec t:tables i:insert e:export S:snippets P:profiles C-k:AI q:quit"
 			} else {
-				hints = "h/l:col s:sort t:tables i:insert e:export S:snippets P:profiles q:quit"
+				hints = "h/l:col s:sort R:re-exec t:tables i:insert e:export S:snippets P:profiles q:quit"
 			}
 		case insertMode:
 			if m.completionActive {
@@ -716,14 +731,14 @@ func (m model) renderStatusBar() string {
 			if m.profileNaming {
 				hints = "Enter:save Esc:cancel"
 			} else {
-				hints = "j/k:nav Enter:connect d:del a:add Esc:close"
+				hints = "j/k:nav Enter:connect x:switch+exec d:del a:add Esc:close"
 			}
 		}
 	}
 	hintStyle := lipgloss.NewStyle().Foreground(mutedTextColor).Background(statusBackground).Padding(0, 1)
 
-	dbLabel := strings.ToUpper(m.activeDB().Type())
-	connName := m.connMgr.ActiveName()
+	dbLabel := strings.ToUpper(sanitize(m.activeDB().Type()))
+	connName := sanitize(m.connMgr.ActiveName())
 	dbLabelStyle := lipgloss.NewStyle().Padding(0, 1).Foreground(keywordColor).Background(statusBackground)
 
 	var posInfo string
@@ -751,7 +766,7 @@ func (m model) renderStatusBar() string {
 		dbTag = dbLabel
 	}
 	center := dbLabelStyle.Render("["+dbTag+"]") + m.pathStyle.Render(m.dbPath)
-	middle := msgStyle.Render(m.statusText)
+	middle := msgStyle.Render(sanitize(m.statusText))
 	pos := posStyle.Render(posInfo)
 	right := hintStyle.Render(hints)
 
@@ -764,6 +779,27 @@ func (m model) renderStatusBar() string {
 		Width(m.width).
 		Background(statusBackground).
 		Render(bar)
+}
+
+// prepareAndExecuteQuery cancels any in-flight query, records the query in
+// history, and returns a Cmd that executes it. Callers should use this instead
+// of duplicating cancel/history/execute logic.
+func (m *model) prepareAndExecuteQuery(query string) tea.Cmd {
+	if m.queryCancel != nil {
+		m.queryCancel()
+	}
+	// Add to history (skip duplicates of last entry)
+	if query != "" && (len(m.queryHistory) == 0 || m.queryHistory[len(m.queryHistory)-1] != query) {
+		m.queryHistory = append(m.queryHistory, query)
+		if len(m.queryHistory) > maxHistory {
+			m.queryHistory = m.queryHistory[1:]
+		}
+	}
+	m.historyIdx = -1
+	ctx, cancel := context.WithCancel(context.Background())
+	m.querySeq++
+	m.queryCancel = cancel
+	return executeQueryCmd(ctx, m.activeDB(), query, m.querySeq)
 }
 
 func executeQueryCmd(parent context.Context, adapter db.DBAdapter, query string, seq uint64) tea.Cmd {

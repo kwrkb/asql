@@ -53,12 +53,18 @@ func FormatJSON(headers []string, rows [][]string) (string, error) {
 }
 
 func deduplicateHeaders(headers []string) []string {
-	counts := make(map[string]int, len(headers))
+	// Count total occurrences first
+	total := make(map[string]int, len(headers))
+	for _, h := range headers {
+		total[h]++
+	}
+	// Assign suffixes: if a name appears more than once, all occurrences get _1, _2, ...
+	seen := make(map[string]int, len(headers))
 	result := make([]string, len(headers))
 	for i, h := range headers {
-		counts[h]++
-		if counts[h] > 1 {
-			result[i] = fmt.Sprintf("%s_%d", h, counts[h])
+		seen[h]++
+		if total[h] > 1 {
+			result[i] = fmt.Sprintf("%s_%d", h, seen[h])
 		} else {
 			result[i] = h
 		}
@@ -69,6 +75,9 @@ func deduplicateHeaders(headers []string) []string {
 // FormatMarkdown formats query results as a GitHub Flavored Markdown table.
 func FormatMarkdown(headers []string, rows [][]string) string {
 	escape := func(s string) string {
+		s = strings.ReplaceAll(s, "\r\n", " ")
+		s = strings.ReplaceAll(s, "\n", " ")
+		s = strings.ReplaceAll(s, "\r", " ")
 		return strings.ReplaceAll(s, "|", "\\|")
 	}
 
@@ -113,8 +122,8 @@ func SaveCSVFile(headers []string, rows [][]string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	filename := fmt.Sprintf("result_%s.csv", time.Now().Format("20060102_150405"))
-	if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
+	filename := fmt.Sprintf("result_%s.csv", time.Now().Format("20060102_150405.000"))
+	if err := os.WriteFile(filename, []byte(content), 0600); err != nil {
 		return "", fmt.Errorf("writing file %s: %w", filename, err)
 	}
 	return filename, nil

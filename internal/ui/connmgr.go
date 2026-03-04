@@ -49,7 +49,7 @@ func newConnManager(name, dsn string, adapter db.DBAdapter) *connManager {
 func (cm *connManager) Active() db.DBAdapter {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
-	if cm == nil || len(cm.conns) == 0 {
+	if len(cm.conns) == 0 || cm.active >= len(cm.conns) {
 		return nil
 	}
 	return cm.conns[cm.active].adapter
@@ -59,7 +59,7 @@ func (cm *connManager) Active() db.DBAdapter {
 func (cm *connManager) ActiveName() string {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
-	if cm == nil || len(cm.conns) == 0 {
+	if len(cm.conns) == 0 || cm.active >= len(cm.conns) {
 		return ""
 	}
 	return cm.conns[cm.active].name
@@ -69,7 +69,7 @@ func (cm *connManager) ActiveName() string {
 func (cm *connManager) ActiveDSN() string {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
-	if cm == nil || len(cm.conns) == 0 {
+	if len(cm.conns) == 0 || cm.active >= len(cm.conns) {
 		return ""
 	}
 	return cm.conns[cm.active].dsn
@@ -123,7 +123,7 @@ func (cm *connManager) IsConnected(dsn string) bool {
 func (cm *connManager) IsActive(dsn string) bool {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
-	if cm == nil || len(cm.conns) == 0 {
+	if len(cm.conns) == 0 || cm.active >= len(cm.conns) {
 		return false
 	}
 	return cm.conns[cm.active].dsn == dsn
