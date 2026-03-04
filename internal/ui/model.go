@@ -73,7 +73,8 @@ type aiResponseMsg struct {
 }
 
 type connSwitchedMsg struct {
-	err error
+	err       error
+	reExecute bool
 }
 
 type model struct {
@@ -348,6 +349,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setStatus(fmt.Sprintf("Connected to %s", m.connMgr.ActiveName()), false)
 		m.mode = normalMode
 		m.textarea.Blur()
+		if msg.reExecute {
+			query := strings.TrimSpace(m.textarea.Value())
+			if query != "" {
+				ctx, cancel := context.WithCancel(context.Background())
+				m.querySeq++
+				m.queryCancel = cancel
+				return m, tea.Batch(loadTablesCmd(m.connMgr.Active()), executeQueryCmd(ctx, m.connMgr.Active(), query, m.querySeq))
+			}
+		}
 		return m, loadTablesCmd(m.connMgr.Active())
 	case tablesLoadedMsg:
 		if msg.err == nil {
@@ -686,9 +696,9 @@ func (m model) renderStatusBar() string {
 		switch m.mode {
 		case normalMode:
 			if m.aiEnabled {
-				hints = "h/l:col s:sort t:tables i:insert e:export S:snippets P:profiles C-k:AI q:quit"
+				hints = "h/l:col s:sort R:re-exec t:tables i:insert e:export S:snippets P:profiles C-k:AI q:quit"
 			} else {
-				hints = "h/l:col s:sort t:tables i:insert e:export S:snippets P:profiles q:quit"
+				hints = "h/l:col s:sort R:re-exec t:tables i:insert e:export S:snippets P:profiles q:quit"
 			}
 		case insertMode:
 			if m.completionActive {
@@ -716,7 +726,7 @@ func (m model) renderStatusBar() string {
 			if m.profileNaming {
 				hints = "Enter:save Esc:cancel"
 			} else {
-				hints = "j/k:nav Enter:connect d:del a:add Esc:close"
+				hints = "j/k:nav Enter:connect x:switch+exec d:del a:add Esc:close"
 			}
 		}
 	}

@@ -49,6 +49,10 @@ func (m model) updateProfile(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.setStatus("Profile deleted", false)
 				}
 			}
+		case "x":
+			if len(m.profiles) > 0 {
+				return m.switchProfile(m.profiles[m.profileCursor], true)
+			}
 		case "a":
 			if m.rawDSN == "" {
 				m.setStatus("No active connection to save", true)
@@ -69,22 +73,7 @@ func (m model) updateProfile(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyEnter:
 		if len(m.profiles) > 0 {
-			p := m.profiles[m.profileCursor]
-			// If already active, just close the overlay
-			if m.connMgr.IsActive(p.DSN) {
-				m.mode = normalMode
-				m.textarea.Blur()
-				m.setStatus(fmt.Sprintf("Already connected to %s", p.Name), false)
-				return m, nil
-			}
-			m.setStatus(fmt.Sprintf("Connecting to %s...", p.Name), false)
-			name := p.Name
-			dsn := p.DSN
-			cm := m.connMgr
-			return m, func() tea.Msg {
-				err := cm.Switch(name, dsn)
-				return connSwitchedMsg{err: err}
-			}
+			return m.switchProfile(m.profiles[m.profileCursor], false)
 		}
 	}
 	return m, nil
@@ -121,6 +110,23 @@ func (m model) updateProfileNaming(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+
+func (m model) switchProfile(p profile.Profile, reExecute bool) (tea.Model, tea.Cmd) {
+	if m.connMgr.IsActive(p.DSN) {
+		m.mode = normalMode
+		m.textarea.Blur()
+		m.setStatus(fmt.Sprintf("Already connected to %s", p.Name), false)
+		return m, nil
+	}
+	m.setStatus(fmt.Sprintf("Connecting to %s...", p.Name), false)
+	name := p.Name
+	dsn := p.DSN
+	cm := m.connMgr
+	return m, func() tea.Msg {
+		err := cm.Switch(name, dsn)
+		return connSwitchedMsg{err: err, reExecute: reExecute}
+	}
+}
 
 func (m model) renderWithProfileOverlay(background string) string {
 	modalWidth := min(m.width-4, 60)
@@ -212,7 +218,7 @@ func (m model) renderWithProfileOverlay(background string) string {
 
 	var footer string
 	if !m.profileNaming {
-		footer = "\n" + lipgloss.NewStyle().Foreground(mutedTextColor).Background(panelBackground).Render("Enter:connect d:delete a:add Esc:close")
+		footer = "\n" + lipgloss.NewStyle().Foreground(mutedTextColor).Background(panelBackground).Render("Enter:connect x:switch+exec d:delete a:add Esc:close")
 	}
 
 	content := titleStyle.Render(title) + "\n" + items.String() + footer
