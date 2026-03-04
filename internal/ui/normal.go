@@ -44,10 +44,12 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "h":
 			if m.colCursor > 0 {
 				m.colCursor--
+				m.adjustColOffset()
 			}
 		case "l":
 			if len(m.lastResult.Columns) > 0 && m.colCursor < len(m.lastResult.Columns)-1 {
 				m.colCursor++
+				m.adjustColOffset()
 			}
 		case "s":
 			if len(m.lastResult.Columns) > 0 {
@@ -85,10 +87,12 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyLeft:
 		if m.colCursor > 0 {
 			m.colCursor--
+			m.adjustColOffset()
 		}
 	case tea.KeyRight:
 		if len(m.lastResult.Columns) > 0 && m.colCursor < len(m.lastResult.Columns)-1 {
 			m.colCursor++
+			m.adjustColOffset()
 		}
 	}
 	m.syncViewport()
