@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -70,14 +69,8 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setStatus("No query to re-execute", true)
 				break
 			}
-			if m.queryCancel != nil {
-				m.queryCancel()
-			}
-			ctx, cancel := context.WithCancel(context.Background())
-			m.querySeq++
-			m.queryCancel = cancel
 			m.setStatus("Re-executing query...", false)
-			return m, executeQueryCmd(ctx, m.activeDB(), query, m.querySeq)
+			return m, m.prepareAndExecuteQuery(query)
 		case "S":
 			m.mode = snippetMode
 			m.snippetCursor = 0

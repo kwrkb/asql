@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -118,20 +117,14 @@ func (m model) switchProfile(p profile.Profile, reExecute bool) (tea.Model, tea.
 		if reExecute {
 			query := strings.TrimSpace(m.textarea.Value())
 			if query != "" {
-				if m.queryCancel != nil {
-					m.queryCancel()
-				}
-				ctx, cancel := context.WithCancel(context.Background())
-				m.querySeq++
-				m.queryCancel = cancel
 				m.setStatus("Re-executing query...", false)
-				return m, executeQueryCmd(ctx, m.connMgr.Active(), query, m.querySeq)
+				return m, m.prepareAndExecuteQuery(query)
 			}
 		}
-		m.setStatus(fmt.Sprintf("Already connected to %s", p.Name), false)
+		m.setStatus(fmt.Sprintf("Already connected to %s", sanitize(p.Name)), false)
 		return m, nil
 	}
-	m.setStatus(fmt.Sprintf("Connecting to %s...", p.Name), false)
+	m.setStatus(fmt.Sprintf("Connecting to %s...", sanitize(p.Name)), false)
 	name := p.Name
 	dsn := p.DSN
 	cm := m.connMgr

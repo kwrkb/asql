@@ -354,16 +354,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rawDSN = m.connMgr.ActiveDSN()
 		m.completionColCache = nil
 		m.sidebarTables = nil
-		m.setStatus(fmt.Sprintf("Connected to %s", m.connMgr.ActiveName()), false)
+		m.setStatus(fmt.Sprintf("Connected to %s", sanitize(m.connMgr.ActiveName())), false)
 		m.mode = normalMode
 		m.textarea.Blur()
 		if msg.reExecute {
 			query := strings.TrimSpace(m.textarea.Value())
 			if query != "" {
-				ctx, cancel := context.WithCancel(context.Background())
-				m.querySeq++
-				m.queryCancel = cancel
-				return m, tea.Batch(loadTablesCmd(m.connMgr.Active()), executeQueryCmd(ctx, m.connMgr.Active(), query, m.querySeq))
+				return m, tea.Batch(loadTablesCmd(m.connMgr.Active()), m.prepareAndExecuteQuery(query))
 			}
 		}
 		return m, loadTablesCmd(m.connMgr.Active())
@@ -782,6 +779,27 @@ func (m model) renderStatusBar() string {
 		Width(m.width).
 		Background(statusBackground).
 		Render(bar)
+}
+
+// prepareAndExecuteQuery cancels any in-flight query, records the query in
+// history, and returns a Cmd that executes it. Callers should use this instead
+// of duplicating cancel/history/execute logic.
+func (m *model) prepareAndExecuteQuery(query string) tea.Cmd {
+	if m.queryCancel != nil {
+		m.queryCancel()
+	}
+	// Add to history (skip duplicates of last entry)
+	if query != "" && (len(m.queryHistory) == 0 || m.queryHistory[len(m.queryHistory)-1] != query) {
+		m.queryHistory = append(m.queryHistory, query)
+		if len(m.queryHistory) > maxHistory {
+			m.queryHistory = m.queryHistory[1:]
+		}
+	}
+	m.historyIdx = -1
+	ctx, cancel := context.WithCancel(context.Background())
+	m.querySeq++
+	m.queryCancel = cancel
+	return executeQueryCmd(ctx, m.activeDB(), query, m.querySeq)
 }
 
 func executeQueryCmd(parent context.Context, adapter db.DBAdapter, query string, seq uint64) tea.Cmd {
