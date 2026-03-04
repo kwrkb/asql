@@ -69,3 +69,9 @@
 - [x] ソート時の行表示バグ修正 (Detail View で `table.Rows()` を参照するよう変更)
 - [x] 1-7. 保存クエリ (スニペット機能)
   > `~/.config/asql/snippets.yaml` に名前付きクエリを永続化。NORMAL モードで `S` でブラウズ、`Ctrl+S` で保存（INSERT モードからも可）。モーダル内で Enter:ロード、d:削除、a:追加。`internal/snippet/` パッケージで永続化層を分離。
+- [x] 1-10. クエリ履歴のインクリメンタル検索
+  > Ctrl+R でモーダル検索。インクリメンタルフィルタ、C-p/C-n/C-r でナビゲーション。
+- [x] 1-11. TUIエディタ操作の洗練
+  > Ctrl+L でエディタクリア。
+- [x] 1-9. テーブル名・カラム名の入力補完
+  > `DBAdapter.Columns()` 追加（SQLite/MySQL/PostgreSQL）。SQL 文脈判定で FROM→テーブル / SELECT→カラムを切替。`tablename.` ドットプレフィックス対応。候補1つで即確定、複数でスクロール付きポップアップ表示。
