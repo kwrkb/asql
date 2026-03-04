@@ -10,14 +10,8 @@ import (
 
 func (m model) updateHistorySearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
-	case tea.KeyEsc:
-		m.mode = insertMode
-		m.textarea.Focus()
-		m.historySearchInput.Blur()
-		m.setStatus("Insert mode", false)
-		return m, nil
-	case tea.KeyEnter:
-		if len(m.historySearchResults) > 0 && m.historySearchCursor < len(m.historySearchResults) {
+	case tea.KeyEsc, tea.KeyEnter:
+		if msg.Type == tea.KeyEnter && len(m.historySearchResults) > 0 && m.historySearchCursor < len(m.historySearchResults) {
 			idx := m.historySearchResults[m.historySearchCursor]
 			m.textarea.SetValue(m.queryHistory[idx])
 			m.historyIdx = -1
