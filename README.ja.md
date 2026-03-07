@@ -12,7 +12,25 @@
 
 ## デモ
 
-![asql デモ](docs/demo.gif)
+### 起動 & テーブルサイドバー
+
+<video src="e2e/recordings/01_startup.mp4" autoplay loop muted></video>
+
+### クエリ実行
+
+<video src="e2e/recordings/02_query_exec.mp4" autoplay loop muted></video>
+
+### モード遷移
+
+<video src="e2e/recordings/03_mode_transitions.mp4" autoplay loop muted></video>
+
+### エクスポート
+
+<video src="e2e/recordings/04_export.mp4" autoplay loop muted></video>
+
+### エラー表示
+
+<video src="e2e/recordings/05_error.mp4" autoplay loop muted></video>
 
 ## 設計思想
 
