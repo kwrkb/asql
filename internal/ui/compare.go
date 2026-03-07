@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"fmt"
+
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/lipgloss"
 
@@ -9,6 +11,10 @@ import (
 )
 
 const minWidthForCompare = 80
+
+var diffCellStyle = lipgloss.NewStyle().
+	Foreground(keywordColor).
+	Bold(true)
 
 // focusedTableStyles returns table styles with the focused (selected row) highlight.
 func focusedTableStyles() table.Styles {
@@ -38,15 +44,15 @@ func unfocusedTableStyles() table.Styles {
 
 // pinnedPane holds a snapshot of a query result for side-by-side comparison.
 type pinnedPane struct {
-	result      db.QueryResult
-	connName    string
-	table       table.Model
-	displayRows []table.Row
-	colWidths   []int
-	colCursor   int
-	colOffset   int
-	sortCol     int
-	sortDir     sortOrder
+	result        db.QueryResult
+	connName      string
+	table         table.Model
+	displayRows   []table.Row
+	colWidths     []int
+	colCursor     int
+	colOffset     int
+	sortCol       int
+	sortDir       sortOrder
 	lastVisStart  int
 	lastVisEnd    int
 	viewportDirty bool
@@ -76,15 +82,15 @@ func (m *model) pinCurrentResult() *pinnedPane {
 	copy(widths, m.cachedColWidths)
 
 	return &pinnedPane{
-		result:      m.lastResult,
-		connName:    m.connMgr.ActiveName(),
-		table:       tbl,
-		displayRows: rows,
-		colWidths:   widths,
-		colCursor:   m.colCursor,
-		colOffset:   m.colOffset,
-		sortCol:     m.sortCol,
-		sortDir:     m.sortDir,
+		result:        m.lastResult,
+		connName:      m.connMgr.ActiveName(),
+		table:         tbl,
+		displayRows:   rows,
+		colWidths:     widths,
+		colCursor:     m.colCursor,
+		colOffset:     m.colOffset,
+		sortCol:       m.sortCol,
+		sortDir:       m.sortDir,
 		viewportDirty: true,
 	}
 }
@@ -92,6 +98,76 @@ func (m *model) pinCurrentResult() *pinnedPane {
 // comparePaneWidth returns the width for each pane in side-by-side mode.
 func (m *model) comparePaneWidth() int {
 	return m.fullContentWidth() / 2
+}
+
+func (m *model) compareRowCounts() (left, right int) {
+	if m.pinned == nil {
+		return 0, len(m.lastResult.Rows)
+	}
+	return len(m.pinned.result.Rows), len(m.lastResult.Rows)
+}
+
+func (m *model) compareStatusSummary() string {
+	left, right := m.compareRowCounts()
+	return fmt.Sprintf("Compare rows left:%d right:%d diff:%+d", left, right, right-left)
+}
+
+// cellDiffAt compares a single cell by row/column index between two panes.
+// Rows are aligned by position (same index), not by key.
+func cellDiffAt(rowIdx, colIdx int, selfRows []table.Row, selfCount int, otherRows []table.Row, otherCount int) bool {
+	if rowIdx < 0 || colIdx < 0 {
+		return false
+	}
+	// No backing row (e.g. "(no rows)" sentinel): don't highlight.
+	if rowIdx >= selfCount || rowIdx >= len(selfRows) {
+		return false
+	}
+
+	selfRow := selfRows[rowIdx]
+	selfHas := colIdx < len(selfRow)
+
+	// Other side has no row at this index: highlight existing cells only.
+	if rowIdx >= otherCount || rowIdx >= len(otherRows) {
+		return selfHas
+	}
+
+	otherRow := otherRows[rowIdx]
+	otherHas := colIdx < len(otherRow)
+	if selfHas != otherHas {
+		return selfHas
+	}
+	if !selfHas {
+		return false
+	}
+	return selfRow[colIdx] != otherRow[colIdx]
+}
+
+func (m *model) activeCellDiff(rowIdx, colIdx int) bool {
+	if m.pinned == nil {
+		return false
+	}
+	return cellDiffAt(
+		rowIdx,
+		colIdx,
+		m.displayRows,
+		len(m.lastResult.Rows),
+		m.pinned.displayRows,
+		len(m.pinned.result.Rows),
+	)
+}
+
+func (m *model) pinnedCellDiff(rowIdx, colIdx int) bool {
+	if m.pinned == nil {
+		return false
+	}
+	return cellDiffAt(
+		rowIdx,
+		colIdx,
+		m.pinned.displayRows,
+		len(m.pinned.result.Rows),
+		m.displayRows,
+		len(m.lastResult.Rows),
+	)
 }
 
 // pinnedVisibleColumnRange returns the visible column range for the pinned pane.
@@ -192,11 +268,15 @@ func (m *model) syncPinnedTable(paneWidth, paneHeight int) {
 	}
 
 	rows := make([]table.Row, 0, len(p.displayRows))
-	for _, row := range p.displayRows {
+	for rowIdx, row := range p.displayRows {
 		windowed := make(table.Row, 0, visEnd-visStart)
 		for i := visStart; i < visEnd; i++ {
 			if i < len(row) {
-				windowed = append(windowed, sanitize(row[i]))
+				cell := sanitize(row[i])
+				if m.pinnedCellDiff(rowIdx, i) {
+					cell = diffCellStyle.Render(cell)
+				}
+				windowed = append(windowed, cell)
 			} else {
 				windowed = append(windowed, "")
 			}
@@ -258,12 +338,13 @@ func (m *model) renderCompareView() string {
 		Render(m.table.View())
 
 	// Label above each pane
+	leftRows, rightRows := m.compareRowCounts()
 	leftLabelStr := lipgloss.NewStyle().
 		Width(paneWidth).
 		Foreground(accentColor).
 		Background(appBackground).
 		Align(lipgloss.Center).
-		Render("[" + leftLabel + "]")
+		Render(fmt.Sprintf("[%s rows:%d]", leftLabel, leftRows))
 	rightLabel := sanitize(m.connMgr.ActiveName())
 	if rightLabel == "" {
 		rightLabel = "active"
@@ -273,7 +354,7 @@ func (m *model) renderCompareView() string {
 		Foreground(accentColor).
 		Background(appBackground).
 		Align(lipgloss.Center).
-		Render("[" + rightLabel + "]")
+		Render(fmt.Sprintf("[%s rows:%d]", rightLabel, rightRows))
 
 	labels := lipgloss.JoinHorizontal(lipgloss.Top, leftLabelStr, rightLabelStr)
 	panels := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)

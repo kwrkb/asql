@@ -20,7 +20,7 @@ Bring & Join (Phase 3) はまだ先。比較体験が磨き込まれてから。
 - Phase 1 Core Observation UX 全完了 (P0 + P1)
 - Phase 2 Multi-DB: 複数接続同時保持 (2-1)、同一クエリ別DB実行 (2-2)、横並び表示 (2-3) 完了
 - CLI: `--help` / `--version`、README 整備済み (v0.6.0)
-- **次: 2-4 差分ハイライト**
+- **次: Phase 4 Light Insight Helpers**
 
 ## Phase 2: Multi-DB Observation — 比較の完成（最優先）
 
@@ -29,7 +29,7 @@ Bring & Join (Phase 3) はまだ先。比較体験が磨き込まれてから。
 - [x] 2-1. 複数接続同時保持
 - [x] 2-2. 同一クエリを別DBで実行 (`R` 再実行 / `x` 接続切替+即実行)
 - [x] 2-3. 横並び表示 (2つの結果セットを画面分割で並べて比較)
-- [ ] 2-4. 差分ハイライト (件数差・値の違いに即座に気づかせる)
+- [x] 2-4. 差分ハイライト (件数差・値の違いに即座に気づかせる)
 
 ## Phase 4: Light Insight Helpers（次の候補）
 
