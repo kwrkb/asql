@@ -4,14 +4,6 @@
 
 **データ観察**のための軽量 TUI SQL クライアント — 生データを素早く見て、並べ替えて、探索し、違和感や仮説に気づくためのツール。[Bubble Tea](https://github.com/charmbracelet/bubbletea) で構築。SQLite、MySQL、PostgreSQL をサポート。
 
-## 比較モード
-
-![比較デモ](docs/compare-demo.gif)
-
-> 本番とステージングの差分をターミナルで3秒で確認。
-
-## デモ
-
 ![asql デモ](docs/demo.gif)
 
 ## 設計思想
@@ -82,6 +74,12 @@ asql --version
 - **テーブルサイドバー** — テーブル一覧をブラウズし、ワンキーで SELECT を挿入
 - **エクスポート** — CSV / JSON / Markdown でコピー、またはファイル保存
 - **AI アシスタント** — OpenAI 互換 API で自然言語から SQL を生成
+
+## 比較モード
+
+![比較デモ](docs/compare-demo.gif)
+
+> 本番とステージングの差分をターミナルで3秒で確認。
 
 ## キーバインド
 

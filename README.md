@@ -4,14 +4,6 @@
 
 A lightweight TUI SQL client for **data observation** — quickly see, sort, and explore raw data to spot anomalies and form hypotheses. Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). Supports SQLite, MySQL, and PostgreSQL.
 
-## Compare Mode
-
-![compare demo](docs/compare-demo.gif)
-
-> Spot the diff between prod and staging in 3 seconds — right in your terminal.
-
-## Demo
-
 ![asql demo](docs/demo.gif)
 
 ## Philosophy
@@ -82,6 +74,12 @@ asql --version
 - **Table sidebar** — browse tables, insert SELECT with one key
 - **Export** — copy results as CSV / JSON / Markdown, or save to file
 - **AI assistant** — generate SQL from natural language via any OpenAI-compatible API
+
+## Compare Mode
+
+![compare demo](docs/compare-demo.gif)
+
+> Spot the diff between prod and staging in 3 seconds — right in your terminal.
 
 ## Key Bindings
 
