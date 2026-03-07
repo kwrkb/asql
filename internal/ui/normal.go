@@ -59,7 +59,7 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				m.pinned = m.pinCurrentResult()
 				m.comparePane = 1 // focus on right (active) pane
-				m.setStatus("Pinned result to left pane — switch connection and re-execute", false)
+				m.setStatus(m.compareStatusSummary()+" — switch connection and re-execute", false)
 				m.resize()
 			}
 		case "j":

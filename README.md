@@ -64,7 +64,7 @@ asql --version
 - **Saved queries (Snippets)** — save frequently used queries with `Ctrl+S`; browse with `S` in NORMAL mode
 - **Connection profiles** — save/load database connections; switch between them with `P` in NORMAL mode
 - **Multi-connection** — connections stay open when switching profiles; no re-connect overhead
-- **Side-by-side compare mode** — press `c` to pin current result and split the screen into left (pinned) / right (active) panes; use `Tab` to switch focus
+- **Side-by-side compare mode** — press `c` to pin current result and split the screen into left (pinned) / right (active) panes; use `Tab` to switch focus. Row-count differences and mismatched cells are highlighted immediately
 - **Fast re-execution across connections** — press `R` to re-run the current query; in profile mode, `x` switches connection and immediately re-runs
 - **Paging indicator** — status bar shows current position and column info (`col:name 1/100`)
 - **Table sidebar** — browse tables, insert SELECT with one key

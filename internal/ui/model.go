@@ -35,8 +35,8 @@ const (
 	historySearchMode mode = "SEARCH"
 	profileMode       mode = "PROFILE"
 
-	queryTimeout = 5 * time.Second
-	sidebarWidth = 25
+	queryTimeout       = 5 * time.Second
+	sidebarWidth       = 25
 	minWidthForSidebar = 60
 )
 
@@ -399,6 +399,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.colCursor = 0
 		m.colOffset = 0
 		m.applyResult(msg.result)
+		if m.pinned != nil {
+			m.setStatus(m.compareStatusSummary(), false)
+		}
 		return m, loadTablesCmd(m.activeDB())
 	}
 
@@ -639,11 +642,15 @@ func (m *model) syncViewport() {
 
 		// Build windowed rows with sanitized cell values
 		rows := make([]table.Row, 0, len(m.displayRows))
-		for _, row := range m.displayRows {
+		for rowIdx, row := range m.displayRows {
 			windowed := make(table.Row, 0, visEnd-visStart)
 			for i := visStart; i < visEnd; i++ {
 				if i < len(row) {
-					windowed = append(windowed, sanitize(row[i]))
+					cell := sanitize(row[i])
+					if m.activeCellDiff(rowIdx, i) {
+						cell = diffCellStyle.Render(cell)
+					}
+					windowed = append(windowed, cell)
 				} else {
 					windowed = append(windowed, "")
 				}
@@ -722,7 +729,6 @@ func (m *model) setStatus(text string, isError bool) {
 	m.statusText = text
 	m.statusError = isError
 }
-
 
 // prepareAndExecuteQuery cancels any in-flight query, records the query in
 // history, and returns a Cmd that executes it. Callers should use this instead
