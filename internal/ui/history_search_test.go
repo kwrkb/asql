@@ -12,15 +12,15 @@ func TestFilterHistory(t *testing.T) {
 		m.queryHistory = []string{"SELECT 1", "SELECT 2", "SELECT 3"}
 		m.filterHistory("")
 
-		if len(m.historySearchResults) != 3 {
-			t.Fatalf("expected 3 results, got %d", len(m.historySearchResults))
+		if len(m.histSearch.results) != 3 {
+			t.Fatalf("expected 3 results, got %d", len(m.histSearch.results))
 		}
 		// Newest first: index 2, 1, 0
-		if m.historySearchResults[0] != 2 {
-			t.Errorf("expected first result index=2 (newest), got %d", m.historySearchResults[0])
+		if m.histSearch.results[0] != 2 {
+			t.Errorf("expected first result index=2 (newest), got %d", m.histSearch.results[0])
 		}
-		if m.historySearchResults[2] != 0 {
-			t.Errorf("expected last result index=0 (oldest), got %d", m.historySearchResults[2])
+		if m.histSearch.results[2] != 0 {
+			t.Errorf("expected last result index=0 (oldest), got %d", m.histSearch.results[2])
 		}
 	})
 
@@ -29,15 +29,15 @@ func TestFilterHistory(t *testing.T) {
 		m.queryHistory = []string{"SELECT * FROM users", "INSERT INTO orders", "select count(*) from users"}
 		m.filterHistory("select")
 
-		if len(m.historySearchResults) != 2 {
-			t.Fatalf("expected 2 results, got %d", len(m.historySearchResults))
+		if len(m.histSearch.results) != 2 {
+			t.Fatalf("expected 2 results, got %d", len(m.histSearch.results))
 		}
 		// Newest match first
-		if m.historySearchResults[0] != 2 {
-			t.Errorf("expected first match index=2, got %d", m.historySearchResults[0])
+		if m.histSearch.results[0] != 2 {
+			t.Errorf("expected first match index=2, got %d", m.histSearch.results[0])
 		}
-		if m.historySearchResults[1] != 0 {
-			t.Errorf("expected second match index=0, got %d", m.historySearchResults[1])
+		if m.histSearch.results[1] != 0 {
+			t.Errorf("expected second match index=0, got %d", m.histSearch.results[1])
 		}
 	})
 
@@ -46,19 +46,19 @@ func TestFilterHistory(t *testing.T) {
 		m.queryHistory = []string{"SELECT 1", "SELECT 2"}
 		m.filterHistory("DELETE")
 
-		if len(m.historySearchResults) != 0 {
-			t.Errorf("expected 0 results, got %d", len(m.historySearchResults))
+		if len(m.histSearch.results) != 0 {
+			t.Errorf("expected 0 results, got %d", len(m.histSearch.results))
 		}
 	})
 
 	t.Run("cursor clamped when results shrink", func(t *testing.T) {
 		m := newTestModel()
 		m.queryHistory = []string{"SELECT 1", "SELECT 2", "INSERT 1"}
-		m.historySearchCursor = 2
+		m.histSearch.cursor = 2
 		m.filterHistory("INSERT")
 
-		if m.historySearchCursor != 0 {
-			t.Errorf("expected cursor clamped to 0, got %d", m.historySearchCursor)
+		if m.histSearch.cursor != 0 {
+			t.Errorf("expected cursor clamped to 0, got %d", m.histSearch.cursor)
 		}
 	})
 }
@@ -77,7 +77,7 @@ func TestHistorySearch_EnterSelects(t *testing.T) {
 	}
 
 	// Select cursor 0 (newest = "SELECT 3")
-	rm.historySearchCursor = 0
+	rm.histSearch.cursor = 0
 	msg := tea.KeyMsg{Type: tea.KeyEnter}
 	result, _ = rm.updateHistorySearch(msg)
 	rm = result.(model)
@@ -157,30 +157,30 @@ func TestHistorySearch_CtrlRCycles(t *testing.T) {
 	rm := result.(model)
 
 	// Starts at 0
-	if rm.historySearchCursor != 0 {
-		t.Fatalf("expected cursor=0, got %d", rm.historySearchCursor)
+	if rm.histSearch.cursor != 0 {
+		t.Fatalf("expected cursor=0, got %d", rm.histSearch.cursor)
 	}
 
 	// Ctrl+R cycles forward
 	msg := tea.KeyMsg{Type: tea.KeyCtrlR}
 	result, _ = rm.updateHistorySearch(msg)
 	rm = result.(model)
-	if rm.historySearchCursor != 1 {
-		t.Errorf("expected cursor=1 after Ctrl+R, got %d", rm.historySearchCursor)
+	if rm.histSearch.cursor != 1 {
+		t.Errorf("expected cursor=1 after Ctrl+R, got %d", rm.histSearch.cursor)
 	}
 
 	// Ctrl+R again
 	result, _ = rm.updateHistorySearch(msg)
 	rm = result.(model)
-	if rm.historySearchCursor != 2 {
-		t.Errorf("expected cursor=2 after Ctrl+R, got %d", rm.historySearchCursor)
+	if rm.histSearch.cursor != 2 {
+		t.Errorf("expected cursor=2 after Ctrl+R, got %d", rm.histSearch.cursor)
 	}
 
 	// Ctrl+R wraps around
 	result, _ = rm.updateHistorySearch(msg)
 	rm = result.(model)
-	if rm.historySearchCursor != 0 {
-		t.Errorf("expected cursor=0 (wrap), got %d", rm.historySearchCursor)
+	if rm.histSearch.cursor != 0 {
+		t.Errorf("expected cursor=0 (wrap), got %d", rm.histSearch.cursor)
 	}
 }
 
@@ -195,22 +195,22 @@ func TestHistorySearch_CursorNavigation(t *testing.T) {
 	msg := tea.KeyMsg{Type: tea.KeyCtrlN}
 	result, _ = rm.updateHistorySearch(msg)
 	rm = result.(model)
-	if rm.historySearchCursor != 1 {
-		t.Errorf("expected cursor=1 after Ctrl+N, got %d", rm.historySearchCursor)
+	if rm.histSearch.cursor != 1 {
+		t.Errorf("expected cursor=1 after Ctrl+N, got %d", rm.histSearch.cursor)
 	}
 
 	// Ctrl+P moves up
 	msg = tea.KeyMsg{Type: tea.KeyCtrlP}
 	result, _ = rm.updateHistorySearch(msg)
 	rm = result.(model)
-	if rm.historySearchCursor != 0 {
-		t.Errorf("expected cursor=0 after Ctrl+P, got %d", rm.historySearchCursor)
+	if rm.histSearch.cursor != 0 {
+		t.Errorf("expected cursor=0 after Ctrl+P, got %d", rm.histSearch.cursor)
 	}
 
 	// Ctrl+P at top stays at 0
 	result, _ = rm.updateHistorySearch(msg)
 	rm = result.(model)
-	if rm.historySearchCursor != 0 {
-		t.Errorf("expected cursor=0 at boundary, got %d", rm.historySearchCursor)
+	if rm.histSearch.cursor != 0 {
+		t.Errorf("expected cursor=0 at boundary, got %d", rm.histSearch.cursor)
 	}
 }

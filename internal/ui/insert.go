@@ -10,16 +10,16 @@ const maxHistory = 100
 
 func (m model) updateInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Handle completion-active keys first
-	if m.completionActive {
+	if m.completion.active {
 		switch msg.Type {
 		case tea.KeyTab, tea.KeyCtrlN, tea.KeyDown:
-			if len(m.completionItems) > 0 {
-				m.completionCursor = (m.completionCursor + 1) % len(m.completionItems)
+			if len(m.completion.items) > 0 {
+				m.completion.cursor = (m.completion.cursor + 1) % len(m.completion.items)
 			}
 			return m, nil
 		case tea.KeyCtrlP, tea.KeyUp:
-			if len(m.completionItems) > 0 {
-				m.completionCursor = (m.completionCursor - 1 + len(m.completionItems)) % len(m.completionItems)
+			if len(m.completion.items) > 0 {
+				m.completion.cursor = (m.completion.cursor - 1 + len(m.completion.items)) % len(m.completion.items)
 			}
 			return m, nil
 		case tea.KeyEnter:

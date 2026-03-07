@@ -204,9 +204,9 @@ func (m *model) triggerCompletion() {
 	var candidates []string
 	switch ctx {
 	case contextTable:
-		candidates = filterByPrefix(m.sidebarTables, filterPrefix)
+		candidates = filterByPrefix(m.sidebar.tables, filterPrefix)
 	case contextColumn:
-		tableName := detectTableFromContext(text, prefix, m.sidebarTables)
+		tableName := detectTableFromContext(text, prefix, m.sidebar.tables)
 		if tableName != "" {
 			cols := m.getOrFetchColumns(tableName)
 			candidates = filterByPrefix(cols, filterPrefix)
@@ -216,7 +216,7 @@ func (m *model) triggerCompletion() {
 		}
 	default:
 		// Unknown context: offer both tables and columns
-		candidates = filterByPrefix(m.sidebarTables, filterPrefix)
+		candidates = filterByPrefix(m.sidebar.tables, filterPrefix)
 		colCandidates := m.allColumns(filterPrefix)
 		candidates = append(candidates, colCandidates...)
 		candidates = dedup(candidates)
@@ -232,19 +232,19 @@ func (m *model) triggerCompletion() {
 		return
 	}
 
-	m.completionActive = true
-	m.completionItems = candidates
-	m.completionCursor = 0
-	m.completionPrefix = prefix
+	m.completion.active = true
+	m.completion.items = candidates
+	m.completion.cursor = 0
+	m.completion.prefix = prefix
 }
 
 // acceptCompletion inserts the currently selected completion candidate.
 func (m *model) acceptCompletion() {
-	if !m.completionActive || len(m.completionItems) == 0 {
+	if !m.completion.active || len(m.completion.items) == 0 {
 		return
 	}
-	selected := m.completionItems[m.completionCursor]
-	m.insertCompletion(selected, m.completionPrefix)
+	selected := m.completion.items[m.completion.cursor]
+	m.insertCompletion(selected, m.completion.prefix)
 	m.closeCompletion()
 }
 
@@ -265,18 +265,18 @@ func (m *model) insertCompletion(selected string, prefix string) {
 
 // closeCompletion hides the completion popup.
 func (m *model) closeCompletion() {
-	m.completionActive = false
-	m.completionItems = nil
-	m.completionCursor = 0
-	m.completionPrefix = ""
+	m.completion.active = false
+	m.completion.items = nil
+	m.completion.cursor = 0
+	m.completion.prefix = ""
 }
 
 // getOrFetchColumns returns cached columns or fetches them synchronously.
 func (m *model) getOrFetchColumns(tableName string) []string {
-	if m.completionColCache == nil {
-		m.completionColCache = make(map[string][]string)
+	if m.completion.colCache == nil {
+		m.completion.colCache = make(map[string][]string)
 	}
-	if cols, ok := m.completionColCache[tableName]; ok {
+	if cols, ok := m.completion.colCache[tableName]; ok {
 		return cols
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
@@ -287,21 +287,21 @@ func (m *model) getOrFetchColumns(tableName string) []string {
 	}
 	// Cap cache size to prevent unbounded growth
 	const maxColCacheSize = 64
-	if len(m.completionColCache) >= maxColCacheSize {
+	if len(m.completion.colCache) >= maxColCacheSize {
 		// Evict one random entry to make space
-		for k := range m.completionColCache {
-			delete(m.completionColCache, k)
+		for k := range m.completion.colCache {
+			delete(m.completion.colCache, k)
 			break
 		}
 	}
-	m.completionColCache[tableName] = cols
+	m.completion.colCache[tableName] = cols
 	return cols
 }
 
 // allColumns gathers columns from all known tables, filtered by prefix.
 func (m *model) allColumns(prefix string) []string {
 	var all []string
-	for _, t := range m.sidebarTables {
+	for _, t := range m.sidebar.tables {
 		cols := m.getOrFetchColumns(t)
 		all = append(all, filterByPrefix(cols, prefix)...)
 	}
@@ -325,12 +325,12 @@ const maxCompletionVisible = 8
 
 // renderCompletionPopup draws the completion popup below the editor area.
 func (m model) renderCompletionPopup() string {
-	if !m.completionActive || len(m.completionItems) == 0 {
+	if !m.completion.active || len(m.completion.items) == 0 {
 		return ""
 	}
 
 	popupWidth := 30
-	for _, item := range m.completionItems {
+	for _, item := range m.completion.items {
 		w := lipgloss.Width(item) + 4
 		if w > popupWidth {
 			popupWidth = w
@@ -355,33 +355,33 @@ func (m model) renderCompletionPopup() string {
 
 	// Calculate scroll offset
 	scrollOffset := 0
-	if m.completionCursor >= maxCompletionVisible {
-		scrollOffset = m.completionCursor - maxCompletionVisible + 1
+	if m.completion.cursor >= maxCompletionVisible {
+		scrollOffset = m.completion.cursor - maxCompletionVisible + 1
 	}
-	end := min(scrollOffset+maxCompletionVisible, len(m.completionItems))
+	end := min(scrollOffset+maxCompletionVisible, len(m.completion.items))
 
 	var lines []string
 	for i := scrollOffset; i < end; i++ {
-		label := sanitize(m.completionItems[i])
+		label := sanitize(m.completion.items[i])
 		runes := []rune(label)
 		maxLen := popupWidth - 6
 		if maxLen > 0 && len(runes) > maxLen {
 			label = string(runes[:maxLen]) + "…"
 		}
-		if i == m.completionCursor {
+		if i == m.completion.cursor {
 			lines = append(lines, selectedStyle.Render(label))
 		} else {
 			lines = append(lines, itemStyle.Render(label))
 		}
 	}
 
-	if len(m.completionItems) > maxCompletionVisible {
+	if len(m.completion.items) > maxCompletionVisible {
 		info := lipgloss.NewStyle().
 			Foreground(mutedTextColor).
 			Background(panelBackground).
 			Width(popupWidth - 4).
 			Padding(0, 1).
-			Render(fmt.Sprintf("%d/%d", m.completionCursor+1, len(m.completionItems)))
+			Render(fmt.Sprintf("%d/%d", m.completion.cursor+1, len(m.completion.items)))
 		lines = append(lines, info)
 	}
 

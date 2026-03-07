@@ -78,67 +78,61 @@ type connSwitchedMsg struct {
 }
 
 type model struct {
-	connMgr      *connManager
-	connName     string // display name of initial connection
-	dbPath       string
-	mode         mode
-	textarea     textarea.Model
-	table        table.Model
-	viewport     viewport.Model
-	width         int
-	height        int
-	statusText    string
-	statusError   bool
-	sidebarOpen   bool
-	sidebarTables []string
-	sidebarCursor int
-	aiEnabled     bool
-	aiClient      *ai.Client
-	aiInput       textinput.Model
-	aiSpinner     spinner.Model
-	aiLoading     bool
-	aiError       string
-	queryCancel   context.CancelFunc
-	querySeq      uint64
-	lastResult    db.QueryResult
-	queryHistory  []string // executed queries (newest at end)
-	historyIdx    int      // -1 = new input, 0..n = history position
-	historyDraft  string   // input saved before navigating history
-	sortCol       int
-	sortDir       sortOrder
-	colCursor       int           // column cursor in NORMAL mode
-	colOffset       int           // first visible column index for horizontal windowing
-	cachedColWidths []int         // cached column widths (recomputed only when result changes)
-	displayRows     []table.Row   // sorted rows for windowing source
-	lastVisStart    int           // cached visible range start for rebuild optimization
-	lastVisEnd      int           // cached visible range end for rebuild optimization
-	viewportDirty   bool          // forces column/row rebuild on next syncViewport
-	exportCursor      int
-	detailFieldCursor int
-	detailScroll      int
-	snippets          []snippet.Snippet
-	snippetCursor     int
-	snippetNaming     bool
-	snippetInput      textinput.Model
-	snippetPrevMode      mode // mode before entering snippet naming via Ctrl+S
-	profiles          []profile.Profile
-	rawDSN            string // unmasked DSN for profile save
-	profileCursor     int
-	profileNaming     bool
-	profileInput      textinput.Model
+	// Connection
+	connMgr  *connManager
+	connName string // display name of initial connection
+	dbPath   string
+	rawDSN   string // unmasked DSN for profile save
+
+	// Core UI
+	mode     mode
+	textarea textarea.Model
+	table    table.Model
+	viewport viewport.Model
+	width    int
+	height   int
+
+	// Status bar
+	statusText  string
+	statusError bool
+
+	// Query execution
+	queryCancel  context.CancelFunc
+	querySeq     uint64
+	lastResult   db.QueryResult
+	queryHistory []string // executed queries (newest at end)
+	historyIdx   int      // -1 = new input, 0..n = history position
+	historyDraft string   // input saved before navigating history
+
+	// Result table
+	sortCol         int
+	sortDir         sortOrder
+	colCursor       int         // column cursor in NORMAL mode
+	colOffset       int         // first visible column index for horizontal windowing
+	cachedColWidths []int       // cached column widths (recomputed only when result changes)
+	displayRows     []table.Row // sorted rows for windowing source
+	lastVisStart    int         // cached visible range start for rebuild optimization
+	lastVisEnd      int         // cached visible range end for rebuild optimization
+	viewportDirty   bool        // forces column/row rebuild on next syncViewport
+
+	// Compare
 	pinned      *pinnedPane // nil = side-by-side OFF
 	comparePane int         // 0=left(pinned), 1=right(active)
-	historySearchInput   textinput.Model
-	historySearchResults []int // indices into queryHistory (filtered)
-	historySearchCursor  int
-	completionActive     bool
-	completionItems      []string
-	completionCursor     int
-	completionPrefix     string
-	completionColCache   map[string][]string
-	modeStyle            lipgloss.Style
-	messageStyle         lipgloss.Style
-	pathStyle            lipgloss.Style
+
+	// Styles
+	modeStyle    lipgloss.Style
+	messageStyle lipgloss.Style
+	pathStyle    lipgloss.Style
+
+	// Mode-specific state
+	detail     detailState
+	exportSt   exportState
+	aiSt       aiState
+	snippetSt  snippetState
+	profileSt  profileState
+	histSearch histSearchState
+	completion completionState
+	sidebar    sidebarState
 }
 
 // CloseAll closes all database connections managed by this model.
@@ -229,25 +223,33 @@ func NewModel(adapter db.DBAdapter, dbPath string, rawDSN string, connName strin
 	cm := newConnManager(connName, rawDSN, adapter)
 
 	m := model{
-		connMgr:      cm,
-		connName:     connName,
-		dbPath:       dbPath,
-		mode:         insertMode,
-		textarea:     input,
-		table:        tbl,
-		viewport:     vp,
-		statusText:   "Ready",
-		historyIdx:   -1,
-		aiEnabled:    aiClient != nil,
-		aiClient:     aiClient,
-		aiInput:      aiIn,
-		aiSpinner:    sp,
-		snippets:           snippets,
-		snippetInput:       snippetIn,
-		profiles:           profiles,
-		rawDSN:             rawDSN,
-		profileInput:       profileIn,
-		historySearchInput: histSearchIn,
+		connMgr:    cm,
+		connName:   connName,
+		dbPath:     dbPath,
+		rawDSN:     rawDSN,
+		mode:       insertMode,
+		textarea:   input,
+		table:      tbl,
+		viewport:   vp,
+		statusText: "Ready",
+		historyIdx: -1,
+		aiSt: aiState{
+			enabled: aiClient != nil,
+			client:  aiClient,
+			input:   aiIn,
+			spinner: sp,
+		},
+		snippetSt: snippetState{
+			items: snippets,
+			input: snippetIn,
+		},
+		profileSt: profileState{
+			items: profiles,
+			input: profileIn,
+		},
+		histSearch: histSearchState{
+			input: histSearchIn,
+		},
 	}
 	m.modeStyle = lipgloss.NewStyle().Bold(true).Padding(0, 1).Background(accentColor).Foreground(panelBackground)
 	m.messageStyle = lipgloss.NewStyle().Padding(0, 1).Foreground(textColor).Background(statusBackground)
@@ -285,7 +287,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.queryCancel != nil {
 				m.queryCancel()
 				m.queryCancel = nil
-				m.aiLoading = false
+				m.aiSt.loading = false
 				m.mode = normalMode
 				m.textarea.Blur()
 				m.setStatus("Cancelled", false)
@@ -318,12 +320,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.queryCancel = nil
-		m.aiLoading = false
+		m.aiSt.loading = false
 		if msg.err != nil {
 			if errors.Is(msg.err, context.Canceled) {
 				return m, nil
 			}
-			m.aiError = msg.err.Error()
+			m.aiSt.err = msg.err.Error()
 			return m, nil
 		}
 		m.textarea.SetValue(msg.sql)
@@ -332,9 +334,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setStatus("AI generated SQL — review before executing", false)
 		return m, nil
 	case spinner.TickMsg:
-		if m.aiLoading {
+		if m.aiSt.loading {
 			var cmd tea.Cmd
-			m.aiSpinner, cmd = m.aiSpinner.Update(msg)
+			m.aiSt.spinner, cmd = m.aiSt.spinner.Update(msg)
 			return m, cmd
 		}
 		return m, nil
@@ -354,8 +356,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update dbPath to reflect new connection
 		m.dbPath = db.MaskDSN(m.connMgr.ActiveDSN())
 		m.rawDSN = m.connMgr.ActiveDSN()
-		m.completionColCache = nil
-		m.sidebarTables = nil
+		m.completion.colCache = nil
+		m.sidebar.tables = nil
 		m.setStatus(fmt.Sprintf("Connected to %s", sanitize(m.connMgr.ActiveName())), false)
 		m.mode = normalMode
 		m.textarea.Blur()
@@ -368,10 +370,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, loadTablesCmd(m.connMgr.Active())
 	case tablesLoadedMsg:
 		if msg.err == nil {
-			m.sidebarTables = msg.tables
-			m.completionColCache = nil // invalidate column cache
-			if m.sidebarCursor >= len(msg.tables) {
-				m.sidebarCursor = max(len(msg.tables)-1, 0)
+			m.sidebar.tables = msg.tables
+			m.completion.colCache = nil // invalidate column cache
+			if m.sidebar.cursor >= len(msg.tables) {
+				m.sidebar.cursor = max(len(msg.tables)-1, 0)
 			}
 		}
 		return m, nil
@@ -412,7 +414,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.table, cmd = m.table.Update(msg)
 		}
 	case historySearchMode:
-		m.historySearchInput, cmd = m.historySearchInput.Update(msg)
+		m.histSearch.input, cmd = m.histSearch.input.Update(msg)
 	case sidebarMode:
 		// no passthrough needed
 	}
@@ -428,7 +430,7 @@ func (m model) View() string {
 	fullWidth := m.fullContentWidth()
 
 	editorView := m.textarea.View()
-	if m.completionActive && len(m.completionItems) > 0 {
+	if m.completion.active && len(m.completion.items) > 0 {
 		popup := m.renderCompletionPopup()
 		editorView = editorView + "\n" + popup
 	}
@@ -452,7 +454,7 @@ func (m model) View() string {
 
 	main := lipgloss.JoinVertical(lipgloss.Left, editor, results)
 
-	if m.sidebarOpen {
+	if m.sidebar.open {
 		sidebar := m.renderSidebar()
 		main = lipgloss.JoinHorizontal(lipgloss.Top, sidebar, main)
 	}
@@ -490,7 +492,7 @@ func (m model) View() string {
 
 func (m *model) contentWidth() int {
 	w := m.width
-	if m.sidebarOpen {
+	if m.sidebar.open {
 		w = max(w-sidebarWidth, 20)
 	}
 	if m.pinned != nil {
@@ -501,7 +503,7 @@ func (m *model) contentWidth() int {
 
 // fullContentWidth returns the total width available for content (without compare split).
 func (m *model) fullContentWidth() int {
-	if m.sidebarOpen {
+	if m.sidebar.open {
 		return max(m.width-sidebarWidth, 20)
 	}
 	return m.width
@@ -512,8 +514,8 @@ func (m *model) resize() {
 	resultsHeight := m.resultsHeight()
 
 	// Auto-close sidebar if terminal too narrow
-	if m.sidebarOpen && m.width < minWidthForSidebar {
-		m.sidebarOpen = false
+	if m.sidebar.open && m.width < minWidthForSidebar {
+		m.sidebar.open = false
 		if m.mode == sidebarMode {
 			m.mode = normalMode
 		}
@@ -721,138 +723,6 @@ func (m *model) setStatus(text string, isError bool) {
 	m.statusError = isError
 }
 
-func (m model) renderStatusBar() string {
-	modeStr := m.modeStyle.Render(string(m.mode))
-
-	msgStyle := m.messageStyle
-	if m.statusError {
-		msgStyle = msgStyle.Foreground(errorColor)
-	} else if strings.TrimSpace(m.statusText) != "" {
-		msgStyle = msgStyle.Foreground(successColor)
-	}
-
-	var hints string
-	if m.queryCancel != nil {
-		if m.aiLoading {
-			hints = "C-c/Esc:cancel"
-		} else {
-			hints = "C-c:cancel"
-		}
-	} else {
-		switch m.mode {
-		case normalMode:
-			if m.pinned != nil {
-				hints = "c:close Tab:switch h/l:col s:sort j/k:row i:insert q:quit"
-			} else if m.aiEnabled {
-				hints = "c:compare h/l:col s:sort R:re-exec t:tables i:insert e:export S:snippets P:profiles C-k:AI q:quit"
-			} else {
-				hints = "c:compare h/l:col s:sort R:re-exec t:tables i:insert e:export S:snippets P:profiles q:quit"
-			}
-		case insertMode:
-			if m.completionActive {
-				hints = "Tab/C-n:next C-p:prev Enter:accept Esc:cancel"
-			} else {
-				hints = "Tab:complete C-Enter/C-j:exec C-r:search C-l:clear C-p/C-n:hist C-s:save Esc:normal"
-			}
-		case sidebarMode:
-			hints = "j/k:nav Enter:select Esc:close"
-		case aiMode:
-			hints = "Enter:generate Esc:cancel"
-		case exportMode:
-			hints = "j/k:nav Enter:select Esc:cancel"
-		case detailMode:
-			hints = "j/k:field n/N:row q/Esc:close"
-		case historySearchMode:
-			hints = "Enter:select C-p/C-n:nav Esc:cancel"
-		case snippetMode:
-			if m.snippetNaming {
-				hints = "Enter:save Esc:cancel"
-			} else {
-				hints = "j/k:nav Enter:load d:del a:add Esc:close"
-			}
-		case profileMode:
-			if m.profileNaming {
-				hints = "Enter:save Esc:cancel"
-			} else {
-				hints = "j/k:nav Enter:connect x:switch+exec d:del a:add Esc:close"
-			}
-		}
-	}
-	hintStyle := lipgloss.NewStyle().Foreground(mutedTextColor).Background(statusBackground).Padding(0, 1)
-
-	dbLabel := strings.ToUpper(sanitize(m.activeDB().Type()))
-	connName := sanitize(m.connMgr.ActiveName())
-	dbLabelStyle := lipgloss.NewStyle().Padding(0, 1).Foreground(keywordColor).Background(statusBackground)
-
-	// Show both connection names in compare mode
-	if m.pinned != nil {
-		pinnedName := sanitize(m.pinned.connName)
-		if pinnedName == "" {
-			pinnedName = "pinned"
-		}
-		activeName := connName
-		if activeName == "" {
-			activeName = "active"
-		}
-		connName = pinnedName + " | " + activeName
-	}
-
-	var posInfo string
-	if m.pinned != nil && m.comparePane == 0 {
-		// Show pinned pane position when focused
-		p := m.pinned
-		if len(p.result.Columns) > 0 && len(p.result.Rows) > 0 {
-			colName := ""
-			if p.colCursor < len(p.result.Columns) {
-				colName = p.result.Columns[p.colCursor]
-			}
-			_, visEnd := p.visibleColumnRange(m.comparePaneWidth())
-			visCount := visEnd - p.colOffset
-			totalCols := len(p.result.Columns)
-			if visCount < totalCols {
-				posInfo = fmt.Sprintf("col:%s [%d/%d] %d/%d", sanitize(colName), p.colCursor+1, totalCols, p.table.Cursor()+1, len(p.result.Rows))
-			} else {
-				posInfo = fmt.Sprintf("col:%s %d/%d", sanitize(colName), p.table.Cursor()+1, len(p.result.Rows))
-			}
-		}
-	} else if len(m.lastResult.Columns) > 0 && len(m.lastResult.Rows) > 0 {
-		colName := ""
-		if m.colCursor < len(m.lastResult.Columns) {
-			colName = m.lastResult.Columns[m.colCursor]
-		}
-		_, visEnd := m.visibleColumnRange()
-		visCount := visEnd - m.colOffset
-		totalCols := len(m.lastResult.Columns)
-		if visCount < totalCols {
-			posInfo = fmt.Sprintf("col:%s [%d/%d] %d/%d", sanitize(colName), m.colCursor+1, totalCols, m.table.Cursor()+1, len(m.lastResult.Rows))
-		} else {
-			posInfo = fmt.Sprintf("col:%s %d/%d", sanitize(colName), m.table.Cursor()+1, len(m.lastResult.Rows))
-		}
-	}
-	posStyle := lipgloss.NewStyle().Foreground(textColor).Background(statusBackground).Padding(0, 1)
-
-	left := modeStr
-	var dbTag string
-	if connName != "" {
-		dbTag = connName + ":" + dbLabel
-	} else {
-		dbTag = dbLabel
-	}
-	center := dbLabelStyle.Render("["+dbTag+"]") + m.pathStyle.Render(m.dbPath)
-	middle := msgStyle.Render(sanitize(m.statusText))
-	pos := posStyle.Render(posInfo)
-	right := hintStyle.Render(hints)
-
-	leftPart := lipgloss.JoinHorizontal(lipgloss.Left, left, center, middle)
-	rightPart := lipgloss.JoinHorizontal(lipgloss.Right, pos, right)
-	gap := max(m.width-lipgloss.Width(leftPart)-lipgloss.Width(rightPart), 0)
-	bar := leftPart + strings.Repeat(" ", gap) + rightPart
-
-	return lipgloss.NewStyle().
-		Width(m.width).
-		Background(statusBackground).
-		Render(bar)
-}
 
 // prepareAndExecuteQuery cancels any in-flight query, records the query in
 // history, and returns a Cmd that executes it. Callers should use this instead

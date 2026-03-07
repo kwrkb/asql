@@ -18,13 +18,9 @@ func (m model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = normalMode
 		m.setStatus("Normal mode", false)
 	case tea.KeyDown:
-		if m.detailFieldCursor < numFields-1 {
-			m.detailFieldCursor++
-		}
+		moveCursor(&m.detail.fieldCursor, numFields, 1)
 	case tea.KeyUp:
-		if m.detailFieldCursor > 0 {
-			m.detailFieldCursor--
-		}
+		moveCursor(&m.detail.fieldCursor, numFields, -1)
 	case tea.KeyRunes:
 		if msg.Alt {
 			break
@@ -34,21 +30,17 @@ func (m model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = normalMode
 			m.setStatus("Normal mode", false)
 		case "j":
-			if m.detailFieldCursor < numFields-1 {
-				m.detailFieldCursor++
-			}
+			moveCursor(&m.detail.fieldCursor, numFields, 1)
 		case "k":
-			if m.detailFieldCursor > 0 {
-				m.detailFieldCursor--
-			}
+			moveCursor(&m.detail.fieldCursor, numFields, -1)
 		case "n", "l":
 			m.table.MoveDown(1)
-			m.detailFieldCursor = 0
-			m.detailScroll = 0
+			m.detail.fieldCursor = 0
+			m.detail.scroll = 0
 		case "N", "h":
 			m.table.MoveUp(1)
-			m.detailFieldCursor = 0
-			m.detailScroll = 0
+			m.detail.fieldCursor = 0
+			m.detail.scroll = 0
 		}
 	}
 
@@ -57,10 +49,7 @@ func (m model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) renderWithDetailOverlay(background string) string {
-	modalWidth := min(m.width-4, 72)
-	if modalWidth < 20 {
-		modalWidth = 20
-	}
+	modalWidth := calcModalWidth(m.width, 72)
 	modalHeight := m.height - 6
 
 	// Use displayRows (full columns) instead of m.table.Rows() (windowed)
@@ -102,16 +91,16 @@ func (m model) renderWithDetailOverlay(background string) string {
 	contentHeight := max(modalHeight-3, 1) // title + margins
 	linesPerField := 3                     // label line + value line + separator
 	maxVisibleFields := max(contentHeight/linesPerField, 1)
-	if m.detailFieldCursor >= m.detailScroll+maxVisibleFields {
-		m.detailScroll = m.detailFieldCursor - maxVisibleFields + 1
+	if m.detail.fieldCursor >= m.detail.scroll+maxVisibleFields {
+		m.detail.scroll = m.detail.fieldCursor - maxVisibleFields + 1
 	}
-	if m.detailFieldCursor < m.detailScroll {
-		m.detailScroll = m.detailFieldCursor
+	if m.detail.fieldCursor < m.detail.scroll {
+		m.detail.scroll = m.detail.fieldCursor
 	}
 
 	var b strings.Builder
 	linesRendered := 0
-	for i := m.detailScroll; i < len(m.lastResult.Columns); i++ {
+	for i := m.detail.scroll; i < len(m.lastResult.Columns); i++ {
 		if linesRendered+linesPerField > contentHeight {
 			break
 		}
@@ -127,7 +116,7 @@ func (m model) renderWithDetailOverlay(background string) string {
 			val = sanitize(row[i])
 		}
 
-		if i == m.detailFieldCursor {
+		if i == m.detail.fieldCursor {
 			b.WriteString(selectedLabelStyle.Render(colName + colType))
 			b.WriteByte('\n')
 			b.WriteString(selectedValueStyle.Render(val))
@@ -152,8 +141,5 @@ func (m model) renderWithDetailOverlay(background string) string {
 
 	modal := boxStyle.Render(content)
 
-	bgH := lipgloss.Height(background)
-
-	return lipgloss.Place(m.width, bgH, lipgloss.Center, lipgloss.Center, modal,
-		lipgloss.WithWhitespaceBackground(appBackground))
+	return overlayModal(m.width, background, modal)
 }

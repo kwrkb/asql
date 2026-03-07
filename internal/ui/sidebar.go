@@ -11,7 +11,7 @@ import (
 func (m model) updateSidebar(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc:
-		m.sidebarOpen = false
+		m.sidebar.open = false
 		m.mode = normalMode
 		m.setStatus("Normal mode", false)
 		m.resize()
@@ -21,34 +21,26 @@ func (m model) updateSidebar(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		switch string(msg.Runes) {
 		case "t":
-			m.sidebarOpen = false
+			m.sidebar.open = false
 			m.mode = normalMode
 			m.setStatus("Normal mode", false)
 			m.resize()
 		case "j":
-			if len(m.sidebarTables) > 0 {
-				m.sidebarCursor = min(m.sidebarCursor+1, len(m.sidebarTables)-1)
-			}
+			moveCursor(&m.sidebar.cursor, len(m.sidebar.tables), 1)
 		case "k":
-			if m.sidebarCursor > 0 {
-				m.sidebarCursor--
-			}
+			moveCursor(&m.sidebar.cursor, len(m.sidebar.tables), -1)
 		}
 	case tea.KeyDown:
-		if len(m.sidebarTables) > 0 {
-			m.sidebarCursor = min(m.sidebarCursor+1, len(m.sidebarTables)-1)
-		}
+		moveCursor(&m.sidebar.cursor, len(m.sidebar.tables), 1)
 	case tea.KeyUp:
-		if m.sidebarCursor > 0 {
-			m.sidebarCursor--
-		}
+		moveCursor(&m.sidebar.cursor, len(m.sidebar.tables), -1)
 	case tea.KeyEnter:
-		if len(m.sidebarTables) > 0 {
-			name := m.sidebarTables[m.sidebarCursor]
+		if len(m.sidebar.tables) > 0 {
+			name := m.sidebar.tables[m.sidebar.cursor]
 			quoted := m.activeDB().QuoteIdentifier(name)
 			query := fmt.Sprintf("SELECT * FROM %s LIMIT 100;", quoted)
 			m.textarea.SetValue(query)
-			m.sidebarOpen = false
+			m.sidebar.open = false
 			m.mode = insertMode
 			m.textarea.Focus()
 			m.setStatus("Insert mode", false)
@@ -91,16 +83,16 @@ func (m model) renderSidebar() string {
 	// Calculate scroll offset so cursor stays visible
 	maxVisible := height - 2 // title line + border allowance
 	scrollOffset := 0
-	if maxVisible > 0 && m.sidebarCursor >= maxVisible {
-		scrollOffset = m.sidebarCursor - maxVisible + 1
+	if maxVisible > 0 && m.sidebar.cursor >= maxVisible {
+		scrollOffset = m.sidebar.cursor - maxVisible + 1
 	}
 
-	for i := scrollOffset; i < len(m.sidebarTables); i++ {
+	for i := scrollOffset; i < len(m.sidebar.tables); i++ {
 		if lines >= height-1 {
 			break
 		}
-		name := m.sidebarTables[i]
-		if i == m.sidebarCursor {
+		name := m.sidebar.tables[i]
+		if i == m.sidebar.cursor {
 			b.WriteString(selectedStyle.Render(name))
 		} else {
 			b.WriteString(itemStyle.Render(name))
@@ -109,7 +101,7 @@ func (m model) renderSidebar() string {
 		lines++
 	}
 
-	if len(m.sidebarTables) == 0 {
+	if len(m.sidebar.tables) == 0 {
 		b.WriteString(itemStyle.Foreground(mutedTextColor).Render("(no tables)"))
 		b.WriteByte('\n')
 		lines++

@@ -16,13 +16,13 @@ import (
 const aiRequestTimeout = 30 * time.Second
 
 func (m model) updateAI(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.aiLoading {
+	if m.aiSt.loading {
 		if msg.Type == tea.KeyEsc {
 			if m.queryCancel != nil {
 				m.queryCancel()
 				m.queryCancel = nil
 			}
-			m.aiLoading = false
+			m.aiSt.loading = false
 			m.mode = normalMode
 			m.setStatus("Cancelled", false)
 			return m, nil
@@ -32,11 +32,11 @@ func (m model) updateAI(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc:
 		m.mode = normalMode
-		m.aiError = ""
+		m.aiSt.err = ""
 		m.setStatus("Normal mode", false)
 		return m, nil
 	case tea.KeyEnter:
-		prompt := strings.TrimSpace(m.aiInput.Value())
+		prompt := strings.TrimSpace(m.aiSt.input.Value())
 		if prompt == "" {
 			return m, nil
 		}
@@ -46,12 +46,12 @@ func (m model) updateAI(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		ctx, cancel := context.WithCancel(context.Background())
 		m.querySeq++
 		m.queryCancel = cancel
-		m.aiLoading = true
-		m.aiError = ""
-		return m, tea.Batch(m.aiSpinner.Tick, generateSQLCmd(ctx, m.aiClient, m.activeDB(), prompt, m.querySeq))
+		m.aiSt.loading = true
+		m.aiSt.err = ""
+		return m, tea.Batch(m.aiSt.spinner.Tick, generateSQLCmd(ctx, m.aiSt.client, m.activeDB(), prompt, m.querySeq))
 	}
 	var cmd tea.Cmd
-	m.aiInput, cmd = m.aiInput.Update(msg)
+	m.aiSt.input, cmd = m.aiSt.input.Update(msg)
 	return m, cmd
 }
 
@@ -71,10 +71,7 @@ func generateSQLCmd(parent context.Context, client *ai.Client, adapter db.DBAdap
 }
 
 func (m model) renderWithAIOverlay(background string) string {
-	modalWidth := min(m.width-4, 60)
-	if modalWidth < 20 {
-		modalWidth = 20
-	}
+	modalWidth := calcModalWidth(m.width, 60)
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -89,20 +86,17 @@ func (m model) renderWithAIOverlay(background string) string {
 		Background(panelBackground)
 
 	var content string
-	if m.aiLoading {
-		content = titleStyle.Render("AI Generating SQL...") + "\n" + m.aiSpinner.View() + " Thinking..."
+	if m.aiSt.loading {
+		content = titleStyle.Render("AI Generating SQL...") + "\n" + m.aiSt.spinner.View() + " Thinking..."
 	} else {
-		content = titleStyle.Render("AI Assistant (Text-to-SQL)") + "\n" + m.aiInput.View()
-		if m.aiError != "" {
+		content = titleStyle.Render("AI Assistant (Text-to-SQL)") + "\n" + m.aiSt.input.View()
+		if m.aiSt.err != "" {
 			errStyle := lipgloss.NewStyle().Foreground(errorColor).MarginTop(1)
-			content += "\n" + errStyle.Render(m.aiError)
+			content += "\n" + errStyle.Render(m.aiSt.err)
 		}
 	}
 
 	modal := boxStyle.Render(content)
 
-	bgH := lipgloss.Height(background)
-
-	return lipgloss.Place(m.width, bgH, lipgloss.Center, lipgloss.Center, modal,
-		lipgloss.WithWhitespaceBackground(appBackground))
+	return overlayModal(m.width, background, modal)
 }

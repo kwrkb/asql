@@ -83,13 +83,14 @@ func newTestModel() *model {
 	vp := viewport.New(0, 0)
 	ta := textarea.New()
 	return &model{
+		connMgr:            newConnManager("test", "", nil),
 		table:              tbl,
 		viewport:           vp,
 		textarea:           ta,
 		width:              80,
 		height:             24,
 		historyIdx:         -1,
-		historySearchInput: textinput.New(),
+		histSearch: histSearchState{input: textinput.New()},
 	}
 }
 
@@ -271,11 +272,11 @@ func TestDetailMode_EnterFromNormal(t *testing.T) {
 	if rm.mode != detailMode {
 		t.Errorf("expected detailMode, got %q", rm.mode)
 	}
-	if rm.detailFieldCursor != 0 {
-		t.Errorf("expected detailFieldCursor=0, got %d", rm.detailFieldCursor)
+	if rm.detail.fieldCursor != 0 {
+		t.Errorf("expected detailFieldCursor=0, got %d", rm.detail.fieldCursor)
 	}
-	if rm.detailScroll != 0 {
-		t.Errorf("expected detailScroll=0, got %d", rm.detailScroll)
+	if rm.detail.scroll != 0 {
+		t.Errorf("expected detailScroll=0, got %d", rm.detail.scroll)
 	}
 }
 
@@ -300,7 +301,7 @@ func TestDetailMode_EscReturns(t *testing.T) {
 		Columns: []string{"id", "name"},
 		Rows:    [][]string{{"1", "alice"}},
 	}
-	m.detailFieldCursor = 1
+	m.detail.fieldCursor = 1
 
 	msg := tea.KeyMsg{Type: tea.KeyEsc}
 	result, _ := m.updateDetail(msg)
@@ -318,47 +319,47 @@ func TestDetailMode_FieldNavigation(t *testing.T) {
 		Columns: []string{"id", "name", "email"},
 		Rows:    [][]string{{"1", "alice", "alice@example.com"}},
 	}
-	m.detailFieldCursor = 0
+	m.detail.fieldCursor = 0
 
 	// j moves down
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")}
 	result, _ := m.updateDetail(msg)
 	rm := result.(model)
-	if rm.detailFieldCursor != 1 {
-		t.Errorf("expected cursor=1 after j, got %d", rm.detailFieldCursor)
+	if rm.detail.fieldCursor != 1 {
+		t.Errorf("expected cursor=1 after j, got %d", rm.detail.fieldCursor)
 	}
 
 	// j again
-	m.detailFieldCursor = 1
+	m.detail.fieldCursor = 1
 	result, _ = m.updateDetail(msg)
 	rm = result.(model)
-	if rm.detailFieldCursor != 2 {
-		t.Errorf("expected cursor=2 after j, got %d", rm.detailFieldCursor)
+	if rm.detail.fieldCursor != 2 {
+		t.Errorf("expected cursor=2 after j, got %d", rm.detail.fieldCursor)
 	}
 
 	// j at bottom boundary
-	m.detailFieldCursor = 2
+	m.detail.fieldCursor = 2
 	result, _ = m.updateDetail(msg)
 	rm = result.(model)
-	if rm.detailFieldCursor != 2 {
-		t.Errorf("expected cursor=2 at boundary, got %d", rm.detailFieldCursor)
+	if rm.detail.fieldCursor != 2 {
+		t.Errorf("expected cursor=2 at boundary, got %d", rm.detail.fieldCursor)
 	}
 
 	// k moves up
-	m.detailFieldCursor = 2
+	m.detail.fieldCursor = 2
 	msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")}
 	result, _ = m.updateDetail(msg)
 	rm = result.(model)
-	if rm.detailFieldCursor != 1 {
-		t.Errorf("expected cursor=1 after k, got %d", rm.detailFieldCursor)
+	if rm.detail.fieldCursor != 1 {
+		t.Errorf("expected cursor=1 after k, got %d", rm.detail.fieldCursor)
 	}
 
 	// k at top boundary
-	m.detailFieldCursor = 0
+	m.detail.fieldCursor = 0
 	result, _ = m.updateDetail(msg)
 	rm = result.(model)
-	if rm.detailFieldCursor != 0 {
-		t.Errorf("expected cursor=0 at boundary, got %d", rm.detailFieldCursor)
+	if rm.detail.fieldCursor != 0 {
+		t.Errorf("expected cursor=0 at boundary, got %d", rm.detail.fieldCursor)
 	}
 }
 
@@ -385,8 +386,8 @@ func TestDetailMode_ShowsSortedRow(t *testing.T) {
 
 	// Enter detail mode on sorted first row
 	m.mode = detailMode
-	m.detailFieldCursor = 0
-	m.detailScroll = 0
+	m.detail.fieldCursor = 0
+	m.detail.scroll = 0
 	m.width = 80
 	m.height = 24
 

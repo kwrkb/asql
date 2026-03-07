@@ -22,10 +22,10 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus("Insert mode", false)
 		case "t":
 			if m.width >= minWidthForSidebar {
-				m.sidebarOpen = true
+				m.sidebar.open = true
 				m.mode = sidebarMode
 				m.textarea.Blur()
-				m.sidebarCursor = 0
+				m.sidebar.cursor = 0
 				m.setStatus("Sidebar", false)
 				m.resize()
 			} else {
@@ -36,7 +36,7 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setStatus("No query results to export", true)
 			} else {
 				m.mode = exportMode
-				m.exportCursor = 0
+				m.exportSt.cursor = 0
 				m.setStatus("Export mode", false)
 			}
 		case "c":
@@ -108,8 +108,8 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case "P":
 			m.mode = profileMode
-			m.profileCursor = 0
-			m.profileNaming = false
+			m.profileSt.cursor = 0
+			m.profileSt.naming = false
 			m.textarea.Blur()
 			m.setStatus("Profile mode", false)
 		case "R":
@@ -122,8 +122,8 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.prepareAndExecuteQuery(query)
 		case "S":
 			m.mode = snippetMode
-			m.snippetCursor = 0
-			m.snippetNaming = false
+			m.snippetSt.cursor = 0
+			m.snippetSt.naming = false
 			m.textarea.Blur()
 			m.setStatus("Snippet mode", false)
 		}
@@ -144,12 +144,12 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyCtrlS:
 		return m.enterSnippetNamingMode()
 	case tea.KeyCtrlK:
-		if m.aiEnabled {
+		if m.aiSt.enabled {
 			m.mode = aiMode
-			m.aiInput.Reset()
-			m.aiInput.Focus()
-			m.aiError = ""
-			m.aiLoading = false
+			m.aiSt.input.Reset()
+			m.aiSt.input.Focus()
+			m.aiSt.err = ""
+			m.aiSt.loading = false
 			m.setStatus("AI mode", false)
 			return m, textinput.Blink
 		}
@@ -157,8 +157,8 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEnter:
 		if len(m.lastResult.Columns) > 0 && len(m.lastResult.Rows) > 0 {
 			m.mode = detailMode
-			m.detailFieldCursor = 0
-			m.detailScroll = 0
+			m.detail.fieldCursor = 0
+			m.detail.scroll = 0
 			m.setStatus("Detail mode", false)
 		}
 	case tea.KeyPgUp, tea.KeyPgDown:

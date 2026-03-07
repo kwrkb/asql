@@ -30,22 +30,14 @@ func (m model) updateExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		switch string(msg.Runes) {
 		case "j":
-			if m.exportCursor < len(exportOptions)-1 {
-				m.exportCursor++
-			}
+			moveCursor(&m.exportSt.cursor, len(exportOptions), 1)
 		case "k":
-			if m.exportCursor > 0 {
-				m.exportCursor--
-			}
+			moveCursor(&m.exportSt.cursor, len(exportOptions), -1)
 		}
 	case tea.KeyDown:
-		if m.exportCursor < len(exportOptions)-1 {
-			m.exportCursor++
-		}
+		moveCursor(&m.exportSt.cursor, len(exportOptions), 1)
 	case tea.KeyUp:
-		if m.exportCursor > 0 {
-			m.exportCursor--
-		}
+		moveCursor(&m.exportSt.cursor, len(exportOptions), -1)
 	case tea.KeyEnter:
 		m.executeExport()
 		return m, nil
@@ -59,7 +51,7 @@ func (m *model) executeExport() {
 
 	defer func() { m.mode = normalMode }()
 
-	switch m.exportCursor {
+	switch m.exportSt.cursor {
 	case 0: // CSV to clipboard
 		content, err := export.FormatCSV(headers, rows)
 		if err != nil {
@@ -103,10 +95,7 @@ func (m *model) executeExport() {
 }
 
 func (m model) renderWithExportOverlay(background string) string {
-	modalWidth := min(m.width-4, 40)
-	if modalWidth < 20 {
-		modalWidth = 20
-	}
+	modalWidth := calcModalWidth(m.width, 40)
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -135,7 +124,7 @@ func (m model) renderWithExportOverlay(background string) string {
 
 	var items strings.Builder
 	for i, opt := range exportOptions {
-		if i == m.exportCursor {
+		if i == m.exportSt.cursor {
 			items.WriteString(selectedStyle.Render(opt))
 		} else {
 			items.WriteString(itemStyle.Render(opt))
@@ -148,8 +137,5 @@ func (m model) renderWithExportOverlay(background string) string {
 	content := titleStyle.Render("Export Results") + "\n" + items.String()
 	modal := boxStyle.Render(content)
 
-	bgH := lipgloss.Height(background)
-
-	return lipgloss.Place(m.width, bgH, lipgloss.Center, lipgloss.Center, modal,
-		lipgloss.WithWhitespaceBackground(appBackground))
+	return overlayModal(m.width, background, modal)
 }

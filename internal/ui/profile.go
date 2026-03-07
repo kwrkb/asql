@@ -13,7 +13,7 @@ import (
 )
 
 func (m model) updateProfile(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.profileNaming {
+	if m.profileSt.naming {
 		return m.updateProfileNaming(msg)
 	}
 
@@ -29,51 +29,43 @@ func (m model) updateProfile(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		switch string(msg.Runes) {
 		case "j":
-			if len(m.profiles) > 0 && m.profileCursor < len(m.profiles)-1 {
-				m.profileCursor++
-			}
+			moveCursor(&m.profileSt.cursor, len(m.profileSt.items), 1)
 		case "k":
-			if m.profileCursor > 0 {
-				m.profileCursor--
-			}
+			moveCursor(&m.profileSt.cursor, len(m.profileSt.items), -1)
 		case "d":
-			if len(m.profiles) > 0 && m.profileCursor < len(m.profiles) {
-				newProfiles := append(m.profiles[:m.profileCursor], m.profiles[m.profileCursor+1:]...)
+			if len(m.profileSt.items) > 0 && m.profileSt.cursor < len(m.profileSt.items) {
+				newProfiles := append(m.profileSt.items[:m.profileSt.cursor], m.profileSt.items[m.profileSt.cursor+1:]...)
 				if err := profile.Save(newProfiles); err != nil {
 					m.setStatus(fmt.Sprintf("Save failed: %v", err), true)
 				} else {
-					m.profiles = newProfiles
-					if m.profileCursor >= len(m.profiles) && m.profileCursor > 0 {
-						m.profileCursor--
+					m.profileSt.items = newProfiles
+					if m.profileSt.cursor >= len(m.profileSt.items) && m.profileSt.cursor > 0 {
+						m.profileSt.cursor--
 					}
 					m.setStatus("Profile deleted", false)
 				}
 			}
 		case "x":
-			if len(m.profiles) > 0 && m.profileCursor < len(m.profiles) {
-				return m.switchProfile(m.profiles[m.profileCursor], true)
+			if len(m.profileSt.items) > 0 && m.profileSt.cursor < len(m.profileSt.items) {
+				return m.switchProfile(m.profileSt.items[m.profileSt.cursor], true)
 			}
 		case "a":
 			if m.rawDSN == "" {
 				m.setStatus("No active connection to save", true)
 				return m, nil
 			}
-			m.profileNaming = true
-			m.profileInput.Reset()
-			m.profileInput.Focus()
+			m.profileSt.naming = true
+			m.profileSt.input.Reset()
+			m.profileSt.input.Focus()
 			return m, textinput.Blink
 		}
 	case tea.KeyDown:
-		if len(m.profiles) > 0 && m.profileCursor < len(m.profiles)-1 {
-			m.profileCursor++
-		}
+		moveCursor(&m.profileSt.cursor, len(m.profileSt.items), 1)
 	case tea.KeyUp:
-		if m.profileCursor > 0 {
-			m.profileCursor--
-		}
+		moveCursor(&m.profileSt.cursor, len(m.profileSt.items), -1)
 	case tea.KeyEnter:
-		if len(m.profiles) > 0 && m.profileCursor < len(m.profiles) {
-			return m.switchProfile(m.profiles[m.profileCursor], false)
+		if len(m.profileSt.items) > 0 && m.profileSt.cursor < len(m.profileSt.items) {
+			return m.switchProfile(m.profileSt.items[m.profileSt.cursor], false)
 		}
 	}
 	return m, nil
@@ -82,31 +74,31 @@ func (m model) updateProfile(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m model) updateProfileNaming(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc:
-		m.profileNaming = false
-		m.profileInput.Blur()
+		m.profileSt.naming = false
+		m.profileSt.input.Blur()
 		return m, nil
 	case tea.KeyEnter:
-		name := strings.TrimSpace(m.profileInput.Value())
+		name := strings.TrimSpace(m.profileSt.input.Value())
 		if name == "" {
 			return m, nil
 		}
-		newProfiles := profile.Upsert(m.profiles, profile.Profile{Name: name, DSN: m.rawDSN})
+		newProfiles := profile.Upsert(m.profileSt.items, profile.Profile{Name: name, DSN: m.rawDSN})
 		if err := profile.Save(newProfiles); err != nil {
 			m.setStatus(fmt.Sprintf("Save failed: %v", err), true)
-			m.profileNaming = false
-			m.profileInput.Blur()
+			m.profileSt.naming = false
+			m.profileSt.input.Blur()
 			return m, nil
 		}
-		m.profiles = newProfiles
+		m.profileSt.items = newProfiles
 		m.setStatus(fmt.Sprintf("Saved profile: %s", name), false)
-		m.profileNaming = false
-		m.profileInput.Blur()
-		m.profileCursor = len(m.profiles) - 1
+		m.profileSt.naming = false
+		m.profileSt.input.Blur()
+		m.profileSt.cursor = len(m.profileSt.items) - 1
 		return m, nil
 	}
 
 	var cmd tea.Cmd
-	m.profileInput, cmd = m.profileInput.Update(msg)
+	m.profileSt.input, cmd = m.profileSt.input.Update(msg)
 	return m, cmd
 }
 
@@ -135,10 +127,7 @@ func (m model) switchProfile(p profile.Profile, reExecute bool) (tea.Model, tea.
 }
 
 func (m model) renderWithProfileOverlay(background string) string {
-	modalWidth := min(m.width-4, 60)
-	if modalWidth < 20 {
-		modalWidth = 20
-	}
+	modalWidth := calcModalWidth(m.width, 60)
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -173,21 +162,21 @@ func (m model) renderWithProfileOverlay(background string) string {
 
 	var items strings.Builder
 
-	if m.profileNaming {
+	if m.profileSt.naming {
 		items.WriteString(lipgloss.NewStyle().Foreground(textColor).Background(panelBackground).Render("Name: "))
-		items.WriteString(m.profileInput.View())
-	} else if len(m.profiles) == 0 {
+		items.WriteString(m.profileSt.input.View())
+	} else if len(m.profileSt.items) == 0 {
 		items.WriteString(lipgloss.NewStyle().Foreground(mutedTextColor).Background(panelBackground).Render("(no saved profiles)"))
 	} else {
-		maxVisible := max(min((m.height-8)/2, len(m.profiles)), 1)
+		maxVisible := max(min((m.height-8)/2, len(m.profileSt.items)), 1)
 		start := 0
-		if m.profileCursor >= maxVisible {
-			start = m.profileCursor - maxVisible + 1
+		if m.profileSt.cursor >= maxVisible {
+			start = m.profileSt.cursor - maxVisible + 1
 		}
-		end := min(start+maxVisible, len(m.profiles))
+		end := min(start+maxVisible, len(m.profileSt.items))
 
 		for i := start; i < end; i++ {
-			p := m.profiles[i]
+			p := m.profileSt.items[i]
 			label := sanitize(p.Name)
 			// Show connection status markers
 			if m.connMgr.IsActive(p.DSN) {
@@ -197,7 +186,7 @@ func (m model) renderWithProfileOverlay(background string) string {
 			} else {
 				label = "  " + label
 			}
-			if i == m.profileCursor {
+			if i == m.profileSt.cursor {
 				items.WriteString(selectedStyle.Render(label))
 			} else {
 				items.WriteString(itemStyle.Render(label))
@@ -218,20 +207,17 @@ func (m model) renderWithProfileOverlay(background string) string {
 	}
 
 	title := "Connection Profiles"
-	if m.profileNaming {
+	if m.profileSt.naming {
 		title = "Save Profile"
 	}
 
 	var footer string
-	if !m.profileNaming {
+	if !m.profileSt.naming {
 		footer = "\n" + lipgloss.NewStyle().Foreground(mutedTextColor).Background(panelBackground).Render("Enter:connect x:switch+exec d:delete a:add Esc:close")
 	}
 
 	content := titleStyle.Render(title) + "\n" + items.String() + footer
 	modal := boxStyle.Render(content)
 
-	bgH := lipgloss.Height(background)
-
-	return lipgloss.Place(m.width, bgH, lipgloss.Center, lipgloss.Center, modal,
-		lipgloss.WithWhitespaceBackground(appBackground))
+	return overlayModal(m.width, background, modal)
 }

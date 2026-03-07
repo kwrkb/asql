@@ -17,18 +17,18 @@ func (m model) enterSnippetNamingMode() (tea.Model, tea.Cmd) {
 		m.setStatus("No query to save", true)
 		return m, nil
 	}
-	m.snippetPrevMode = m.mode
+	m.snippetSt.prevMode = m.mode
 	m.mode = snippetMode
-	m.snippetNaming = true
-	m.snippetInput.Reset()
-	m.snippetInput.Focus()
+	m.snippetSt.naming = true
+	m.snippetSt.input.Reset()
+	m.snippetSt.input.Focus()
 	m.textarea.Blur()
 	m.setStatus("Save snippet", false)
 	return m, textinput.Blink
 }
 
 func (m model) updateSnippet(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.snippetNaming {
+	if m.snippetSt.naming {
 		return m.updateSnippetNaming(msg)
 	}
 
@@ -44,22 +44,18 @@ func (m model) updateSnippet(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		switch string(msg.Runes) {
 		case "j":
-			if len(m.snippets) > 0 && m.snippetCursor < len(m.snippets)-1 {
-				m.snippetCursor++
-			}
+			moveCursor(&m.snippetSt.cursor, len(m.snippetSt.items), 1)
 		case "k":
-			if m.snippetCursor > 0 {
-				m.snippetCursor--
-			}
+			moveCursor(&m.snippetSt.cursor, len(m.snippetSt.items), -1)
 		case "d":
-			if len(m.snippets) > 0 && m.snippetCursor < len(m.snippets) {
-				newSnippets := append(m.snippets[:m.snippetCursor], m.snippets[m.snippetCursor+1:]...)
+			if len(m.snippetSt.items) > 0 && m.snippetSt.cursor < len(m.snippetSt.items) {
+				newSnippets := append(m.snippetSt.items[:m.snippetSt.cursor], m.snippetSt.items[m.snippetSt.cursor+1:]...)
 				if err := snippet.Save(newSnippets); err != nil {
 					m.setStatus(fmt.Sprintf("Save failed: %v", err), true)
 				} else {
-					m.snippets = newSnippets
-					if m.snippetCursor >= len(m.snippets) && m.snippetCursor > 0 {
-						m.snippetCursor--
+					m.snippetSt.items = newSnippets
+					if m.snippetSt.cursor >= len(m.snippetSt.items) && m.snippetSt.cursor > 0 {
+						m.snippetSt.cursor--
 					}
 					m.setStatus("Snippet deleted", false)
 				}
@@ -70,22 +66,18 @@ func (m model) updateSnippet(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setStatus("No query to save", true)
 				return m, nil
 			}
-			m.snippetNaming = true
-			m.snippetInput.Reset()
-			m.snippetInput.Focus()
+			m.snippetSt.naming = true
+			m.snippetSt.input.Reset()
+			m.snippetSt.input.Focus()
 			return m, textinput.Blink
 		}
 	case tea.KeyDown:
-		if len(m.snippets) > 0 && m.snippetCursor < len(m.snippets)-1 {
-			m.snippetCursor++
-		}
+		moveCursor(&m.snippetSt.cursor, len(m.snippetSt.items), 1)
 	case tea.KeyUp:
-		if m.snippetCursor > 0 {
-			m.snippetCursor--
-		}
+		moveCursor(&m.snippetSt.cursor, len(m.snippetSt.items), -1)
 	case tea.KeyEnter:
-		if len(m.snippets) > 0 && m.snippetCursor < len(m.snippets) {
-			m.textarea.SetValue(m.snippets[m.snippetCursor].Query)
+		if len(m.snippetSt.items) > 0 && m.snippetSt.cursor < len(m.snippetSt.items) {
+			m.textarea.SetValue(m.snippetSt.items[m.snippetSt.cursor].Query)
 			m.mode = insertMode
 			m.textarea.Focus()
 			m.setStatus("Snippet loaded", false)
@@ -98,12 +90,12 @@ func (m model) updateSnippet(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m model) updateSnippetNaming(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc:
-		m.snippetNaming = false
-		m.snippetInput.Blur()
+		m.snippetSt.naming = false
+		m.snippetSt.input.Blur()
 		// If entered naming directly via Ctrl+S, return to the original mode
-		if m.snippetPrevMode != "" {
-			m.mode = m.snippetPrevMode
-			m.snippetPrevMode = ""
+		if m.snippetSt.prevMode != "" {
+			m.mode = m.snippetSt.prevMode
+			m.snippetSt.prevMode = ""
 			if m.mode == insertMode {
 				m.textarea.Focus()
 			}
@@ -111,41 +103,41 @@ func (m model) updateSnippetNaming(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyEnter:
-		name := strings.TrimSpace(m.snippetInput.Value())
+		name := strings.TrimSpace(m.snippetSt.input.Value())
 		if name == "" {
 			return m, nil
 		}
 		query := strings.TrimSpace(m.textarea.Value())
 		if query == "" {
 			m.setStatus("No query to save", true)
-			m.snippetNaming = false
-			m.snippetInput.Blur()
+			m.snippetSt.naming = false
+			m.snippetSt.input.Blur()
 			return m, nil
 		}
-		newSnippets := append(append([]snippet.Snippet{}, m.snippets...), snippet.Snippet{Name: name, Query: query})
+		newSnippets := append(append([]snippet.Snippet{}, m.snippetSt.items...), snippet.Snippet{Name: name, Query: query})
 		if err := snippet.Save(newSnippets); err != nil {
 			m.setStatus(fmt.Sprintf("Save failed: %v", err), true)
-			m.snippetNaming = false
-			m.snippetInput.Blur()
+			m.snippetSt.naming = false
+			m.snippetSt.input.Blur()
 			// Restore previous mode on failure (same as Esc path)
-			if m.snippetPrevMode != "" {
-				m.mode = m.snippetPrevMode
-				m.snippetPrevMode = ""
+			if m.snippetSt.prevMode != "" {
+				m.mode = m.snippetSt.prevMode
+				m.snippetSt.prevMode = ""
 				if m.mode == insertMode {
 					m.textarea.Focus()
 				}
 			}
 			return m, nil
 		}
-		m.snippets = newSnippets
+		m.snippetSt.items = newSnippets
 		m.setStatus(fmt.Sprintf("Saved snippet: %s", name), false)
-		m.snippetNaming = false
-		m.snippetInput.Blur()
-		m.snippetCursor = len(m.snippets) - 1
+		m.snippetSt.naming = false
+		m.snippetSt.input.Blur()
+		m.snippetSt.cursor = len(m.snippetSt.items) - 1
 		// If entered naming directly via Ctrl+S, return to the original mode
-		if m.snippetPrevMode != "" {
-			m.mode = m.snippetPrevMode
-			m.snippetPrevMode = ""
+		if m.snippetSt.prevMode != "" {
+			m.mode = m.snippetSt.prevMode
+			m.snippetSt.prevMode = ""
 			if m.mode == insertMode {
 				m.textarea.Focus()
 			}
@@ -154,15 +146,12 @@ func (m model) updateSnippetNaming(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
-	m.snippetInput, cmd = m.snippetInput.Update(msg)
+	m.snippetSt.input, cmd = m.snippetSt.input.Update(msg)
 	return m, cmd
 }
 
 func (m model) renderWithSnippetOverlay(background string) string {
-	modalWidth := min(m.width-4, 50)
-	if modalWidth < 20 {
-		modalWidth = 20
-	}
+	modalWidth := calcModalWidth(m.width, 50)
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -197,23 +186,23 @@ func (m model) renderWithSnippetOverlay(background string) string {
 
 	var items strings.Builder
 
-	if m.snippetNaming {
+	if m.snippetSt.naming {
 		items.WriteString(lipgloss.NewStyle().Foreground(textColor).Background(panelBackground).Render("Name: "))
-		items.WriteString(m.snippetInput.View())
-	} else if len(m.snippets) == 0 {
+		items.WriteString(m.snippetSt.input.View())
+	} else if len(m.snippetSt.items) == 0 {
 		items.WriteString(lipgloss.NewStyle().Foreground(mutedTextColor).Background(panelBackground).Render("(no saved queries)"))
 	} else {
-		maxVisible := max(min((m.height-8)/2, len(m.snippets)), 1)
+		maxVisible := max(min((m.height-8)/2, len(m.snippetSt.items)), 1)
 		start := 0
-		if m.snippetCursor >= maxVisible {
-			start = m.snippetCursor - maxVisible + 1
+		if m.snippetSt.cursor >= maxVisible {
+			start = m.snippetSt.cursor - maxVisible + 1
 		}
-		end := min(start+maxVisible, len(m.snippets))
+		end := min(start+maxVisible, len(m.snippetSt.items))
 
 		for i := start; i < end; i++ {
-			s := m.snippets[i]
+			s := m.snippetSt.items[i]
 			label := sanitize(s.Name)
-			if i == m.snippetCursor {
+			if i == m.snippetSt.cursor {
 				items.WriteString(selectedStyle.Render(label))
 			} else {
 				items.WriteString(itemStyle.Render(label))
@@ -234,20 +223,17 @@ func (m model) renderWithSnippetOverlay(background string) string {
 	}
 
 	title := "Saved Queries"
-	if m.snippetNaming {
+	if m.snippetSt.naming {
 		title = "Save Query"
 	}
 
 	var footer string
-	if !m.snippetNaming {
+	if !m.snippetSt.naming {
 		footer = "\n" + lipgloss.NewStyle().Foreground(mutedTextColor).Background(panelBackground).Render("Enter:load d:delete a:add Esc:close")
 	}
 
 	content := titleStyle.Render(title) + "\n" + items.String() + footer
 	modal := boxStyle.Render(content)
 
-	bgH := lipgloss.Height(background)
-
-	return lipgloss.Place(m.width, bgH, lipgloss.Center, lipgloss.Center, modal,
-		lipgloss.WithWhitespaceBackground(appBackground))
+	return overlayModal(m.width, background, modal)
 }

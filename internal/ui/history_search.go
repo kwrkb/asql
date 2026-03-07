@@ -11,54 +11,54 @@ import (
 func (m model) updateHistorySearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc, tea.KeyEnter:
-		if msg.Type == tea.KeyEnter && len(m.historySearchResults) > 0 && m.historySearchCursor < len(m.historySearchResults) {
-			idx := m.historySearchResults[m.historySearchCursor]
+		if msg.Type == tea.KeyEnter && len(m.histSearch.results) > 0 && m.histSearch.cursor < len(m.histSearch.results) {
+			idx := m.histSearch.results[m.histSearch.cursor]
 			m.textarea.SetValue(m.queryHistory[idx])
 			m.historyIdx = -1
 			m.historyDraft = ""
 		}
-		m.historySearchResults = nil
-		m.historySearchCursor = 0
+		m.histSearch.results = nil
+		m.histSearch.cursor = 0
 		m.mode = insertMode
 		m.textarea.Focus()
-		m.historySearchInput.Blur()
+		m.histSearch.input.Blur()
 		m.setStatus("Insert mode", false)
 		return m, nil
 	case tea.KeyCtrlP, tea.KeyUp:
-		if m.historySearchCursor > 0 {
-			m.historySearchCursor--
+		if m.histSearch.cursor > 0 {
+			m.histSearch.cursor--
 		}
 		return m, nil
 	case tea.KeyCtrlN, tea.KeyDown:
-		if m.historySearchCursor < len(m.historySearchResults)-1 {
-			m.historySearchCursor++
+		if m.histSearch.cursor < len(m.histSearch.results)-1 {
+			m.histSearch.cursor++
 		}
 		return m, nil
 	case tea.KeyCtrlR:
 		// Move to next match (wrap around)
-		if len(m.historySearchResults) > 1 {
-			m.historySearchCursor = (m.historySearchCursor + 1) % len(m.historySearchResults)
+		if len(m.histSearch.results) > 1 {
+			m.histSearch.cursor = (m.histSearch.cursor + 1) % len(m.histSearch.results)
 		}
 		return m, nil
 	}
 
 	var cmd tea.Cmd
-	m.historySearchInput, cmd = m.historySearchInput.Update(msg)
-	m.filterHistory(m.historySearchInput.Value())
+	m.histSearch.input, cmd = m.histSearch.input.Update(msg)
+	m.filterHistory(m.histSearch.input.Value())
 	return m, cmd
 }
 
 func (m *model) filterHistory(query string) {
-	m.historySearchResults = m.historySearchResults[:0]
+	m.histSearch.results = m.histSearch.results[:0]
 	q := strings.ToLower(query)
 	// Reverse order: newest first
 	for i := len(m.queryHistory) - 1; i >= 0; i-- {
 		if q == "" || strings.Contains(strings.ToLower(m.queryHistory[i]), q) {
-			m.historySearchResults = append(m.historySearchResults, i)
+			m.histSearch.results = append(m.histSearch.results, i)
 		}
 	}
-	if m.historySearchCursor >= len(m.historySearchResults) {
-		m.historySearchCursor = max(len(m.historySearchResults)-1, 0)
+	if m.histSearch.cursor >= len(m.histSearch.results) {
+		m.histSearch.cursor = max(len(m.histSearch.results)-1, 0)
 	}
 }
 
@@ -67,20 +67,17 @@ func (m model) enterHistorySearchMode() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.mode = historySearchMode
-	m.historySearchInput.Reset()
-	m.historySearchInput.Focus()
+	m.histSearch.input.Reset()
+	m.histSearch.input.Focus()
 	m.textarea.Blur()
 	m.filterHistory("")
-	m.historySearchCursor = 0
+	m.histSearch.cursor = 0
 	m.setStatus("History search", false)
 	return m, textinput.Blink
 }
 
 func (m model) renderWithHistorySearchOverlay(background string) string {
-	modalWidth := min(m.width-4, 60)
-	if modalWidth < 20 {
-		modalWidth = 20
-	}
+	modalWidth := calcModalWidth(m.width, 60)
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -110,23 +107,23 @@ func (m model) renderWithHistorySearchOverlay(background string) string {
 	var items strings.Builder
 
 	// Search input — adapt width to modal
-	m.historySearchInput.Width = max(modalWidth-10, 10)
+	m.histSearch.input.Width = max(modalWidth-10, 10)
 	items.WriteString(lipgloss.NewStyle().Foreground(textColor).Background(panelBackground).Render("> "))
-	items.WriteString(m.historySearchInput.View())
+	items.WriteString(m.histSearch.input.View())
 	items.WriteByte('\n')
 
-	if len(m.historySearchResults) == 0 {
+	if len(m.histSearch.results) == 0 {
 		items.WriteString(lipgloss.NewStyle().Foreground(mutedTextColor).Background(panelBackground).Render("(no matches)"))
 	} else {
-		maxVisible := max(min((m.height-10)/2, len(m.historySearchResults)), 1)
+		maxVisible := max(min((m.height-10)/2, len(m.histSearch.results)), 1)
 		start := 0
-		if m.historySearchCursor >= maxVisible {
-			start = m.historySearchCursor - maxVisible + 1
+		if m.histSearch.cursor >= maxVisible {
+			start = m.histSearch.cursor - maxVisible + 1
 		}
-		end := min(start+maxVisible, len(m.historySearchResults))
+		end := min(start+maxVisible, len(m.histSearch.results))
 
 		for i := start; i < end; i++ {
-			histIdx := m.historySearchResults[i]
+			histIdx := m.histSearch.results[i]
 			// Flatten newlines, sanitize, then truncate
 			preview := strings.Join(strings.Fields(sanitize(m.queryHistory[histIdx])), " ")
 			maxLen := modalWidth - 10
@@ -134,7 +131,7 @@ func (m model) renderWithHistorySearchOverlay(background string) string {
 			if maxLen > 0 && len(runes) > maxLen {
 				preview = string(runes[:maxLen]) + "..."
 			}
-			if i == m.historySearchCursor {
+			if i == m.histSearch.cursor {
 				items.WriteString(selectedStyle.Render(preview))
 			} else {
 				items.WriteString(itemStyle.Render(preview))
@@ -150,8 +147,5 @@ func (m model) renderWithHistorySearchOverlay(background string) string {
 	content := titleStyle.Render("History Search") + "\n" + items.String() + footer
 	modal := boxStyle.Render(content)
 
-	bgH := lipgloss.Height(background)
-
-	return lipgloss.Place(m.width, bgH, lipgloss.Center, lipgloss.Center, modal,
-		lipgloss.WithWhitespaceBackground(appBackground))
+	return overlayModal(m.width, background, modal)
 }
