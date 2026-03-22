@@ -56,12 +56,13 @@ type histSearchState struct {
 
 // completionState holds state for tab-completion in INSERT mode.
 type completionState struct {
-	active   bool
-	items    []string
-	cursor   int
-	prefix   string
-	colCache map[string][]string
-	colOrder []string // LRU order: most recently used at end
+	active        bool
+	items         []string
+	cursor        int
+	prefix        string
+	colCache      map[string][]string
+	colOrder      []string // LRU order: most recently used at end
+	pendingPrefix string   // prefix when async fetch was initiated (empty = no pending)
 }
 
 // sidebarState holds state for the table-list sidebar (SIDEBAR mode).

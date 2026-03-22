@@ -213,6 +213,7 @@ func (m *model) triggerCompletion() tea.Cmd {
 		if tableName != "" {
 			cols, cmd := m.getOrFetchColumns(tableName)
 			if cmd != nil {
+				m.completion.pendingPrefix = prefix
 				return cmd
 			}
 			candidates = filterByPrefix(cols, filterPrefix)
@@ -232,8 +233,10 @@ func (m *model) triggerCompletion() tea.Cmd {
 	}
 
 	if fetchCmd != nil {
+		m.completion.pendingPrefix = prefix
 		return fetchCmd
 	}
+	m.completion.pendingPrefix = ""
 
 	if len(candidates) == 0 {
 		return nil
@@ -297,11 +300,12 @@ func (m *model) getOrFetchColumns(tableName string) ([]string, tea.Cmd) {
 	}
 	// Fetch asynchronously to avoid blocking the UI
 	adapter := m.activeDB()
+	gen := m.connGen
 	return nil, func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		cols, err := adapter.Columns(ctx, tableName)
-		return columnsLoadedMsg{table: tableName, columns: cols, err: err}
+		return columnsLoadedMsg{table: tableName, columns: cols, err: err, connGen: gen}
 	}
 }
 
