@@ -28,3 +28,4 @@ e2e/recordings/
 # AI tools
 .gemini/
 status/
+!status/review.md
