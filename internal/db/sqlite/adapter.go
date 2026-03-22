@@ -30,8 +30,8 @@ func Open(path string) (*Adapter, error) {
 		return nil, err
 	}
 
-	conn.SetMaxOpenConns(5)
-	conn.SetMaxIdleConns(2)
+	conn.SetMaxOpenConns(1)
+	conn.SetMaxIdleConns(1)
 	conn.SetConnMaxLifetime(5 * time.Minute)
 
 	return &Adapter{conn: conn}, nil
