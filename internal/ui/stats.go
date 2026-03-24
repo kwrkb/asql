@@ -10,7 +10,6 @@ import (
 	"github.com/kwrkb/asql/internal/db"
 )
 
-// computeColumnStats calculates per-column statistics from an in-memory result set.
 func computeColumnStats(result db.QueryResult) []columnStat {
 	stats := make([]columnStat, len(result.Columns))
 	rowCount := len(result.Rows)
@@ -36,10 +35,10 @@ func computeColumnStats(result db.QueryResult) []columnStat {
 				s.Max = val
 				firstNonNull = false
 			} else {
-				if val < s.Min {
+				if smartCompare(val, s.Min) < 0 {
 					s.Min = val
 				}
-				if val > s.Max {
+				if smartCompare(val, s.Max) > 0 {
 					s.Max = val
 				}
 			}
@@ -77,6 +76,17 @@ func (m model) updateStats(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyUp:
 		moveCursor(&m.statsSt.cursor, len(m.statsSt.stats), -1)
 	}
+
+	// Adjust scroll to keep cursor visible (must happen here, not in render,
+	// because View() uses a value receiver and mutations would be discarded).
+	maxVisible := max(m.height-10, 3)
+	if m.statsSt.cursor < m.statsSt.scroll {
+		m.statsSt.scroll = m.statsSt.cursor
+	}
+	if m.statsSt.cursor >= m.statsSt.scroll+maxVisible {
+		m.statsSt.scroll = m.statsSt.cursor - maxVisible + 1
+	}
+
 	return m, nil
 }
 
@@ -97,8 +107,8 @@ func (m model) renderWithStatsOverlay(background string) string {
 	b.WriteString(strings.Repeat("─", contentWidth))
 	b.WriteByte('\n')
 
-	// Compute column widths for alignment
-	nameW, typeW := 6, 4 // minimums: "Column", "Type"
+	nameW, typeW := 6, 4
+
 	for _, s := range stats {
 		if len(s.Name) > nameW {
 			nameW = len(s.Name)
@@ -107,7 +117,6 @@ func (m model) renderWithStatsOverlay(background string) string {
 			typeW = len(s.Type)
 		}
 	}
-	// Cap widths to keep table compact
 	if nameW > 20 {
 		nameW = 20
 	}
@@ -120,15 +129,7 @@ func (m model) renderWithStatsOverlay(background string) string {
 	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(mutedTextColor)).Render(header))
 	b.WriteByte('\n')
 
-	// Scrolling
 	maxVisible := max(m.height-10, 3)
-	if m.statsSt.cursor < m.statsSt.scroll {
-		m.statsSt.scroll = m.statsSt.cursor
-	}
-	if m.statsSt.cursor >= m.statsSt.scroll+maxVisible {
-		m.statsSt.scroll = m.statsSt.cursor - maxVisible + 1
-	}
-
 	rowFmt := fmt.Sprintf("%%s %%-%ds  %%-%ds  %%6s  %%8d  %%s", nameW, typeW)
 	end := min(m.statsSt.scroll+maxVisible, len(stats))
 
@@ -143,8 +144,8 @@ func (m model) renderWithStatsOverlay(background string) string {
 
 		minMax := ""
 		if s.Distinct > 0 {
-			mn := truncate(s.Min, 12)
-			mx := truncate(s.Max, 12)
+			mn := truncate(sanitize(s.Min), 12)
+			mx := truncate(sanitize(s.Max), 12)
 			if mn == mx {
 				minMax = mn
 			} else {
@@ -152,8 +153,8 @@ func (m model) renderWithStatsOverlay(background string) string {
 			}
 		}
 
-		name := truncate(s.Name, nameW)
-		typ := truncate(s.Type, typeW)
+		name := truncate(sanitize(s.Name), nameW)
+		typ := truncate(sanitize(s.Type), typeW)
 
 		line := fmt.Sprintf(rowFmt, cursor, name, typ, nullPct, s.Distinct, minMax)
 		if i == m.statsSt.cursor {

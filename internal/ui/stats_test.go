@@ -133,6 +133,22 @@ func TestComputeColumnStats_SingleValue(t *testing.T) {
 	}
 }
 
+func TestComputeColumnStats_NumericMinMax(t *testing.T) {
+	result := db.QueryResult{
+		Columns:     []string{"price"},
+		ColumnTypes: []string{"INTEGER"},
+		Rows:        [][]string{{"2"}, {"10"}, {"3"}, {"1"}, {"20"}},
+	}
+	stats := computeColumnStats(result)
+	s := stats[0]
+	if s.Min != "1" {
+		t.Errorf("Min = %q, want %q (numeric comparison)", s.Min, "1")
+	}
+	if s.Max != "20" {
+		t.Errorf("Max = %q, want %q (numeric comparison)", s.Max, "20")
+	}
+}
+
 func newStatsModel() *model {
 	m := newTestModel()
 	m.lastResult = db.QueryResult{
