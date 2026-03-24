@@ -46,40 +46,45 @@ func TestInsert_CtrlPNavigatesHistoryBack(t *testing.T) {
 	m.historyIdx = -1
 	m.textarea.SetValue("current")
 
-	// First Ctrl+P: jump to last entry and save draft
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
-	result := updated.(model)
-	if result.historyIdx != 2 {
-		t.Errorf("historyIdx = %d, want 2", result.historyIdx)
-	}
-	if result.textarea.Value() != "SELECT 3" {
-		t.Errorf("value = %q, want %q", result.textarea.Value(), "SELECT 3")
-	}
-	if result.historyDraft != "current" {
-		t.Errorf("historyDraft = %q, want %q", result.historyDraft, "current")
-	}
+	var result model
 
-	// Second Ctrl+P: go further back
-	*m = result
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
-	result = updated.(model)
-	if result.historyIdx != 1 {
-		t.Errorf("historyIdx = %d, want 1", result.historyIdx)
-	}
-	if result.textarea.Value() != "SELECT 2" {
-		t.Errorf("value = %q, want %q", result.textarea.Value(), "SELECT 2")
-	}
+	t.Run("first Ctrl+P jumps to last entry and saves draft", func(t *testing.T) {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+		result = updated.(model)
+		if result.historyIdx != 2 {
+			t.Errorf("historyIdx = %d, want 2", result.historyIdx)
+		}
+		if result.textarea.Value() != "SELECT 3" {
+			t.Errorf("value = %q, want %q", result.textarea.Value(), "SELECT 3")
+		}
+		if result.historyDraft != "current" {
+			t.Errorf("historyDraft = %q, want %q", result.historyDraft, "current")
+		}
+	})
 
-	// Ctrl+P at boundary stays at 0
-	*m = result
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlP}) // now at 0
-	result = updated.(model)
-	*m = result
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlP}) // should stay at 0
-	result = updated.(model)
-	if result.historyIdx != 0 {
-		t.Errorf("historyIdx at boundary = %d, want 0", result.historyIdx)
-	}
+	t.Run("second Ctrl+P goes further back", func(t *testing.T) {
+		*m = result
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+		result = updated.(model)
+		if result.historyIdx != 1 {
+			t.Errorf("historyIdx = %d, want 1", result.historyIdx)
+		}
+		if result.textarea.Value() != "SELECT 2" {
+			t.Errorf("value = %q, want %q", result.textarea.Value(), "SELECT 2")
+		}
+	})
+
+	t.Run("Ctrl+P at boundary stays at 0", func(t *testing.T) {
+		*m = result
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlP}) // now at 0
+		result = updated.(model)
+		*m = result
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlP}) // should stay at 0
+		result = updated.(model)
+		if result.historyIdx != 0 {
+			t.Errorf("historyIdx at boundary = %d, want 0", result.historyIdx)
+		}
+	})
 }
 
 func TestInsert_CtrlNNavigatesHistoryForward(t *testing.T) {

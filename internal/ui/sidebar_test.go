@@ -83,20 +83,23 @@ func TestSidebar_UpArrow(t *testing.T) {
 func TestSidebar_CursorBoundary(t *testing.T) {
 	m := newSidebarModel([]string{"a", "b", "c"})
 
-	// k at top stays at 0
-	updated, _ := m.Update(runeMsg("k"))
-	result := updated.(model)
-	if result.sidebar.cursor != 0 {
-		t.Errorf("cursor at top after k = %d, want 0", result.sidebar.cursor)
-	}
+	t.Run("k at top stays at 0", func(t *testing.T) {
+		m.sidebar.cursor = 0
+		updated, _ := m.Update(runeMsg("k"))
+		result := updated.(model)
+		if result.sidebar.cursor != 0 {
+			t.Errorf("cursor at top after k = %d, want 0", result.sidebar.cursor)
+		}
+	})
 
-	// j at bottom stays at len-1
-	m.sidebar.cursor = 2
-	updated, _ = m.Update(runeMsg("j"))
-	result = updated.(model)
-	if result.sidebar.cursor != 2 {
-		t.Errorf("cursor at bottom after j = %d, want 2", result.sidebar.cursor)
-	}
+	t.Run("j at bottom stays at len-1", func(t *testing.T) {
+		m.sidebar.cursor = 2
+		updated, _ := m.Update(runeMsg("j"))
+		result := updated.(model)
+		if result.sidebar.cursor != 2 {
+			t.Errorf("cursor at bottom after j = %d, want 2", result.sidebar.cursor)
+		}
+	})
 }
 
 func TestSidebar_EnterInsertsQuery(t *testing.T) {

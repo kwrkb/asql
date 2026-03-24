@@ -90,20 +90,23 @@ func TestProfile_CursorBoundary(t *testing.T) {
 	}
 	m := newProfileModel(profiles)
 
-	// k at top stays at 0
-	updated, _ := m.Update(runeMsg("k"))
-	result := updated.(model)
-	if result.profileSt.cursor != 0 {
-		t.Errorf("cursor at top after k = %d, want 0", result.profileSt.cursor)
-	}
+	t.Run("k at top stays at 0", func(t *testing.T) {
+		m.profileSt.cursor = 0
+		updated, _ := m.Update(runeMsg("k"))
+		result := updated.(model)
+		if result.profileSt.cursor != 0 {
+			t.Errorf("cursor at top after k = %d, want 0", result.profileSt.cursor)
+		}
+	})
 
-	// j at bottom stays at len-1
-	m.profileSt.cursor = 1
-	updated, _ = m.Update(runeMsg("j"))
-	result = updated.(model)
-	if result.profileSt.cursor != 1 {
-		t.Errorf("cursor at bottom after j = %d, want 1", result.profileSt.cursor)
-	}
+	t.Run("j at bottom stays at len-1", func(t *testing.T) {
+		m.profileSt.cursor = 1
+		updated, _ := m.Update(runeMsg("j"))
+		result := updated.(model)
+		if result.profileSt.cursor != 1 {
+			t.Errorf("cursor at bottom after j = %d, want 1", result.profileSt.cursor)
+		}
+	})
 }
 
 func TestProfile_AddWithNoConnectionErrors(t *testing.T) {
