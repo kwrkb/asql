@@ -91,6 +91,44 @@ func TestConvertDSN(t *testing.T) {
 	}
 }
 
+func TestType(t *testing.T) {
+	a := &Adapter{}
+	if got := a.Type(); got != "mysql" {
+		t.Errorf("Type() = %q, want %q", got, "mysql")
+	}
+}
+
+func TestQuoteIdentifier(t *testing.T) {
+	a := &Adapter{}
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"simple", "users", "`users`"},
+		{"backtick escape", "us`ers", "`us``ers`"},
+		{"reserved word", "select", "`select`"},
+		{"empty string", "", "``"},
+		{"multiple backticks", "a``b", "`a````b`"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := a.QuoteIdentifier(tt.input)
+			if got != tt.want {
+				t.Errorf("QuoteIdentifier(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOpen_ErrorPaths(t *testing.T) {
+	// port 1 is always connection refused — fails fast without timeout
+	_, err := Open("mysql://root@127.0.0.1:1/db")
+	if err == nil {
+		t.Error("Open() expected error for unreachable host, got nil")
+	}
+}
+
 func TestIntegration(t *testing.T) {
 	dsn := os.Getenv("ASQL_MYSQL_DSN")
 	if dsn == "" {
