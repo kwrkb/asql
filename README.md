@@ -83,32 +83,83 @@ asql --version
 
 ## Key Bindings
 
-| Key | Mode | Action |
-|-----|------|--------|
-| `i` | NORMAL | Enter INSERT mode |
-| `Esc` | INSERT | Return to NORMAL mode |
-| `Ctrl+Enter` / `Ctrl+J` | INSERT | Execute query |
-| `Tab` | INSERT | Autocomplete table/column name |
-| `Ctrl+P` / `Ctrl+N` | INSERT | Previous / next query history |
-| `Ctrl+R` | INSERT | Search query history |
-| `Ctrl+S` | INSERT | Save current query as snippet |
-| `Ctrl+L` | INSERT | Clear editor |
-| `c` | NORMAL | Toggle compare mode (pin current result / close compare) |
-| `Tab` | NORMAL (compare) | Switch focused pane (left/right) |
-| `j` / `k` | NORMAL | Navigate result rows |
-| `h` / `l` | NORMAL | Scroll columns horizontally |
-| `s` | NORMAL | Toggle sort on selected column |
-| `R` | NORMAL | Re-execute current query |
-| `Enter` | NORMAL | Open Detail View for current row |
-| `PgUp` / `PgDn` | NORMAL | Page through results |
-| `t` | NORMAL | Open table sidebar |
-| `S` | NORMAL | Open saved snippets |
-| `P` | NORMAL | Open connection profiles |
-| `x` | PROFILE | Switch connection and re-execute current query |
-| `e` | NORMAL | Open export menu |
-| `Ctrl+K` | NORMAL | Open AI assistant |
-| `Ctrl+C` | *any* | Cancel running query/AI, or quit |
-| `q` | NORMAL | Quit |
+### NORMAL mode
+
+| Key | Action |
+|-----|--------|
+| `i` | Enter INSERT mode |
+| `q` / `Ctrl+C` | Quit |
+| `j` / `k` | Navigate result rows |
+| `h` / `l` / `Left` / `Right` | Scroll columns horizontally |
+| `PgUp` / `PgDn` | Page through results |
+| `s` | Toggle sort on selected column (None → Asc → Desc) |
+| `Enter` | Open Detail View for current row |
+| `R` | Re-execute current query |
+| `c` | Toggle compare mode (pin current result / close) |
+| `Tab` | Switch focused pane in compare mode (left/right) |
+| `t` | Toggle table sidebar |
+| `e` | Open export menu |
+| `S` | Open saved snippets |
+| `Ctrl+S` | Save current query as snippet |
+| `P` | Open connection profiles |
+| `Ctrl+K` | Open AI assistant |
+
+### INSERT mode
+
+| Key | Action |
+|-----|--------|
+| `Esc` | Return to NORMAL mode |
+| `Ctrl+Enter` / `Ctrl+J` | Execute query |
+| `Tab` | Autocomplete table/column name |
+| `Ctrl+P` / `Ctrl+N` | Previous / next query history |
+| `Ctrl+R` | Search query history |
+| `Ctrl+S` | Save current query as snippet |
+| `Ctrl+L` | Clear editor |
+
+**Completion popup (when active):**
+
+| Key | Action |
+|-----|--------|
+| `Tab` / `Ctrl+N` / `Down` | Next completion item |
+| `Ctrl+P` / `Up` | Previous completion item |
+| `Enter` | Accept selected completion |
+| `Esc` | Close popup |
+
+### DETAIL mode
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` / `Down` / `Up` | Navigate fields |
+| `n` / `l` | Next row |
+| `N` / `h` | Previous row |
+| `q` / `Esc` / `Enter` | Close Detail View |
+
+### SIDEBAR mode
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` / `Down` / `Up` | Navigate tables |
+| `Enter` | Insert `SELECT * FROM <table> LIMIT 100;` into editor and switch to INSERT mode |
+| `t` / `Esc` | Close sidebar |
+
+### PROFILE / SNIPPET mode
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Navigate items |
+| `Enter` | Connect (PROFILE) / Load into editor (SNIPPET) |
+| `x` | Switch connection and re-execute query (PROFILE only) |
+| `a` | Add current connection / new snippet |
+| `d` | Delete selected item |
+| `Esc` | Close |
+
+### EXPORT mode
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` / `Down` / `Up` | Navigate export options |
+| `Enter` | Execute selected export |
+| `Esc` | Close |
 
 ## Export
 
@@ -121,18 +172,44 @@ Press `e` in NORMAL mode after executing a query to open the export menu. Suppor
 
 ## AI Assistant (Text-to-SQL)
 
-asql can generate SQL from natural language using any OpenAI-compatible API. Create a config file at `~/.config/asql/config.yaml`:
+asql can generate SQL from natural language using any OpenAI-compatible API.
+
+Create a config file at `~/.config/asql/config.yaml`:
 
 ```yaml
 ai:
-  ai_endpoint: http://localhost:11434/v1   # Ollama
-  ai_model: llama3
-  ai_api_key: ""                           # optional (Ollama doesn't need one)
+  ai_endpoint: http://localhost:11434/v1   # OpenAI-compatible API endpoint
+  ai_model: llama3                         # model name
+  ai_api_key: ""                           # API key (optional for local models)
+```
+
+**All config fields:**
+
+| Field | Description | Environment variable override |
+|-------|-------------|-------------------------------|
+| `ai.ai_endpoint` | OpenAI-compatible API base URL | `ASQL_AI_ENDPOINT` |
+| `ai.ai_model` | Model name (e.g. `gpt-4o`, `llama3`) | `ASQL_AI_MODEL` |
+| `ai.ai_api_key` | API key | `ASQL_AI_API_KEY` |
+
+Environment variables take precedence over the config file. Both `ai_endpoint` and `ai_model` must be set (via file or env) to enable the AI feature.
+
+**Examples:**
+
+```yaml
+# OpenAI
+ai_endpoint: https://api.openai.com/v1
+ai_model: gpt-4o
+ai_api_key: sk-...
+
+# Ollama (local)
+ai_endpoint: http://localhost:11434/v1
+ai_model: llama3
+# ai_api_key not needed
 ```
 
 Press `Ctrl+K` in NORMAL mode to open the AI prompt. The database schema is automatically included in the context for accurate table/column names.
 
-If no config file is present, AI features are silently disabled.
+If no config file is present and no environment variables are set, AI features are silently disabled.
 
 ## Development
 

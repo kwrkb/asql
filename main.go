@@ -24,6 +24,32 @@ var (
 	date    = "unknown"
 )
 
+// connectionHint returns a user-friendly hint for common DB connection errors.
+func connectionHint(dsn string, err error) string {
+	msg := err.Error()
+	switch {
+	case strings.HasPrefix(dsn, "mysql://"), strings.HasPrefix(dsn, "postgres://"), strings.HasPrefix(dsn, "postgresql://"):
+		switch {
+		case strings.Contains(msg, "connection refused") || strings.Contains(msg, "no such host") || strings.Contains(msg, "dial"):
+			return "hint: connection refused — check host/port and confirm the server is running"
+		case strings.Contains(msg, "authentication") || strings.Contains(msg, "password") || strings.Contains(msg, "Access denied"):
+			return "hint: authentication failed — check username and password"
+		case strings.Contains(msg, "unknown database") || strings.Contains(msg, "does not exist"):
+			return "hint: database not found — check the database name in the DSN"
+		}
+		if strings.HasPrefix(dsn, "mysql://") {
+			return "hint: DSN format: mysql://user:password@host:3306/dbname"
+		}
+		return "hint: DSN format: postgres://user:password@host:5432/dbname"
+	default:
+		// SQLite
+		if strings.Contains(msg, "no such file") || strings.Contains(msg, "unable to open") {
+			return "hint: file not found — check the path to your SQLite database"
+		}
+		return "hint: DSN formats: <path>.db  |  mysql://user:pass@host:3306/db  |  postgres://user:pass@host:5432/db"
+	}
+}
+
 // parseSaveProfile extracts --save-profile <name> from args and returns
 // the profile name and the remaining args.
 func parseSaveProfile(args []string) (string, []string, error) {
@@ -175,6 +201,7 @@ func main() {
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to open database %q: %v\n", displayDSN, err)
+		fmt.Fprintln(os.Stderr, connectionHint(dbPath, err))
 		os.Exit(1)
 	}
 	// Determine connection name from profile or DSN
