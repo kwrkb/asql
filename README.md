@@ -139,7 +139,7 @@ asql --version
 | Key | Action |
 |-----|--------|
 | `j` / `k` / `Down` / `Up` | Navigate tables |
-| `Enter` | Insert `SELECT * FROM <table> LIMIT 100;` into editor |
+| `Enter` | Insert `SELECT * FROM <table> LIMIT 100;` into editor and switch to INSERT mode |
 | `t` / `Esc` | Close sidebar |
 
 ### PROFILE / SNIPPET mode
@@ -195,7 +195,7 @@ Environment variables take precedence over the config file. Both `ai_endpoint` a
 
 **Examples:**
 
-```bash
+```yaml
 # OpenAI
 ai_endpoint: https://api.openai.com/v1
 ai_model: gpt-4o
