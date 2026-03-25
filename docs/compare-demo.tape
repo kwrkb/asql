@@ -1,5 +1,5 @@
 # asql — Compare Mode Demo
-Output docs/compare-demo.gif
+Output e2e/recordings/compare-demo.gif
 
 Set Shell "bash"
 Set Width 1800
@@ -11,12 +11,11 @@ Set TypingSpeed 30ms
 Set Padding 20
 
 # --- Setup: create demo databases ---
-# NOTE: profiles must be pre-registered via:
-#   ./asql --save-profile prod /tmp/asql-demo.db
-#   ./asql --save-profile staging /tmp/asql-demo-staging.db
 Hide
 Set TypingSpeed 1ms
 Type "python3 docs/setup-demo-db.py /tmp/asql-demo.db /tmp/asql-demo-staging.db >/dev/null 2>&1"
+Enter
+Type "python3 e2e/setup-profiles.py /tmp/asql-demo-config /tmp/asql-demo.db /tmp/asql-demo-staging.db >/dev/null 2>&1"
 Enter
 Sleep 2s
 Show
@@ -25,7 +24,7 @@ Set TypingSpeed 30ms
 # --- Demo starts ---
 
 # 1. Launch asql with production profile
-Type "./asql @prod"
+Type "XDG_CONFIG_HOME=/tmp/asql-demo-config ./asql @prod"
 Enter
 Sleep 2s
 

@@ -56,12 +56,15 @@ bash e2e/run.sh
 | `03_mode_transitions.tape` | INSERT→NORMAL→SIDEBAR→NORMAL→INSERT のモード遷移 |
 | `04_export.tape` | クエリ実行後の Export オーバーレイ表示 |
 | `05_error.tape` | 不正 SQL のエラーメッセージ表示 |
+| `06_compare.tape` | compare モードで prod/staging を切り替えて差分確認 |
+| `07_stats.tape` | `d` キーで Column Statistics オーバーレイ表示 |
 
 ## 録画について
 
 - 各 tape の `Output` 行で `e2e/recordings/<name>.mp4` と `.gif` を同時出力
 - `e2e/recordings/` は `.gitignore` 済み（ローカル専用）
 - `TypingSpeed 50ms` + 操作間 `Sleep` で目視しやすい速度に調整済み
+- `run.sh` は `GOCACHE` / `XDG_CONFIG_HOME` を `/tmp` 配下に分離して実行する
 
 ## よくあるハマりポイント
 
@@ -105,3 +108,7 @@ Wait+Screen /alice@example\.com/   # 正規表現なので . はエスケープ
 ### TUI 起動コマンドを Hidden フェーズで使わない
 
 `./asql --save-profile ...` のように TUI が起動するコマンドを Hidden フェーズで実行すると、TUI が入力待ちでハングする。プロファイル等の事前設定は VHS 外（`run.sh` のセットアップ等）で行う。
+
+### compare tape の profile は `e2e/setup-profiles.py` で作る
+
+compare 系 tape は `XDG_CONFIG_HOME` を分離し、`e2e/setup-profiles.py` で `prod` / `staging` の `profiles.yaml` を事前生成する。`--save-profile` は保存後に TUI を起動するため、e2e セットアップ用途には向かない。
