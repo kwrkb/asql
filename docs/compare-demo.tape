@@ -1,5 +1,5 @@
 # asql — Compare Mode Demo
-Output docs/compare-demo.gif
+Output e2e/recordings/compare-demo.gif
 
 Set Shell "bash"
 Set Width 1800
