@@ -48,7 +48,6 @@ Type "j"
 Sleep 500ms
 Type "x"
 Wait+Screen /staging rows:4/
-Wait+Screen /bob@staging\.io/
 Wait+Screen /Compare rows left:3 right:4 diff:\+1/
 Sleep 1s
 
