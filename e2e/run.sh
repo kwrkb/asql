@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 export GOCACHE="${GOCACHE:-/tmp/asql-gocache}"
-export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-/tmp/asql-e2e-config}"
+E2E_CONFIG_HOME="/tmp/asql-e2e-config"
 
 # --- Prereqs ---
 if ! command -v vhs &>/dev/null; then
@@ -22,8 +22,8 @@ python3 docs/setup-demo-db.py /tmp/asql-e2e.db /tmp/asql-e2e-staging.db
 
 # --- Prepare isolated config/profiles ---
 echo "==> Creating test profiles..."
-rm -rf "$XDG_CONFIG_HOME"
-python3 e2e/setup-profiles.py "$XDG_CONFIG_HOME" /tmp/asql-e2e.db /tmp/asql-e2e-staging.db
+rm -rf "$E2E_CONFIG_HOME"
+python3 e2e/setup-profiles.py "$E2E_CONFIG_HOME" /tmp/asql-e2e.db /tmp/asql-e2e-staging.db
 
 # --- Prepare recordings dir ---
 mkdir -p e2e/recordings
@@ -49,7 +49,7 @@ done
 
 # --- Cleanup ---
 rm -f /tmp/asql-e2e.db /tmp/asql-e2e-staging.db
-rm -rf "$XDG_CONFIG_HOME"
+rm -rf "$E2E_CONFIG_HOME"
 
 # --- Summary ---
 echo ""

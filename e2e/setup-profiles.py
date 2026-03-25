@@ -6,9 +6,12 @@ import sys
 
 
 def main() -> int:
-    config_home = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("/tmp/asql-e2e-config")
-    prod_dsn = sys.argv[2] if len(sys.argv) > 2 else "/tmp/asql-e2e.db"
-    staging_dsn = sys.argv[3] if len(sys.argv) > 3 else "/tmp/asql-e2e-staging.db"
+    if len(sys.argv) != 4:
+        print(f"Usage: {sys.argv[0]} <config_home> <prod_dsn> <staging_dsn>", file=sys.stderr)
+        return 1
+    config_home = Path(sys.argv[1])
+    prod_dsn = sys.argv[2]
+    staging_dsn = sys.argv[3]
 
     profile_dir = config_home / "asql"
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -22,4 +25,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())
