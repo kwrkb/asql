@@ -84,7 +84,7 @@ func (m model) updateStats(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Adjust scroll to keep cursor visible (must happen here, not in render,
 	// because View() uses a value receiver and mutations would be discarded).
-	maxVisible := max(m.height-10, 3)
+	maxVisible := m.statsMaxVisible()
 	if m.statsSt.cursor < m.statsSt.scroll {
 		m.statsSt.scroll = m.statsSt.cursor
 	}
@@ -93,6 +93,16 @@ func (m model) updateStats(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// statsMaxVisible returns the number of stat rows visible in the overlay,
+// accounting for the extra sparkline line when the cursor row has one.
+func (m model) statsMaxVisible() int {
+	v := max(m.height-10, 3)
+	if m.statsSt.cursor < len(m.statsSt.stats) && (m.statsSt.stats[m.statsSt.cursor].Sparkline.Bars != "" || m.statsSt.stats[m.statsSt.cursor].Sparkline.Skipped) {
+		v = max(v-1, 2)
+	}
+	return v
 }
 
 func (m model) renderWithStatsOverlay(background string) string {
@@ -134,11 +144,7 @@ func (m model) renderWithStatsOverlay(background string) string {
 	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(mutedTextColor)).Render(header))
 	b.WriteByte('\n')
 
-	maxVisible := max(m.height-10, 3)
-	// Reserve one line for sparkline if the cursor row has one.
-	if m.statsSt.cursor < len(stats) && stats[m.statsSt.cursor].Sparkline.Bars != "" {
-		maxVisible = max(maxVisible-1, 2)
-	}
+	maxVisible := m.statsMaxVisible()
 	rowFmt := fmt.Sprintf("%%s %%-%ds  %%-%ds  %%6s  %%8d  %%s", nameW, typeW)
 	end := min(m.statsSt.scroll+maxVisible, len(stats))
 
@@ -173,12 +179,19 @@ func (m model) renderWithStatsOverlay(background string) string {
 		}
 		b.WriteString(line)
 
-		if i == m.statsSt.cursor && s.Sparkline.Bars != "" {
+		if i == m.statsSt.cursor && (s.Sparkline.Bars != "" || s.Sparkline.Skipped) {
 			b.WriteByte('\n')
+			// 7 = cursor(2) + space(1) + post-name spaces(2) + post-type spaces(2)
+			// aligns sparkline under the NULL% column.
 			indent := strings.Repeat(" ", nameW+typeW+7)
-			spark := lipgloss.NewStyle().Foreground(lipgloss.Color(accentColor)).Render(s.Sparkline.Bars)
-			lbl := lipgloss.NewStyle().Foreground(lipgloss.Color(mutedTextColor)).Render("  " + s.Sparkline.Label)
-			b.WriteString(indent + spark + lbl)
+			if s.Sparkline.Bars != "" {
+				spark := lipgloss.NewStyle().Foreground(lipgloss.Color(accentColor)).Render(s.Sparkline.Bars)
+				lbl := lipgloss.NewStyle().Foreground(lipgloss.Color(mutedTextColor)).Render("  " + s.Sparkline.Label)
+				b.WriteString(indent + spark + lbl)
+			} else {
+				msg := lipgloss.NewStyle().Foreground(lipgloss.Color(mutedTextColor)).Render("(sparkline skipped: >10k rows)")
+				b.WriteString(indent + msg)
+			}
 		}
 
 		if i < end-1 {

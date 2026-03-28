@@ -35,6 +35,9 @@ func parseDate(s string) (time.Time, bool) {
 }
 
 // looksLikeDate checks the first non-null value in a column to see if it parses as a date.
+// This is a heuristic: a TEXT column whose first value happens to be date-shaped
+// (e.g. a code field with "2024-01-01") will trigger sparkline computation.
+// The trade-off is accepted to support TEXT-typed date columns (common in SQLite).
 func looksLikeDate(rows [][]string, colIdx int) bool {
 	for _, row := range rows {
 		if colIdx >= len(row) {
@@ -58,13 +61,18 @@ const (
 	granYear
 )
 
+const (
+	dayGranularityThreshold  = 90 * 24 * time.Hour
+	monthGranularityThreshold = 730 * 24 * time.Hour
+)
+
 // chooseGranularity selects day/month/year based on the time span.
 func chooseGranularity(minT, maxT time.Time) (timeGranularity, string) {
 	span := maxT.Sub(minT)
 	switch {
-	case span <= 90*24*time.Hour:
+	case span <= dayGranularityThreshold:
 		return granDay, "by day"
-	case span <= 730*24*time.Hour:
+	case span <= monthGranularityThreshold:
 		return granMonth, "by month"
 	default:
 		return granYear, "by year"
@@ -80,8 +88,9 @@ func truncateTime(t time.Time, gran timeGranularity) time.Time {
 		return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location())
 	case granYear:
 		return time.Date(t.Year(), 1, 1, 0, 0, 0, 0, t.Location())
+	default:
+		panic("unhandled time granularity")
 	}
-	return t
 }
 
 // bucketKey returns a sortable string key for a time bucket.
@@ -93,8 +102,9 @@ func bucketKey(t time.Time, gran timeGranularity) string {
 		return t.Format("2006-01")
 	case granYear:
 		return t.Format("2006")
+	default:
+		panic("unhandled time granularity")
 	}
-	return t.Format(time.RFC3339)
 }
 
 const maxSparklineBuckets = 20
@@ -106,10 +116,10 @@ const maxSparklineRows = 10_000
 // or if row count exceeds maxSparklineRows.
 func computeSparkline(rows [][]string, colIdx int) sparklineData {
 	if len(rows) > maxSparklineRows {
-		return sparklineData{}
+		return sparklineData{Skipped: true}
 	}
 
-	var times []time.Time
+	times := make([]time.Time, 0, len(rows))
 	for _, row := range rows {
 		if colIdx >= len(row) {
 			continue
@@ -181,10 +191,7 @@ func downsample(counts []int, maxBuckets int) []int {
 	result := make([]int, 0, maxBuckets)
 	for i := 0; i < len(counts); i += stride {
 		sum := 0
-		end := i + stride
-		if end > len(counts) {
-			end = len(counts)
-		}
+		end := min(i+stride, len(counts))
 		for _, v := range counts[i:end] {
 			sum += v
 		}
