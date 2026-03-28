@@ -72,15 +72,23 @@ type sidebarState struct {
 	cursor int
 }
 
+// sparklineData holds pre-computed sparkline information for a date/timestamp column.
+type sparklineData struct {
+	Bars    string // rendered sparkline string (e.g. "▁▂▃▅▇▅▂▁")
+	Label   string // granularity label (e.g. "by month")
+	Skipped bool   // true if computation was skipped (e.g. too many rows)
+}
+
 // columnStat holds computed statistics for a single column.
 type columnStat struct {
-	Name     string
-	Type     string
-	NullCnt  int
-	NullRate float64
-	Distinct int
-	Min      string
-	Max      string
+	Name      string
+	Type      string
+	NullCnt   int
+	NullRate  float64
+	Distinct  int
+	Min       string
+	Max       string
+	Sparkline sparklineData // non-empty only for date/timestamp columns
 }
 
 // statsState holds state for the column-statistics overlay (STATS mode).
