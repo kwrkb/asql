@@ -2,6 +2,12 @@
 
 これまでに完了した主要な機能・マイルストーンの記録。
 
+## コード品質・パフォーマンス改善
+**PR**: #39
+**実装**: Codex 静的分析に基づく横断的改善。(A) バグ修正: stats 境界チェック、sparkline panic 除去、AI エラー情報露出制限。(B) 重複解消: DB 接続生成を `opener` パッケージに一本化、`containsReturning` を `dbutil.ContainsReturning` に共通化（~170行削減）。(C) パフォーマンス: ScanRows 10,000行上限、Stats 計算の非同期化。(D) 設計: config 警告を戻り値化。18ファイル、+299/-247行。
+
+---
+
 ## Phase 4: Column Statistics Overlay (4-1/4-2/4-3)
 **PR**: #36
 **実装**: NORMALモードで `d` キーにより各カラムの NULL率・distinct数・min/max をオーバーレイ表示。`lastResult.Rows` からインメモリ計算（DBクエリ不要）。j/k ナビゲーション、スクロール対応。15テスト。

@@ -22,42 +22,26 @@ Bring & Join (Phase 3) はまだ先。比較体験が磨き込まれてから。
 - CLI: `--help` / `--version`、README 整備済み (v0.6.0)
 - テストカバレッジ拡充 (Issue #14, PR #35): MySQL/PostgreSQL アダプタ + UI (insert/sidebar/profile) テスト追加完了
 - Phase 4 着手: 4-1/4-2/4-3 Column Statistics Overlay (PR #36)、4-4 Sparkline (PR #38)
+- コード品質改善 (PR #39): バグ修正・重複解消・パフォーマンス防御・設計改善
 - **次: Phase 4-5 (ヒストグラム) または Phase 3**
 
-## 作業中: v0.8.0 VHS / E2E 更新
+## 直近完了: コード品質・パフォーマンス改善 (PR #39)
 
 目的:
-- `v0.8.0` 時点の主要UXを VHS で再現し、E2E の自動確認範囲を compare / stats まで広げる
-
-変更対象ファイル:
-- `PLAN.md`
-- `e2e/run.sh`
-- `e2e/README.md`
-- `e2e/*.tape`
+- Codex 静的分析で特定されたバグ・重複・パフォーマンス問題を修正する
 
 主要ステップ:
-- [x] 現行の VHS / e2e 実行基盤と `v0.8.0` UI 差分を確認する
-- [x] compare / stats をカバーする tape を追加する
-- [x] 実行スクリプトのセットアップと環境依存を整理する
-- [x] `go test` と VHS 実行結果を確認する
-
-確認方法:
-- `GOCACHE=/tmp/asql-gocache go test ./...`
-- `bash e2e/run.sh`
-
-想定リスク（影響範囲）:
-- terminal 幅や VHS 待機条件のズレで flaky になる
-- profile セットアップ方法次第で compare tape がハングする
+- [x] A1: stats.go `computeColumnStats` 境界チェック追加
+- [x] A2: sparkline.go `truncateTime`/`bucketKey` の panic をフォールバックに変更
+- [x] A3: AI エラーレスポンスの情報露出制限（構造化エラー抽出 + 200文字制限）
+- [x] B1: DB 接続生成を `internal/db/opener` パッケージに一本化
+- [x] B2: `containsReturning` を `dbutil.ContainsReturning` に共通化（~170行削減）
+- [x] C1: `ScanRows` に10,000行上限追加 + Stats 計算を `tea.Cmd` で非同期化
+- [x] D1: `config.Load()` の stderr 直出力を `Warnings` フィールドに変更
 
 結果:
-- `06_compare.tape` と `07_stats.tape` を追加し、`v0.8.0` の主要UXを VHS でカバー
-- `e2e/setup-profiles.py` を追加し、compare 系 tape を self-contained にした
-- `e2e/run.sh` に `GOCACHE` / `XDG_CONFIG_HOME` の分離と profile セットアップを追加
-- `run.sh` の `set -e` 下での `((passed++))` 早期終了バグを修正
-- 検証結果: `go test ./...` 成功、`bash e2e/run.sh` で 7 passed / 0 failed
-
-未解決事項:
-- なし
+- 18ファイル変更、+299/-247行
+- 全14パッケージのテスト・`go vet` パス
 
 ## Phase 2: Multi-DB Observation — 比較の完成（最優先）
 
