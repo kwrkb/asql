@@ -78,6 +78,7 @@ type connSwitchedMsg struct {
 }
 
 type statsComputedMsg struct {
+	seq   uint64
 	stats []columnStat
 }
 
@@ -417,6 +418,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case statsComputedMsg:
+		if msg.seq != m.statsSt.seq {
+			return m, nil // stale stats result — discard
+		}
 		m.statsSt.stats = msg.stats
 		m.statsSt.loading = false
 		if m.mode == statsMode {

@@ -95,8 +95,8 @@ Schema:
 		}
 		if json.Unmarshal(respBody, &errResp) == nil && errResp.Error.Message != "" {
 			msg := errResp.Error.Message
-			if len(msg) > 200 {
-				msg = msg[:200] + "..."
+			if runes := []rune(msg); len(runes) > 200 {
+				msg = string(runes[:200]) + "..."
 			}
 			return "", fmt.Errorf("API error %d: %s", resp.StatusCode, msg)
 		}

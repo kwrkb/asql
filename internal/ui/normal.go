@@ -41,6 +41,7 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case "d":
 			if len(m.lastResult.Columns) > 0 && len(m.lastResult.Rows) > 0 {
+				m.statsSt.seq++
 				m.statsSt.cursor = 0
 				m.statsSt.scroll = 0
 				m.statsSt.stats = nil
@@ -48,8 +49,9 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.mode = statsMode
 				m.setStatus("Computing stats...", false)
 				result := m.lastResult
+				seq := m.statsSt.seq
 				return m, func() tea.Msg {
-					return statsComputedMsg{stats: computeColumnStats(result)}
+					return statsComputedMsg{seq: seq, stats: computeColumnStats(result)}
 				}
 			}
 		case "c":
