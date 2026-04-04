@@ -24,6 +24,9 @@ func computeColumnStats(result db.QueryResult) []columnStat {
 		firstNonNull := true
 
 		for _, row := range result.Rows {
+			if i >= len(row) {
+				continue
+			}
 			val := row[i]
 			if val == "NULL" {
 				s.NullCnt++
@@ -106,6 +109,20 @@ func (m model) statsMaxVisible() int {
 }
 
 func (m model) renderWithStatsOverlay(background string) string {
+	if m.statsSt.loading {
+		msg := lipgloss.NewStyle().
+			Foreground(lipgloss.Color(mutedTextColor)).
+			Render("Computing stats...")
+		modal := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(accentColor)).
+			Padding(1, 2).
+			Width(calcModalWidth(m.width, 40)).
+			Background(panelBackground).
+			Render(msg)
+		return overlayModal(m.width, background, modal)
+	}
+
 	stats := m.statsSt.stats
 	if len(stats) == 0 {
 		return background

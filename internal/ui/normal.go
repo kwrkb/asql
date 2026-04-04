@@ -43,9 +43,14 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if len(m.lastResult.Columns) > 0 && len(m.lastResult.Rows) > 0 {
 				m.statsSt.cursor = 0
 				m.statsSt.scroll = 0
-				m.statsSt.stats = computeColumnStats(m.lastResult)
+				m.statsSt.stats = nil
+				m.statsSt.loading = true
 				m.mode = statsMode
-				m.setStatus("Stats mode", false)
+				m.setStatus("Computing stats...", false)
+				result := m.lastResult
+				return m, func() tea.Msg {
+					return statsComputedMsg{stats: computeColumnStats(result)}
+				}
 			}
 		case "c":
 			if m.pinned != nil {

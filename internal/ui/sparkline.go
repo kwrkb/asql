@@ -89,7 +89,8 @@ func truncateTime(t time.Time, gran timeGranularity) time.Time {
 	case granYear:
 		return time.Date(t.Year(), 1, 1, 0, 0, 0, 0, t.Location())
 	default:
-		panic("unhandled time granularity")
+		// Fallback to day granularity for unknown values
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 	}
 }
 
@@ -103,7 +104,8 @@ func bucketKey(t time.Time, gran timeGranularity) string {
 	case granYear:
 		return t.Format("2006")
 	default:
-		panic("unhandled time granularity")
+		// Fallback to day granularity for unknown values
+		return t.Format("2006-01-02")
 	}
 }
 

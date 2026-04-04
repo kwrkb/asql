@@ -27,9 +27,19 @@ func StringifyValue(value any) string {
 	}
 }
 
-// ScanRows reads all rows from *sql.Rows and returns a QueryResult.
+// DefaultRowLimit is the maximum number of rows ScanRows will read.
+// Use ScanRowsLimit to override this default.
+const DefaultRowLimit = 10_000
+
+// ScanRows reads rows from *sql.Rows up to DefaultRowLimit and returns a QueryResult.
 // The caller is responsible for closing rows.
 func ScanRows(rows *sql.Rows) (db.QueryResult, error) {
+	return ScanRowsLimit(rows, DefaultRowLimit)
+}
+
+// ScanRowsLimit reads rows from *sql.Rows up to the given limit.
+// A limit of 0 means no limit.
+func ScanRowsLimit(rows *sql.Rows, limit int) (db.QueryResult, error) {
 	columns, err := rows.Columns()
 	if err != nil {
 		return db.QueryResult{}, err
@@ -51,7 +61,12 @@ func ScanRows(rows *sql.Rows) (db.QueryResult, error) {
 	}
 
 	resultRows := make([][]string, 0)
+	truncated := false
 	for rows.Next() {
+		if limit > 0 && len(resultRows) >= limit {
+			truncated = true
+			break
+		}
 		if err := rows.Scan(ptrs...); err != nil {
 			return db.QueryResult{}, err
 		}
@@ -69,11 +84,17 @@ func ScanRows(rows *sql.Rows) (db.QueryResult, error) {
 		return db.QueryResult{}, err
 	}
 
+	msg := fmt.Sprintf("%d row(s) returned", len(resultRows))
+	if truncated {
+		msg = fmt.Sprintf("%d row(s) returned (truncated at %d)", len(resultRows), limit)
+	}
+
 	return db.QueryResult{
 		Columns:     columns,
 		ColumnTypes: colTypes,
 		Rows:        resultRows,
-		Message:     fmt.Sprintf("%d row(s) returned", len(resultRows)),
+		Message:     msg,
+		Truncated:   truncated,
 	}, nil
 }
 
@@ -322,6 +343,64 @@ func ShortenTypeName(typeName string) string {
 		return short
 	}
 	return lower
+}
+
+// Dialect controls which quoting styles the SQL scanner recognizes.
+type Dialect struct {
+	BracketQuote bool // SQLite/MSSQL [identifier] style
+	DollarQuote  bool // PostgreSQL $$string$$ style
+	BacktickQuote bool // SQLite/MySQL `identifier` style
+}
+
+// ContainsReturning scans query for the RETURNING keyword, correctly skipping
+// string literals, quoted identifiers, comments, and dialect-specific quoting.
+func ContainsReturning(query string, dialect Dialect) bool {
+	const kw = "returning"
+	i := 0
+	n := len(query)
+	for i < n {
+		switch {
+		case query[i] == '-' && i+1 < n && query[i+1] == '-':
+			for i < n && query[i] != '\n' {
+				i++
+			}
+		case query[i] == '/' && i+1 < n && query[i+1] == '*':
+			i += 2
+			for i < n {
+				if query[i] == '*' && i+1 < n && query[i+1] == '/' {
+					i += 2
+					break
+				}
+				i++
+			}
+		case query[i] == '\'':
+			i = skipSingleQuoted(query, i)
+		case query[i] == '"':
+			i = skipDoubleQuoted(query, i)
+		case dialect.BacktickQuote && query[i] == '`':
+			i = skipBacktickQuoted(query, i)
+		case dialect.BracketQuote && query[i] == '[':
+			i++
+			for i < n && query[i] != ']' {
+				i++
+			}
+			if i < n {
+				i++
+			}
+		case dialect.DollarQuote && query[i] == '$' && i+1 < n:
+			i = skipDollarQuoted(query, i)
+		default:
+			if i+len(kw) <= n && strings.EqualFold(query[i:i+len(kw)], kw) {
+				before := i == 0 || !isIdentCharByte(query[i-1])
+				after := i+len(kw) >= n || !isIdentCharByte(query[i+len(kw)])
+				if before && after {
+					return true
+				}
+			}
+			i++
+		}
+	}
+	return false
 }
 
 func parseDollarTag(query string, i int) string {

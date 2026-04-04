@@ -196,103 +196,12 @@ func returnsRows(query string) bool {
 	}
 }
 
-// isIdentChar reports whether c is a SQL identifier character.
-func isIdentChar(c byte) bool {
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+// postgresDialect defines the quoting styles recognized by PostgreSQL.
+var postgresDialect = dbutil.Dialect{
+	DollarQuote: true,
 }
 
-// containsReturning scans query for the RETURNING keyword, correctly skipping
-// string literals, quoted identifiers, comments, and dollar-quoted strings.
+// containsReturning scans query for the RETURNING keyword using the shared scanner.
 func containsReturning(query string) bool {
-	const kw = "returning"
-	i := 0
-	n := len(query)
-	for i < n {
-		switch {
-		case query[i] == '-' && i+1 < n && query[i+1] == '-':
-			for i < n && query[i] != '\n' {
-				i++
-			}
-		case query[i] == '/' && i+1 < n && query[i+1] == '*':
-			i += 2
-			for i < n {
-				if query[i] == '*' && i+1 < n && query[i+1] == '/' {
-					i += 2
-					break
-				}
-				i++
-			}
-		case query[i] == '\'':
-			i++
-			for i < n {
-				if query[i] == '\'' {
-					i++
-					if i < n && query[i] == '\'' {
-						i++
-						continue
-					}
-					break
-				}
-				i++
-			}
-		case query[i] == '"':
-			i++
-			for i < n {
-				if query[i] == '"' {
-					i++
-					if i < n && query[i] == '"' {
-						i++
-						continue
-					}
-					break
-				}
-				i++
-			}
-		case query[i] == '$' && i+1 < n:
-			// Dollar-quoted string: $tag$...$tag$
-			tag := parseDollarTag(query, i)
-			if tag != "" {
-				i += len(tag)
-				for i+len(tag) <= n {
-					if query[i:i+len(tag)] == tag {
-						i += len(tag)
-						break
-					}
-					i++
-				}
-			} else {
-				i++
-			}
-		default:
-			if i+len(kw) <= n && strings.EqualFold(query[i:i+len(kw)], kw) {
-				before := i == 0 || !isIdentChar(query[i-1])
-				after := i+len(kw) >= n || !isIdentChar(query[i+len(kw)])
-				if before && after {
-					return true
-				}
-			}
-			i++
-		}
-	}
-	return false
-}
-
-// parseDollarTag extracts a dollar-quote tag like $$ or $tag$ starting at position i.
-// Returns the full tag string (e.g. "$$" or "$tag$"), or "" if not a valid dollar-quote.
-func parseDollarTag(query string, i int) string {
-	if i >= len(query) || query[i] != '$' {
-		return ""
-	}
-	j := i + 1
-	for j < len(query) && query[j] != '$' {
-		c := query[j]
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
-			return ""
-		}
-		j++
-	}
-	if j >= len(query) {
-		return ""
-	}
-	return query[i : j+1] // includes closing $
+	return dbutil.ContainsReturning(query, postgresDialect)
 }

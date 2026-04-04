@@ -165,10 +165,22 @@ func newStatsModel() *model {
 func TestStats_DKeyEntersStatsMode(t *testing.T) {
 	m := newStatsModel()
 	m.mode = normalMode
-	updated, _ := m.Update(runeMsg("d"))
+	updated, cmd := m.Update(runeMsg("d"))
 	result := updated.(model)
 	if result.mode != statsMode {
 		t.Errorf("mode = %v, want statsMode", result.mode)
+	}
+	if !result.statsSt.loading {
+		t.Error("loading should be true while stats are being computed")
+	}
+	// Simulate async stats computation completing
+	if cmd != nil {
+		msg := cmd()
+		updated, _ = result.Update(msg)
+		result = updated.(model)
+	}
+	if result.statsSt.loading {
+		t.Error("loading should be false after stats are computed")
 	}
 	if len(result.statsSt.stats) != 3 {
 		t.Errorf("stats len = %d, want 3", len(result.statsSt.stats))
