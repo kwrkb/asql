@@ -93,7 +93,9 @@ type columnStat struct {
 
 // statsState holds state for the column-statistics overlay (STATS mode).
 type statsState struct {
-	cursor int
-	scroll int
-	stats  []columnStat
+	cursor  int
+	scroll  int
+	stats   []columnStat
+	loading bool   // true while stats are being computed asynchronously
+	seq     uint64 // incremented on each stats request to discard stale results
 }

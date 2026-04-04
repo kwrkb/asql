@@ -1,26 +1,11 @@
 package ui
 
 import (
-	"strings"
 	"sync"
 
 	"github.com/kwrkb/asql/internal/db"
-	"github.com/kwrkb/asql/internal/db/mysql"
-	"github.com/kwrkb/asql/internal/db/postgres"
-	"github.com/kwrkb/asql/internal/db/sqlite"
+	"github.com/kwrkb/asql/internal/db/opener"
 )
-
-// openDB creates a DBAdapter from a DSN string.
-func openDB(dsn string) (db.DBAdapter, error) {
-	switch {
-	case strings.HasPrefix(dsn, "mysql://"):
-		return mysql.Open(dsn)
-	case strings.HasPrefix(dsn, "postgres://"), strings.HasPrefix(dsn, "postgresql://"):
-		return postgres.Open(dsn)
-	default:
-		return sqlite.Open(dsn)
-	}
-}
 
 type connection struct {
 	name    string
@@ -93,7 +78,7 @@ func (cm *connManager) Switch(name, dsn string) error {
 	}
 
 	// Open new connection
-	adapter, err := openDB(dsn)
+	adapter, err := opener.Open(dsn)
 	if err != nil {
 		return err
 	}

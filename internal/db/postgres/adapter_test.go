@@ -79,30 +79,6 @@ func TestContainsReturning(t *testing.T) {
 	}
 }
 
-func TestParseDollarTag(t *testing.T) {
-	tests := []struct {
-		name  string
-		query string
-		pos   int
-		want  string
-	}{
-		{"empty tag", "$$hello$$", 0, "$$"},
-		{"named tag", "$fn$hello$fn$", 0, "$fn$"},
-		{"not dollar", "hello", 0, ""},
-		{"unclosed", "$fn", 0, ""},
-		{"invalid char", "$a b$", 0, ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := parseDollarTag(tt.query, tt.pos)
-			if got != tt.want {
-				t.Errorf("parseDollarTag(%q, %d) = %q, want %q", tt.query, tt.pos, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestType(t *testing.T) {
 	a := &Adapter{}
 	if got := a.Type(); got != "postgres" {

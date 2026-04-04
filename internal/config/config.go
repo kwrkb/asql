@@ -15,7 +15,8 @@ type AIConfig struct {
 }
 
 type Config struct {
-	AI AIConfig `yaml:"ai"`
+	AI       AIConfig `yaml:"ai"`
+	Warnings []string `yaml:"-"` // non-fatal warnings collected during load
 }
 
 func (c Config) AIEnabled() bool {
@@ -37,14 +38,14 @@ func Load() (Config, error) {
 
 	configPath := filepath.Join(dir, "asql", "config.yaml")
 
+	var cfg Config
+
 	// Check file permissions — warn if too permissive
 	if info, statErr := os.Stat(configPath); statErr == nil {
 		if perm := info.Mode().Perm(); perm&0077 != 0 {
-			fmt.Fprintf(os.Stderr, "warning: config file %s has permissions %o, recommend 0600\n", configPath, perm)
+			cfg.Warnings = append(cfg.Warnings, fmt.Sprintf("config file %s has permissions %o, recommend 0600", configPath, perm))
 		}
 	}
-
-	var cfg Config
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {

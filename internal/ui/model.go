@@ -77,6 +77,11 @@ type connSwitchedMsg struct {
 	reExecute bool
 }
 
+type statsComputedMsg struct {
+	seq   uint64
+	stats []columnStat
+}
+
 type columnsLoadedMsg struct {
 	table   string
 	columns []string
@@ -410,6 +415,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.completion.pendingPrefix = ""
 			}
+		}
+		return m, nil
+	case statsComputedMsg:
+		if msg.seq != m.statsSt.seq {
+			return m, nil // stale stats result — discard
+		}
+		m.statsSt.stats = msg.stats
+		m.statsSt.loading = false
+		if m.mode == statsMode {
+			m.setStatus("Stats mode", false)
 		}
 		return m, nil
 	case queryExecutedMsg:

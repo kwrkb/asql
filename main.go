@@ -10,9 +10,7 @@ import (
 	"github.com/kwrkb/asql/internal/ai"
 	"github.com/kwrkb/asql/internal/config"
 	dbpkg "github.com/kwrkb/asql/internal/db"
-	"github.com/kwrkb/asql/internal/db/mysql"
-	"github.com/kwrkb/asql/internal/db/postgres"
-	"github.com/kwrkb/asql/internal/db/sqlite"
+	"github.com/kwrkb/asql/internal/db/opener"
 	"github.com/kwrkb/asql/internal/profile"
 	"github.com/kwrkb/asql/internal/snippet"
 	"github.com/kwrkb/asql/internal/ui"
@@ -190,15 +188,7 @@ func main() {
 
 	displayDSN := dbpkg.MaskDSN(dbPath)
 
-	var adapter dbpkg.DBAdapter
-	switch {
-	case strings.HasPrefix(dbPath, "mysql://"):
-		adapter, err = mysql.Open(dbPath)
-	case strings.HasPrefix(dbPath, "postgres://"), strings.HasPrefix(dbPath, "postgresql://"):
-		adapter, err = postgres.Open(dbPath)
-	default:
-		adapter, err = sqlite.Open(dbPath)
-	}
+	adapter, err := opener.Open(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to open database %q: %v\n", displayDSN, err)
 		fmt.Fprintln(os.Stderr, connectionHint(dbPath, err))
@@ -216,6 +206,9 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to load config: %v\n", err)
+	}
+	for _, w := range cfg.Warnings {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
 	}
 
 	var aiClient *ai.Client

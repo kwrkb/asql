@@ -87,7 +87,20 @@ Schema:
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(respBody))
+		// Try to extract a structured error message (OpenAI-compatible format).
+		var errResp struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(respBody, &errResp) == nil && errResp.Error.Message != "" {
+			msg := errResp.Error.Message
+			if runes := []rune(msg); len(runes) > 200 {
+				msg = string(runes[:200]) + "..."
+			}
+			return "", fmt.Errorf("API error %d: %s", resp.StatusCode, msg)
+		}
+		return "", fmt.Errorf("API error %d", resp.StatusCode)
 	}
 
 	var chatResp chatResponse

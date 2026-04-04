@@ -94,6 +94,68 @@ func TestShortenTypeName(t *testing.T) {
 	}
 }
 
+func TestContainsReturning(t *testing.T) {
+	tests := []struct {
+		name    string
+		query   string
+		dialect Dialect
+		want    bool
+	}{
+		// Basic cases
+		{"plain returning", "INSERT INTO t VALUES (1) RETURNING id", Dialect{}, true},
+		{"no returning", "INSERT INTO t VALUES (1)", Dialect{}, false},
+		{"returning in string", "INSERT INTO t VALUES ('RETURNING')", Dialect{}, false},
+		{"returning in double quote", `INSERT INTO t VALUES (1) WHERE "RETURNING" = 1`, Dialect{}, false},
+		{"returning in line comment", "INSERT INTO t -- RETURNING\nVALUES (1)", Dialect{}, false},
+		{"returning in block comment", "INSERT INTO t /* RETURNING */ VALUES (1)", Dialect{}, false},
+		{"case insensitive", "insert into t values (1) returning id", Dialect{}, true},
+		{"partial match", "INSERT INTO returning_table VALUES (1)", Dialect{}, false},
+
+		// SQLite dialect: bracket + backtick
+		{"bracket quoted", "INSERT INTO [RETURNING] VALUES (1)", Dialect{BracketQuote: true}, false},
+		{"backtick quoted", "INSERT INTO `RETURNING` VALUES (1)", Dialect{BacktickQuote: true}, false},
+		{"bracket with real returning", "INSERT INTO [t] VALUES (1) RETURNING id", Dialect{BracketQuote: true}, true},
+
+		// PostgreSQL dialect: dollar-quoted
+		{"dollar quoted", "INSERT INTO t VALUES ($$RETURNING$$)", Dialect{DollarQuote: true}, false},
+		{"named dollar tag", "INSERT INTO t VALUES ($fn$RETURNING$fn$)", Dialect{DollarQuote: true}, false},
+		{"dollar with real returning", "INSERT INTO t VALUES ($$hello$$) RETURNING id", Dialect{DollarQuote: true}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ContainsReturning(tt.query, tt.dialect)
+			if got != tt.want {
+				t.Errorf("ContainsReturning(%q, %+v) = %v, want %v", tt.query, tt.dialect, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseDollarTag(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		pos   int
+		want  string
+	}{
+		{"empty tag", "$$hello$$", 0, "$$"},
+		{"named tag", "$fn$hello$fn$", 0, "$fn$"},
+		{"not dollar", "hello", 0, ""},
+		{"unclosed", "$fn", 0, ""},
+		{"invalid char", "$a b$", 0, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseDollarTag(tt.query, tt.pos)
+			if got != tt.want {
+				t.Errorf("parseDollarTag(%q, %d) = %q, want %q", tt.query, tt.pos, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCteBodyKeyword(t *testing.T) {
 	tests := []struct {
 		name  string

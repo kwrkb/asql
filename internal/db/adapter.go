@@ -7,6 +7,7 @@ type QueryResult struct {
 	ColumnTypes []string // e.g. "INTEGER", "TEXT", "VARCHAR". nil if unavailable.
 	Rows        [][]string
 	Message     string
+	Truncated   bool // true when rows were capped at the scan limit
 }
 
 type DBAdapter interface {

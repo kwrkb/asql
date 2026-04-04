@@ -168,91 +168,14 @@ func returnsRows(query string) bool {
 	}
 }
 
-// isIdentChar reports whether c is a SQL identifier character.
-func isIdentChar(c byte) bool {
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+// sqliteDialect defines the quoting styles recognized by SQLite.
+var sqliteDialect = dbutil.Dialect{
+	BracketQuote:  true,
+	BacktickQuote: true,
 }
 
-// containsReturning scans query for the RETURNING keyword, correctly skipping
-// string literals, quoted identifiers, and comments.
+// containsReturning scans query for the RETURNING keyword using the shared scanner.
 func containsReturning(query string) bool {
-	const kw = "returning"
-	i := 0
-	n := len(query)
-	for i < n {
-		switch {
-		case query[i] == '-' && i+1 < n && query[i+1] == '-':
-			// line comment: skip to end of line
-			for i < n && query[i] != '\n' {
-				i++
-			}
-		case query[i] == '/' && i+1 < n && query[i+1] == '*':
-			// block comment
-			i += 2
-			for i < n {
-				if query[i] == '*' && i+1 < n && query[i+1] == '/' {
-					i += 2
-					break
-				}
-				i++
-			}
-		case query[i] == '\'':
-			// single-quoted string literal ('' is an escaped quote)
-			i++
-			for i < n {
-				if query[i] == '\'' {
-					i++
-					if i < n && query[i] == '\'' {
-						i++ // escaped quote, continue
-						continue
-					}
-					break
-				}
-				i++
-			}
-		case query[i] == '"':
-			// double-quoted identifier ("" is an escaped quote)
-			i++
-			for i < n {
-				if query[i] == '"' {
-					i++
-					if i < n && query[i] == '"' {
-						i++ // escaped quote, continue
-						continue
-					}
-					break
-				}
-				i++
-			}
-		case query[i] == '`':
-			// backtick-quoted identifier (SQLite also accepts MySQL-style backticks)
-			i++
-			for i < n && query[i] != '`' {
-				i++
-			}
-			if i < n {
-				i++ // skip closing `
-			}
-		case query[i] == '[':
-			// bracket-quoted identifier ([id], SQLite/MSSQL style)
-			i++
-			for i < n && query[i] != ']' {
-				i++
-			}
-			if i < n {
-				i++ // skip closing ]
-			}
-		default:
-			if i+len(kw) <= n && strings.EqualFold(query[i:i+len(kw)], kw) {
-				before := i == 0 || !isIdentChar(query[i-1])
-				after := i+len(kw) >= n || !isIdentChar(query[i+len(kw)])
-				if before && after {
-					return true
-				}
-			}
-			i++
-		}
-	}
-	return false
+	return dbutil.ContainsReturning(query, sqliteDialect)
 }
 
