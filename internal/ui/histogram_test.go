@@ -314,7 +314,7 @@ func TestFormatHistogramLabel(t *testing.T) {
 		{1.5, 3.5, "1.5–3.5"},
 		{0.001, 0.999, "0.001–0.999"},
 		{1000000, 9999999, "1000000–9999999"},
-		// BIGINT UNSIGNED range — must not overflow to negative
+		// BIGINT UNSIGNED range — float64 can't represent MaxUint64 exactly; %.0f rounds up by 1
 		{0, 18446744073709551615, "0–18446744073709551616"},
 	}
 

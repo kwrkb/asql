@@ -83,6 +83,7 @@ func computeHistogram(rows [][]string, colIdx int) histogramData {
 			continue
 		}
 		if math.IsNaN(f) || math.IsInf(f, 0) {
+			nonNull-- // NaN/Inf are not usable for histogram; exclude from ratio
 			continue
 		}
 		values = append(values, f)
