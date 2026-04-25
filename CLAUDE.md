@@ -32,6 +32,9 @@ bash e2e/run.sh
 go vet ./...
 
 # リリース（ローカル実行）
+# 1. PLAN.md / HISTORY.md を更新してコミット & push（タグはコミットを指すので必須）
+# 2. git status クリーン確認 + go vet ./... + go test ./...
+# 3. goreleaser check で .goreleaser.yml の deprecation を事前検証
 git tag v<version>
 git push origin v<version>
 GITHUB_TOKEN=$(gh auth token) goreleaser release --clean
@@ -40,13 +43,16 @@ GITHUB_TOKEN=$(gh auth token) goreleaser release --clean
 ## Architecture
 
 - **internal/db/** — データベース抽象層。
-  - `adapter.go` — `DBAdapter` インターフェース（`Type`, `Query`, `Tables`, `Schema`, `Close`）。
+  - `adapter.go` — `DBAdapter` インターフェース（`Type`, `Query`, `Tables`, `Columns`, `Schema`, `QuoteIdentifier`, `Close`）。
   - `dbutil/` — 全アダプタ共通のユーティリティ（`returnsRows` 判定、値の文字列化など）。
+  - `opener/` — DSN から各アダプタを生成する接着剤パッケージ（循環依存回避）。
   - `sqlite/`, `mysql/`, `postgres/` — 各 DB のアダプタ実装。
-- **internal/ui/** — TUI 層。`model.go` (Bubble Tea) を中心に、NORMAL/INSERT/SIDEBAR/AI/EXPORT のモード管理。`export.go` にエクスポート関連の UI ロジックを分離。
+- **internal/ui/** — TUI 層。`model.go` (Bubble Tea) を中心に責務別ファイル分割 (`normal.go`/`insert.go`/`sidebar.go`/`detail.go`/`compare.go`/`overlay.go`/`sanitize.go` 等)。モードは NORMAL/INSERT/SIDEBAR/AI/EXPORT/DETAIL/SNIPPET/SEARCH/PROFILE/STATS の 10 種。
 - **internal/export/** — CSV/JSON/Markdown フォーマット変換ロジック。
 - **internal/ai/** — LLM クライアント。スキーマ情報をプロンプトに注入。
 - **internal/config/** — `~/.config/asql/config.yaml` の管理。
+- **internal/profile/**, **internal/snippet/** — 接続プロファイルとクエリスニペットの永続化。
+- **internal/fsutil/** — `atomicWrite` 等のファイル操作共通ヘルパー。
 
 ## Design Principles (from VISION.md)
 
