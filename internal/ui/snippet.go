@@ -152,7 +152,6 @@ func (m model) updateSnippetNaming(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m model) renderWithSnippetOverlay(background string) string {
 	modalWidth := calcModalWidth(m.width, 50)
-	m.snippetSt.input.Width = max(modalWidth-12, 1)
 	innerWidth := max(modalWidth-6, 1)
 
 	titleStyle := lipgloss.NewStyle().

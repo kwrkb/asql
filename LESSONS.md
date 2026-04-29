@@ -666,9 +666,9 @@ if err != nil {
 - `visibleColumnRange` が `available := contentWidth() - 8` を負/ゼロでもループに突入し、最初のカラムを強制描画してレイアウト崩れを起こしていた。同様に `maxVisible := height - 2` もクランプなしで負値になり得た
 - **ルール**: `width - N` / `height - N` などのオフセット計算は (1) 結果が `<= 0` のとき早期 return か空範囲を返す、(2) 後段で使う場合は `max(value, 0)` または `max(value, 1)` でクランプする。1行の `max()` で済むのでケチらない
 
-### モーダル overlay の入力幅は `calcModalWidth` から動的に同期する
-- AI/Snippet/Profile overlay の `textinput.Width` が `50`/`30` の固定値で、`modalWidth` の縮小に追従せず狭画面で入力欄がモーダルからはみ出していた
-- **ルール**: `renderWith*Overlay` で `modalWidth := calcModalWidth(m.width, ...)` を計算した直後に `m.xxxSt.input.Width = max(modalWidth-12, 1)` を設定してから描画する。`calcModalWidth` 自身も `min(20, max(screenWidth, 1))` で実画面幅を下限に取る
+### モーダル overlay の入力幅は `resize()` で `calcModalWidth` から同期する
+- AI/Snippet/Profile overlay の `textinput.Width` が `50`/`30` の固定値で、`modalWidth` の縮小に追従せず狭画面で入力欄がモーダルからはみ出していた。一度は `renderWith*Overlay` 内で `m.xxxSt.input.Width = ...` を設定して直したが、これは「View() は純粋関数として保つ」ルールに反する状態変異だった
+- **ルール**: モーダル入力幅の同期は `resize()` の末尾に集約し、`m.xxxSt.input.Width = max(calcModalWidth(m.width, N)-K, min)` を一括で更新する。`renderWith*Overlay` は `modalWidth` を計算しても `input.Width` には書き込まない（読み取りのみ）。`calcModalWidth` 自身も `min(20, max(screenWidth, 1))` で実画面幅を下限に取る
 
 ### モード遷移時の Blur は専用ヘルパーで集約する
 - Ctrl+C グローバルキャンセル時、`m.textarea.Blur()` だけ呼んでいたため AI/Snippet/Profile/HistorySearch モードの input がフォーカス残留していた

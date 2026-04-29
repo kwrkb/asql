@@ -107,8 +107,6 @@ func (m model) renderWithHistorySearchOverlay(background string) string {
 
 	var items strings.Builder
 
-	// Search input — adapt width to modal
-	m.histSearch.input.Width = max(modalWidth-10, 10)
 	items.WriteString(lipgloss.NewStyle().Foreground(textColor).Background(panelBackground).Render("> "))
 	items.WriteString(m.histSearch.input.View())
 	items.WriteByte('\n')

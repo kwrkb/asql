@@ -74,7 +74,6 @@ func generateSQLCmd(parent context.Context, client *ai.Client, adapter db.DBAdap
 
 func (m model) renderWithAIOverlay(background string) string {
 	modalWidth := calcModalWidth(m.width, 60)
-	m.aiSt.input.Width = max(modalWidth-12, 1)
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).

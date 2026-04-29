@@ -634,6 +634,13 @@ func (m *model) resize() {
 	m.viewportDirty = true
 	m.syncViewport()
 	m.syncCompareTables()
+
+	// Sync modal input widths so View() can stay a pure read.
+	// Keep these in sync with calcModalWidth args used by renderWith*Overlay.
+	m.aiSt.input.Width = max(calcModalWidth(m.width, 60)-12, 1)
+	m.snippetSt.input.Width = max(calcModalWidth(m.width, 50)-12, 1)
+	m.profileSt.input.Width = max(calcModalWidth(m.width, 60)-12, 1)
+	m.histSearch.input.Width = max(calcModalWidth(m.width, 60)-10, 10)
 }
 
 func (m *model) editorHeight() int {
