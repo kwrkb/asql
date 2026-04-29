@@ -32,9 +32,12 @@ func (m *model) visibleColumnRange() (int, int) {
 	if start >= len(m.cachedColWidths) {
 		start = 0
 	}
+	if available <= 0 {
+		return start, min(start+1, len(m.cachedColWidths))
+	}
 	sum := 0
 	for i := start; i < len(m.cachedColWidths); i++ {
-		w := m.cachedColWidths[i] + 1 // column width + cell gap
+		w := min(m.cachedColWidths[i], available) + 1 // column width + cell gap
 		if sum+w > available && i > start {
 			return start, i
 		}
@@ -82,7 +85,7 @@ func (m *model) syncViewport() {
 			if m.mode == normalMode && i == m.colCursor && (m.pinned == nil || m.comparePane == 1) {
 				header = selectedStyle.Render(header)
 			}
-			columns = append(columns, table.Column{Title: header, Width: m.cachedColWidths[i]})
+			columns = append(columns, table.Column{Title: header, Width: min(m.cachedColWidths[i], max(m.contentWidth()-8, 1))})
 		}
 
 		// Build windowed rows with sanitized cell values

@@ -366,18 +366,20 @@ func (m model) renderCompletionPopup() string {
 	if popupWidth > 50 {
 		popupWidth = 50
 	}
+	popupWidth = min(popupWidth, max(m.fullContentWidth()-4, 1))
+	popupInnerWidth := max(popupWidth-4, 1)
 
 	itemStyle := lipgloss.NewStyle().
 		Foreground(textColor).
 		Background(panelBackground).
-		Width(popupWidth - 4).
+		Width(popupInnerWidth).
 		Padding(0, 1)
 
 	selectedStyle := lipgloss.NewStyle().
 		Foreground(panelBackground).
 		Background(accentColor).
 		Bold(true).
-		Width(popupWidth - 4).
+		Width(popupInnerWidth).
 		Padding(0, 1)
 
 	// Calculate scroll offset
@@ -406,7 +408,7 @@ func (m model) renderCompletionPopup() string {
 		info := lipgloss.NewStyle().
 			Foreground(mutedTextColor).
 			Background(panelBackground).
-			Width(popupWidth - 4).
+			Width(popupInnerWidth).
 			Padding(0, 1).
 			Render(fmt.Sprintf("%d/%d", m.completion.cursor+1, len(m.completion.items)))
 		lines = append(lines, info)

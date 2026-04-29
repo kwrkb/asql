@@ -282,6 +282,23 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(textarea.Blink, loadTablesCmd(m.connMgr.Active()))
 }
 
+func (m *model) blurActiveInput() {
+	switch m.mode {
+	case insertMode:
+		m.textarea.Blur()
+	case aiMode:
+		m.aiSt.input.Blur()
+	case snippetMode:
+		m.snippetSt.input.Blur()
+	case profileMode:
+		m.profileSt.input.Blur()
+	case historySearchMode:
+		m.histSearch.input.Blur()
+	default:
+		m.textarea.Blur()
+	}
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -295,8 +312,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.queryCancel()
 				m.queryCancel = nil
 				m.aiSt.loading = false
+				m.blurActiveInput()
 				m.mode = normalMode
-				m.textarea.Blur()
 				m.setStatus("Cancelled", false)
 				return m, nil
 			}
@@ -304,7 +321,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch m.mode {
 		case normalMode:
-			return m.updateNormal(msg)
+			next, cmd := m.updateNormal(msg)
+			if updated, ok := next.(model); ok {
+				updated.syncCompareTables()
+				return updated, cmd
+			}
+			return next, cmd
 		case insertMode:
 			return m.updateInsert(msg)
 		case sidebarMode:
@@ -338,6 +360,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.textarea.SetValue(msg.sql)
+		m.aiSt.input.Blur()
 		m.mode = insertMode
 		m.textarea.Focus()
 		m.setStatus("AI generated SQL — review before executing", false)
@@ -449,6 +472,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.colCursor = 0
 		m.colOffset = 0
 		m.applyResult(msg.result)
+		m.syncCompareTables()
 		if m.pinned != nil {
 			m.setStatus(m.compareStatusSummary(), false)
 		}
@@ -472,6 +496,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// no passthrough needed
 	}
 	m.syncViewport()
+	m.syncCompareTables()
 	return m, cmd
 }
 
@@ -608,6 +633,14 @@ func (m *model) resize() {
 
 	m.viewportDirty = true
 	m.syncViewport()
+	m.syncCompareTables()
+
+	// Sync modal input widths so View() can stay a pure read.
+	// Keep these in sync with calcModalWidth args used by renderWith*Overlay.
+	m.aiSt.input.Width = max(calcModalWidth(m.width, 60)-12, 1)
+	m.snippetSt.input.Width = max(calcModalWidth(m.width, 50)-12, 1)
+	m.profileSt.input.Width = max(calcModalWidth(m.width, 60)-12, 1)
+	m.histSearch.input.Width = max(calcModalWidth(m.width, 60)-10, 10)
 }
 
 func (m *model) editorHeight() int {

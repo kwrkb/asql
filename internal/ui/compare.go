@@ -180,9 +180,12 @@ func (p *pinnedPane) visibleColumnRange(availWidth int) (int, int) {
 	if start >= len(p.colWidths) {
 		start = 0
 	}
+	if available <= 0 {
+		return start, min(start+1, len(p.colWidths))
+	}
 	sum := 0
 	for i := start; i < len(p.colWidths); i++ {
-		w := p.colWidths[i] + 1
+		w := min(p.colWidths[i], available) + 1
 		if sum+w > available && i > start {
 			return start, i
 		}
@@ -264,7 +267,7 @@ func (m *model) syncPinnedTable(paneWidth, paneHeight int) {
 		if m.comparePane == 0 && i == p.colCursor {
 			header = selectedStyle.Render(header)
 		}
-		columns = append(columns, table.Column{Title: header, Width: p.colWidths[i]})
+		columns = append(columns, table.Column{Title: header, Width: min(p.colWidths[i], max(paneWidth-8, 1))})
 	}
 
 	rows := make([]table.Row, 0, len(p.displayRows))
@@ -295,12 +298,17 @@ func (m *model) syncPinnedTable(paneWidth, paneHeight int) {
 	p.viewportDirty = false
 }
 
+func (m *model) syncCompareTables() {
+	if m.pinned == nil {
+		return
+	}
+	m.syncPinnedTable(m.comparePaneWidth(), m.resultsHeight()-1)
+}
+
 // renderCompareView renders side-by-side panels.
 func (m *model) renderCompareView() string {
 	paneWidth := m.comparePaneWidth()
 	paneHeight := m.resultsHeight() - 1 // subtract 1 for label row
-
-	m.syncPinnedTable(paneWidth, paneHeight)
 
 	focusedBorder := lipgloss.Color("#38BDF8") // accentColor
 	unfocusedBorder := panelBorder

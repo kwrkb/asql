@@ -62,7 +62,7 @@ const (
 )
 
 const (
-	dayGranularityThreshold  = 90 * 24 * time.Hour
+	dayGranularityThreshold   = 90 * 24 * time.Hour
 	monthGranularityThreshold = 730 * 24 * time.Hour
 )
 

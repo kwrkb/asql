@@ -81,7 +81,7 @@ func (m model) renderSidebar() string {
 	lines := 1
 
 	// Calculate scroll offset so cursor stays visible
-	maxVisible := height - 2 // title line + border allowance
+	maxVisible := max(height-2, 0) // title line + border allowance
 	scrollOffset := 0
 	if maxVisible > 0 && m.sidebar.cursor >= maxVisible {
 		scrollOffset = m.sidebar.cursor - maxVisible + 1

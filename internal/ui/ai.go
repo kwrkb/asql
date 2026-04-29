@@ -23,6 +23,7 @@ func (m model) updateAI(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.queryCancel = nil
 			}
 			m.aiSt.loading = false
+			m.aiSt.input.Blur()
 			m.mode = normalMode
 			m.setStatus("Cancelled", false)
 			return m, nil
@@ -31,6 +32,7 @@ func (m model) updateAI(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.Type {
 	case tea.KeyEsc:
+		m.aiSt.input.Blur()
 		m.mode = normalMode
 		m.aiSt.err = ""
 		m.setStatus("Normal mode", false)

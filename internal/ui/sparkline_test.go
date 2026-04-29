@@ -35,12 +35,12 @@ func TestParseDate(t *testing.T) {
 		input string
 		ok    bool
 	}{
-		{"2024-01-15T10:30:00Z", true},          // RFC3339
-		{"2024-01-15T10:30:00+09:00", true},      // RFC3339 with offset
-		{"2024-01-15T10:30:00", true},             // ISO 8601 no TZ
-		{"2024-01-15 10:30:00", true},             // datetime
-		{"2024-01-15", true},                      // date only
-		{"2024/01/15", true},                      // slash
+		{"2024-01-15T10:30:00Z", true},      // RFC3339
+		{"2024-01-15T10:30:00+09:00", true}, // RFC3339 with offset
+		{"2024-01-15T10:30:00", true},       // ISO 8601 no TZ
+		{"2024-01-15 10:30:00", true},       // datetime
+		{"2024-01-15", true},                // date only
+		{"2024/01/15", true},                // slash
 		{"not-a-date", false},
 		{"12345", false},
 		{"", false},
@@ -249,4 +249,3 @@ func TestComputeColumnStats_TextLooksLikeDate(t *testing.T) {
 		t.Error("TEXT column with date values should have sparkline bars")
 	}
 }
-

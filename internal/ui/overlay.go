@@ -3,11 +3,12 @@ package ui
 import "github.com/charmbracelet/lipgloss"
 
 // calcModalWidth computes the modal width from the screen width and a maximum.
-// The result is clamped to at least 20.
+// The result is clamped to at least 20 when the screen is wide enough.
 func calcModalWidth(screenWidth, maxWidth int) int {
 	w := min(screenWidth-4, maxWidth)
-	if w < 20 {
-		w = 20
+	minWidth := min(20, max(screenWidth, 1))
+	if w < minWidth {
+		w = minWidth
 	}
 	return w
 }

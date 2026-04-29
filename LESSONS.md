@@ -655,3 +655,25 @@ if err != nil {
 - **ルール**: `go install github.com/goreleaser/goreleaser/v2@latest` で `$(go env GOPATH)/bin/goreleaser` に入る。`~/go/bin` が PATH に無ければ絶対パス `~/go/bin/goreleaser` で実行する
 
 ---
+
+## TUI レイアウト・モード遷移 (2026-04-30)
+
+### Bubble Tea の View() は純粋関数として保つ
+- `renderCompareView` が `View()` 経路から `syncPinnedTable` を呼んでテーブル状態を変異させていた。レンダリングごとに pinned テーブルが書き換わり、不定期な再描画バグの温床になる
+- **ルール**: View() および View() から呼ばれる関数は読み取り専用にする。テーブル/ビューポート同期は `Update`・`resize`・結果適用時 (`applyResult` 後) などのイベントパスに移し、共通ヘルパー（例: `syncCompareTables()`）に集約する
+
+### TUI 幅計算では `available <= 0` と固定オフセットの負値を必ずガードする
+- `visibleColumnRange` が `available := contentWidth() - 8` を負/ゼロでもループに突入し、最初のカラムを強制描画してレイアウト崩れを起こしていた。同様に `maxVisible := height - 2` もクランプなしで負値になり得た
+- **ルール**: `width - N` / `height - N` などのオフセット計算は (1) 結果が `<= 0` のとき早期 return か空範囲を返す、(2) 後段で使う場合は `max(value, 0)` または `max(value, 1)` でクランプする。1行の `max()` で済むのでケチらない
+
+### モーダル overlay の入力幅は `resize()` で `calcModalWidth` から同期する
+- AI/Snippet/Profile overlay の `textinput.Width` が `50`/`30` の固定値で、`modalWidth` の縮小に追従せず狭画面で入力欄がモーダルからはみ出していた。一度は `renderWith*Overlay` 内で `m.xxxSt.input.Width = ...` を設定して直したが、これは「View() は純粋関数として保つ」ルールに反する状態変異だった
+- **ルール**: モーダル入力幅の同期は `resize()` の末尾に集約し、`m.xxxSt.input.Width = max(calcModalWidth(m.width, N)-K, min)` を一括で更新する。`renderWith*Overlay` は `modalWidth` を計算しても `input.Width` には書き込まない（読み取りのみ）。`calcModalWidth` 自身も `min(20, max(screenWidth, 1))` で実画面幅を下限に取る
+
+### モード遷移時の Blur は専用ヘルパーで集約する
+- Ctrl+C グローバルキャンセル時、`m.textarea.Blur()` だけ呼んでいたため AI/Snippet/Profile/HistorySearch モードの input がフォーカス残留していた
+- **ルール**: `blurActiveInput()` のように現在の mode に対応する input を Blur する単一メソッドを用意し、グローバルキャンセル・mode 遷移直前に呼ぶ。新しい入力フィールドを持つモードを追加したら必ずこのヘルパーに分岐を追加する
+
+### Codex の sandbox モードは `--resume` では切り替わらない
+- 前回 read-only sandbox で起動した Codex タスクを `--resume` で再開しても read-only のままで、ファイル書き込みが必要なフォローアップタスクが失敗した
+- **ルール**: 前回タスクが調査・読み取りで起動していた場合、書き込みを伴う続行タスクは `--fresh` で再投入する。Codex は前回スレッドの分析を保持しているので、同じ指示を新スレッドで投げ直して問題ない
