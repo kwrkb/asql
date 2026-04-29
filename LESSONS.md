@@ -677,3 +677,17 @@ if err != nil {
 ### Codex の sandbox モードは `--resume` では切り替わらない
 - 前回 read-only sandbox で起動した Codex タスクを `--resume` で再開しても read-only のままで、ファイル書き込みが必要なフォローアップタスクが失敗した
 - **ルール**: 前回タスクが調査・読み取りで起動していた場合、書き込みを伴う続行タスクは `--fresh` で再投入する。Codex は前回スレッドの分析を保持しているので、同じ指示を新スレッドで投げ直して問題ない
+
+## PR レビュー対応 (2026-04-30)
+
+### LESSONS.md にルールを追記する PR では、同じ PR 内に違反箇所が残っていないかを push 前に必ず grep する
+- PR #44 で「View() は純粋関数として保つ」ルールを LESSONS.md に追記したが、同 PR の `renderWithAIOverlay` / `renderWithSnippetOverlay` / `renderWithProfileOverlay` / `renderWithHistorySearchOverlay` 内で `m.xxxSt.input.Width = ...` を書き続けていた（= ルール違反 4 箇所）。gemini-code-assist bot の review-comment で 4 件まとめて指摘され、追加コミット (`ee39ea6`) で `resize()` 集約に直す羽目になった
+- **ルール**: ルールを LESSONS.md に追記したら、push する前に「ルール本文で禁じている書き方」（今回の例: `View()` 経路で `.input.Width =` / `.SetXXX(`）を `rg` で全検索し、違反候補を同 PR 内で全部潰す。レビューに通す前に自分で気づくこと
+
+### bot レビューでも「自家製ルール / 既存コードへの具体的参照」を含む指摘は人間レビュー同等に扱う
+- gemini-code-assist の指摘は `LESSONS.md (661行目) のルールに違反` と参照先を行番号で示しており、内容は完全に正確だった。「bot だから」とフィルタすると、自分で書いたばかりのルールへの違反を放置することになる
+- **ルール**: bot 指摘の優先度判断は「指摘が *この repo の* 規約・ファイル・行番号を具体的に参照しているか」で切り分ける。具体参照ありなら人間レビュー同等で対応、一般論的な命名・抽象化提案だけならスコープ外として却下してよい
+
+### `resolve-pr-comments` 後はマージ可否を `mergeStateStatus` で確認してから `--auto` でマージ予約する
+- PR #44 のレビュー対応コミットを push 直後、`mergeable: MERGEABLE / mergeStateStatus: UNSTABLE`（CI 進行中）の状態だった。手動で merge を待つより `gh pr merge --squash --auto --delete-branch` で予約するほうが、CI 完了即マージ＋ローカル/リモート両ブランチ削除まで一発で済む
+- **ルール**: レビュー対応 push 直後にマージしたい場合は (1) `gh pr view <N> --json mergeable,mergeStateStatus` で `MERGEABLE` を確認、(2) CI 進行中なら `gh pr merge <N> --squash --auto --delete-branch` で auto-merge 予約、(3) 完了後 `git fetch --prune` で remote-tracking 参照を整理する

@@ -23,25 +23,28 @@ Bring & Join (Phase 3) はまだ先。比較体験が磨き込まれてから。
 - テストカバレッジ拡充 (Issue #14, PR #35): MySQL/PostgreSQL アダプタ + UI (insert/sidebar/profile) テスト追加完了
 - Phase 4 完了: 4-1/4-2/4-3 Column Statistics Overlay (PR #36)、4-4 Sparkline (PR #38)、4-5 Histogram (PR #40)
 - コード品質改善 (PR #39): バグ修正・重複解消・パフォーマンス防御・設計改善
+- セキュリティ・安定性: Go toolchain pin to 1.26.2 (PR #42)、狭ターミナル応答性 (PR #43)、TUI レイアウト・モード遷移の堅牢化 (PR #44)
+- 最新リリース: v0.10.0
 - **次: Phase 3 (Bring & Join)**
 
-## 直近完了: コード品質・パフォーマンス改善 (PR #39)
+## 直近完了: TUI レイアウト・モード遷移の堅牢化 (PR #44)
 
 目的:
-- Codex 静的分析で特定されたバグ・重複・パフォーマンス問題を修正する
+- Codex レビューで検出した狭ターミナルでのレイアウト崩れとモード遷移時の状態残留を解消する
 
 主要ステップ:
-- [x] A1: stats.go `computeColumnStats` 境界チェック追加
-- [x] A2: sparkline.go `truncateTime`/`bucketKey` の panic をフォールバックに変更
-- [x] A3: AI エラーレスポンスの情報露出制限（構造化エラー抽出 + 200文字制限）
-- [x] B1: DB 接続生成を `internal/db/opener` パッケージに一本化
-- [x] B2: `containsReturning` を `dbutil.ContainsReturning` に共通化（~170行削減）
-- [x] C1: `ScanRows` に10,000行上限追加 + Stats 計算を `tea.Cmd` で非同期化
-- [x] D1: `config.Load()` の stderr 直出力を `Warnings` フィールドに変更
+- [x] `width - N` / `height - N` のオフセット計算に `<= 0` ガードと `max()` クランプを徹底
+- [x] AI/Snippet/Profile/HistorySearch の Blur を `blurActiveInput()` ヘルパーに集約
+- [x] モーダル overlay の `textinput.Width` を `resize()` で `calcModalWidth` から動的同期（`View()` の純粋性を回復）
+- [x] `renderCompareView` 等が View() 経路で行っていた状態変異を `Update`/`resize` に移動
+- [x] 新たな運用ルールを LESSONS.md に追記（View 純粋化 / 幅ガード / モーダル入力幅同期 / モード別 Blur ヘルパー）
 
 結果:
-- 18ファイル変更、+299/-247行
-- 全14パッケージのテスト・`go vet` パス
+- 17ファイル変更、+120/-48行
+- 全パッケージのテスト・`go vet` パス
+- 横 ~30 列、縦 ~10 行の狭画面で全モーダル（AI/Snippet/Profile/Export/History）が破綻せず描画可能
+
+過去の「直近完了」は `HISTORY.md` を参照（コード品質・パフォーマンス改善 PR #39 等）。
 
 ## Phase 2: Multi-DB Observation — 比較の完成（完了）
 
