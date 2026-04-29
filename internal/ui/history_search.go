@@ -78,6 +78,7 @@ func (m model) enterHistorySearchMode() (tea.Model, tea.Cmd) {
 
 func (m model) renderWithHistorySearchOverlay(background string) string {
 	modalWidth := calcModalWidth(m.width, 60)
+	innerWidth := max(modalWidth-6, 1)
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -94,14 +95,14 @@ func (m model) renderWithHistorySearchOverlay(background string) string {
 	itemStyle := lipgloss.NewStyle().
 		Foreground(textColor).
 		Background(panelBackground).
-		Width(modalWidth - 6).
+		Width(innerWidth).
 		Padding(0, 1)
 
 	selectedStyle := lipgloss.NewStyle().
 		Foreground(panelBackground).
 		Background(accentColor).
 		Bold(true).
-		Width(modalWidth - 6).
+		Width(innerWidth).
 		Padding(0, 1)
 
 	var items strings.Builder
