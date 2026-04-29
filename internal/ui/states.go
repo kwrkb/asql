@@ -95,8 +95,8 @@ type columnStat struct {
 	Distinct  int
 	Min       string
 	Max       string
-	Sparkline sparklineData  // non-empty only for date/timestamp columns
-	Histogram histogramData  // non-empty only for numeric columns
+	Sparkline sparklineData // non-empty only for date/timestamp columns
+	Histogram histogramData // non-empty only for numeric columns
 }
 
 // statsState holds state for the column-statistics overlay (STATS mode).

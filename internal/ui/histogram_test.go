@@ -21,7 +21,7 @@ func TestDetectNumericColumn(t *testing.T) {
 		{"DECIMAL", true},
 		{"NUMERIC", true},
 		{"NUMBER", true},
-		{"integer", true},    // lowercase
+		{"integer", true}, // lowercase
 		{"int unsigned", true},
 		{"double precision", true},
 		{"TEXT", false},
@@ -29,8 +29,8 @@ func TestDetectNumericColumn(t *testing.T) {
 		{"DATE", false},
 		{"TIMESTAMP", false},
 		{"BLOB", false},
-		{"INTERVAL", false},   // must not match "int" substring
-		{"POINT", false},      // must not match "int" substring
+		{"INTERVAL", false}, // must not match "int" substring
+		{"POINT", false},    // must not match "int" substring
 		{"interval", false},
 		{"", false},
 	}
@@ -145,7 +145,7 @@ func TestComputeHistogram(t *testing.T) {
 			rows: func() [][]string {
 				r := make([][]string, 0, 100)
 				for i := 0; i < 100; i++ {
-					r = append(r, []string{string(rune('0'+i%10))})
+					r = append(r, []string{string(rune('0' + i%10))})
 				}
 				// Use explicit values instead
 				return [][]string{

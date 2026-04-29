@@ -83,13 +83,13 @@ func newTestModel() *model {
 	vp := viewport.New(0, 0)
 	ta := textarea.New()
 	return &model{
-		connMgr:            newConnManager("test", "", nil),
-		table:              tbl,
-		viewport:           vp,
-		textarea:           ta,
-		width:              80,
-		height:             24,
-		historyIdx:         -1,
+		connMgr:    newConnManager("test", "", nil),
+		table:      tbl,
+		viewport:   vp,
+		textarea:   ta,
+		width:      80,
+		height:     24,
+		historyIdx: -1,
 		histSearch: histSearchState{input: textinput.New()},
 	}
 }
