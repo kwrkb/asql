@@ -118,5 +118,4 @@ type bringState struct {
 	conn     *sql.DB      // shared with adapter; used by bring.Materialize
 	adapter  db.DBAdapter // registered with connManager, which owns Close
 	tableSeq int          // next auto-generated table number (t1, t2, ...)
-	tables   []string     // names of tables brought so far, for status/hints
 }

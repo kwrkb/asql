@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/kwrkb/asql/internal/db"
@@ -32,31 +33,77 @@ func TestBring_TwiceProducesSequentialTables(t *testing.T) {
 		Rows:    [][]string{{"1", "alice"}},
 	}
 
-	result, _ := m.updateNormal(runeMsg("b"))
+	result, cmd := m.updateNormal(runeMsg("b"))
 	rm := result.(model)
 	if rm.bringSt.adapter == nil {
 		t.Fatal("expected bring adapter to be initialized after first bring")
 	}
-	if got := rm.bringSt.tables; len(got) != 1 || got[0] != "t1" {
-		t.Fatalf("expected [t1], got %v", got)
-	}
-	if rm.statusError {
-		t.Errorf("expected success status, got error: %q", rm.statusText)
+	if cmd == nil {
+		t.Fatal("expected a cmd to materialize the result asynchronously")
 	}
 	// connManager started with 1 (nil) connection; Register should add a 2nd.
 	if got := len(rm.connMgr.conns); got != 2 {
 		t.Fatalf("expected 2 connections after first bring, got %d", got)
 	}
 
-	result2, _ := rm.updateNormal(runeMsg("b"))
+	done, ok := cmd().(bringDoneMsg)
+	if !ok {
+		t.Fatalf("expected bringDoneMsg from cmd, got %T", done)
+	}
+	if done.err != nil || done.name != "t1" {
+		t.Fatalf("expected successful bring as t1, got %+v", done)
+	}
+	updated, _ := rm.Update(done)
+	um := updated.(model)
+	if um.statusError {
+		t.Errorf("expected success status, got error: %q", um.statusText)
+	}
+
+	result2, cmd2 := um.updateNormal(runeMsg("b"))
 	rm2 := result2.(model)
-	if got := rm2.bringSt.tables; len(got) != 2 || got[1] != "t2" {
-		t.Fatalf("expected [t1 t2], got %v", got)
+	done2, ok := cmd2().(bringDoneMsg)
+	if !ok {
+		t.Fatalf("expected bringDoneMsg from second cmd, got %T", done2)
+	}
+	if done2.err != nil || done2.name != "t2" {
+		t.Fatalf("expected successful bring as t2, got %+v", done2)
 	}
 	// The bring adapter is reused, not re-registered.
 	if got := len(rm2.connMgr.conns); got != 2 {
 		t.Fatalf("expected connection count to stay at 2 on second bring, got %d", got)
 	}
+}
+
+func TestBring_FailureRollsBackTableSeqForRetry(t *testing.T) {
+	m := newTestModel()
+	m.mode = normalMode
+	m.lastResult = db.QueryResult{
+		Columns: []string{"id"},
+		Rows:    [][]string{{"1"}},
+	}
+
+	result, cmd := m.updateNormal(runeMsg("b"))
+	rm := result.(model)
+	done := cmd().(bringDoneMsg)
+	done.err = fmt.Errorf("simulated failure")
+
+	updated, _ := rm.Update(done)
+	um := updated.(model)
+	if !um.statusError {
+		t.Error("expected error status after a failed bring")
+	}
+	if um.bringSt.tableSeq != 0 {
+		t.Fatalf("expected tableSeq to roll back to 0 after failure, got %d", um.bringSt.tableSeq)
+	}
+
+	// Retrying must generate the same table name, not skip to t2.
+	result2, cmd2 := um.updateNormal(runeMsg("b"))
+	rm2 := result2.(model)
+	done2 := cmd2().(bringDoneMsg)
+	if done2.name != "t1" {
+		t.Fatalf("expected retry to reuse name t1, got %q", done2.name)
+	}
+	_ = rm2
 }
 
 func TestBring_SwitchWithNothingBroughtErrors(t *testing.T) {

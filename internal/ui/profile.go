@@ -54,6 +54,10 @@ func (m model) updateProfile(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setStatus("No active connection to save", true)
 				return m, nil
 			}
+			if m.connMgr.IsActive(bringDSN) {
+				m.setStatus("Cannot save the local Bring & Join database as a profile", true)
+				return m, nil
+			}
 			m.profileSt.naming = true
 			m.profileSt.input.Reset()
 			m.profileSt.input.Focus()

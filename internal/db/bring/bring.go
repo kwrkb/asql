@@ -14,9 +14,15 @@ import (
 	"github.com/kwrkb/asql/internal/db/sqlite"
 )
 
-// batchSize bounds how many rows are inserted per statement to stay well
-// under SQLite's bound-parameter limit (default ~32766 in modernc.org/sqlite).
-const batchSize = 500
+// maxBoundParams stays well under SQLite's bound-parameter limit (default
+// ~32766 in modernc.org/sqlite) to leave headroom for other in-flight
+// statements on the same connection.
+const maxBoundParams = 20_000
+
+// maxBatchRows caps how many rows go into one INSERT statement even for
+// narrow (few-column) results, to keep individual statements reasonably
+// sized.
+const maxBatchRows = 500
 
 // Open creates a fresh in-memory SQLite database for the Bring & Join
 // feature. The returned *sql.DB and *sqlite.Adapter share the same
@@ -31,6 +37,13 @@ func Open() (*sql.DB, *sqlite.Adapter, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	// sqlite.NewAdapter sets a 5-minute connection lifetime, which is safe
+	// for file-based databases (reopening the file preserves data) but
+	// fatal here: this is a private ":memory:" database that exists only
+	// inside this one connection. Closing it to "refresh" the pool would
+	// destroy every brought table, so disable the lifetime for this
+	// connection specifically.
+	conn.SetConnMaxLifetime(0)
 	return conn, adapter, nil
 }
 
@@ -40,19 +53,31 @@ func Open() (*sql.DB, *sqlite.Adapter, error) {
 // typed value survives to materialize from. Display sentinels are reversed at
 // insert time so brought values round-trip close to their original form (see
 // reverseSentinel).
+//
+// CREATE TABLE and all INSERTs run inside a single transaction so a failure
+// partway through (e.g. a bound-parameter overflow) leaves no orphaned empty
+// table behind — the caller can safely retry with the same tableName.
 func Materialize(ctx context.Context, conn *sql.DB, quote func(string) string, tableName string, result db.QueryResult) error {
 	cols := disambiguateColumns(result.Columns)
 
-	if err := createTable(ctx, conn, quote, tableName, cols); err != nil {
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := createTable(ctx, tx, quote, tableName, cols); err != nil {
 		return err
 	}
-	if len(result.Rows) == 0 || len(cols) == 0 {
-		return nil
+	if len(result.Rows) > 0 && len(cols) > 0 {
+		if err := insertRows(ctx, tx, quote, tableName, cols, result.Rows); err != nil {
+			return err
+		}
 	}
-	return insertRows(ctx, conn, quote, tableName, cols, result.Rows)
+	return tx.Commit()
 }
 
-func createTable(ctx context.Context, conn *sql.DB, quote func(string) string, tableName string, cols []string) error {
+func createTable(ctx context.Context, tx *sql.Tx, quote func(string) string, tableName string, cols []string) error {
 	var sb strings.Builder
 	sb.WriteString("CREATE TABLE ")
 	sb.WriteString(quote(tableName))
@@ -66,13 +91,13 @@ func createTable(ctx context.Context, conn *sql.DB, quote func(string) string, t
 	}
 	sb.WriteString(")")
 
-	if _, err := conn.ExecContext(ctx, sb.String()); err != nil {
+	if _, err := tx.ExecContext(ctx, sb.String()); err != nil {
 		return fmt.Errorf("create table %s: %w", tableName, err)
 	}
 	return nil
 }
 
-func insertRows(ctx context.Context, conn *sql.DB, quote func(string) string, tableName string, cols []string, rows [][]string) error {
+func insertRows(ctx context.Context, tx *sql.Tx, quote func(string) string, tableName string, cols []string, rows [][]string) error {
 	quotedCols := make([]string, len(cols))
 	for i, c := range cols {
 		quotedCols[i] = quote(c)
@@ -80,14 +105,14 @@ func insertRows(ctx context.Context, conn *sql.DB, quote func(string) string, ta
 	rowPlaceholder := "(" + strings.TrimSuffix(strings.Repeat("?,", len(cols)), ",") + ")"
 	insertPrefix := fmt.Sprintf("INSERT INTO %s (%s) VALUES ", quote(tableName), strings.Join(quotedCols, ", "))
 
-	tx, err := conn.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
+	// Size each batch so rows*cols stays under maxBoundParams, in addition
+	// to the flat maxBatchRows cap — a wide result (many columns) must use
+	// a smaller batch than a narrow one to avoid exceeding SQLite's bound
+	// parameter limit.
+	batchRows := max(min(maxBatchRows, maxBoundParams/len(cols)), 1)
 
-	for start := 0; start < len(rows); start += batchSize {
-		batch := rows[start:min(start+batchSize, len(rows))]
+	for start := 0; start < len(rows); start += batchRows {
+		batch := rows[start:min(start+batchRows, len(rows))]
 
 		var query strings.Builder
 		query.WriteString(insertPrefix)
@@ -110,7 +135,7 @@ func insertRows(ctx context.Context, conn *sql.DB, quote func(string) string, ta
 		}
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 // reverseSentinel undoes dbutil.StringifyValue's display sentinels so
@@ -135,19 +160,43 @@ func reverseSentinel(s string) any {
 // column in cols is unique, e.g. ["id", "id"] -> ["id", "id_2"]. This is
 // required because JOIN results and queries like "SELECT t1.id, t2.id" can
 // produce duplicate column names, which CREATE TABLE rejects outright.
+//
+// Uniqueness is checked case-insensitively (SQLite treats column names
+// case-insensitively, so "ID" and "id" collide just as much as "id"/"id").
+// Every original column name is reserved up front so a generated suffix
+// (e.g. "id_2") never collides with — and silently steals data from — an
+// original column that already has that exact name.
 func disambiguateColumns(cols []string) []string {
-	used := make(map[string]bool, len(cols))
-	out := make([]string, len(cols))
+	names := make([]string, len(cols))
 	for i, c := range cols {
-		name := c
-		if name == "" {
-			name = "col"
+		if c == "" {
+			names[i] = "col"
+		} else {
+			names[i] = c
 		}
-		base := name
-		for n := 2; used[name]; n++ {
-			name = fmt.Sprintf("%s_%d", base, n)
+	}
+
+	reserved := make(map[string]bool, len(names))
+	for _, n := range names {
+		reserved[strings.ToLower(n)] = true
+	}
+
+	used := make(map[string]bool, len(names))
+	out := make([]string, len(names))
+	for i, base := range names {
+		name := base
+		key := strings.ToLower(name)
+		if used[key] {
+			for n := 2; ; n++ {
+				candidate := fmt.Sprintf("%s_%d", base, n)
+				candidateKey := strings.ToLower(candidate)
+				if !used[candidateKey] && !reserved[candidateKey] {
+					name, key = candidate, candidateKey
+					break
+				}
+			}
 		}
-		used[name] = true
+		used[key] = true
 		out[i] = name
 	}
 	return out

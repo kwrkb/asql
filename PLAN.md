@@ -44,6 +44,7 @@ Bring & Join (Phase 3) はまだ先。比較体験が磨き込まれてから。
 結果:
 - `go build && go vet ./... && go test ./...` 全パス
 - tmux 上での手動smoke test: 2つのSQLite DBから `users`/`scores` をそれぞれ `b` で持ち寄り、`J` で切替、`SELECT t1.name, t2.score FROM t1 JOIN t2 ON t1.id = t2.id` が正しい1行を返すことを確認。Stats overlay (`d`) もJOIN結果に対して動作
+- `/code-review xhigh --fix` で8件の設計バグを検出・修正: INSERT失敗時にテーブルが残り同名リトライが永久失敗する不整合（CREATE TABLE+INSERTを単一トランザクション化）、列数の多い結果でのバインドパラメータ上限超過（バッチサイズを列数考慮の動的算出に変更）、`:memory:` DBが5分アイドルで破棄される（bring接続の `SetConnMaxLifetime` を無効化）、大文字小文字違いの列名衝突見逃しと重複列disambiguateによる別列データの誤上書き（アルゴリズム修正）、`Materialize` の同期実行によるUIフリーズ（`tea.Cmd` 化）、合成DSNのプロファイル保存経由での漏洩（保存時にガード追加）、未使用フィールド削除
 
 過去の「直近完了」は `HISTORY.md` を参照（TUI レイアウト堅牢化 PR #44、コード品質・パフォーマンス改善 PR #39 等）。
 

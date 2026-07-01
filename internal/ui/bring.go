@@ -14,10 +14,24 @@ const (
 	bringDSN      = "asql-bring"
 )
 
+// bringDoneMsg reports the outcome of materializing a result into the local
+// bring database (see bringCurrentResult).
+type bringDoneMsg struct {
+	name      string
+	cols      int
+	rows      int
+	truncated bool
+	err       error
+}
+
 // bringCurrentResult materializes the current query result into a new table
 // in the session's local SQLite "bring" database, creating that database
 // lazily on first use. The active connection and editor are left unchanged
 // so the user can keep exploring the source DB or bring more results.
+//
+// The actual CREATE TABLE + INSERT work runs in a tea.Cmd (like query
+// execution in query.go), not inline in Update, since inserting a large
+// result can take long enough to freeze the TUI if run synchronously.
 func (m model) bringCurrentResult() (tea.Model, tea.Cmd) {
 	if len(m.lastResult.Columns) == 0 {
 		m.setStatus("No query results to bring", true)
@@ -37,22 +51,23 @@ func (m model) bringCurrentResult() (tea.Model, tea.Cmd) {
 
 	m.bringSt.tableSeq++
 	name := fmt.Sprintf("t%d", m.bringSt.tableSeq)
+	m.setStatus(fmt.Sprintf("Bringing as %s...", name), false)
 
-	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
-	defer cancel()
-	if err := bring.Materialize(ctx, m.bringSt.conn, m.bringSt.adapter.QuoteIdentifier, name, m.lastResult); err != nil {
-		m.bringSt.tableSeq--
-		m.setStatus(fmt.Sprintf("Bring failed: %v", err), true)
-		return m, nil
+	conn := m.bringSt.conn
+	quote := m.bringSt.adapter.QuoteIdentifier
+	result := m.lastResult
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
+		defer cancel()
+		err := bring.Materialize(ctx, conn, quote, name, result)
+		return bringDoneMsg{
+			name:      name,
+			cols:      len(result.Columns),
+			rows:      len(result.Rows),
+			truncated: result.Truncated,
+			err:       err,
+		}
 	}
-
-	m.bringSt.tables = append(m.bringSt.tables, name)
-	msg := fmt.Sprintf("Brought as %s (%d cols, %d rows)", name, len(m.lastResult.Columns), len(m.lastResult.Rows))
-	if m.lastResult.Truncated {
-		msg += " [source truncated]"
-	}
-	m.setStatus(msg, false)
-	return m, nil
 }
 
 // switchToBring activates the local Bring & Join SQLite database as the

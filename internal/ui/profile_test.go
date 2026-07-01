@@ -6,6 +6,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/kwrkb/asql/internal/db/sqlite"
 	"github.com/kwrkb/asql/internal/profile"
 )
 
@@ -119,6 +120,27 @@ func TestProfile_AddWithNoConnectionErrors(t *testing.T) {
 	}
 	if result.profileSt.naming {
 		t.Error("naming should not be activated when no connection")
+	}
+}
+
+func TestProfile_AddRejectsBringConnection(t *testing.T) {
+	adapter, err := sqlite.Open(":memory:")
+	if err != nil {
+		t.Fatalf("failed to open sqlite: %v", err)
+	}
+	defer adapter.Close()
+
+	m := newProfileModel(nil)
+	m.connMgr = newConnManager(bringConnName, bringDSN, adapter)
+	m.rawDSN = bringDSN
+
+	updated, _ := m.Update(runeMsg("a"))
+	result := updated.(model)
+	if !result.statusError {
+		t.Error("expected statusError=true when saving the bring connection as a profile")
+	}
+	if result.profileSt.naming {
+		t.Error("naming should not be activated for the bring connection")
 	}
 }
 

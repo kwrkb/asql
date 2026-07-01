@@ -403,6 +403,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, loadTablesCmd(m.connMgr.Active())
+	case bringDoneMsg:
+		if msg.err != nil {
+			m.bringSt.tableSeq--
+			m.setStatus(fmt.Sprintf("Bring failed: %v", msg.err), true)
+			return m, nil
+		}
+		text := fmt.Sprintf("Brought as %s (%d cols, %d rows)", msg.name, msg.cols, msg.rows)
+		if msg.truncated {
+			text += " [source truncated]"
+		}
+		m.setStatus(text, false)
+		return m, nil
 	case tablesLoadedMsg:
 		if msg.err != nil {
 			m.setStatus("Failed to load tables: "+msg.err.Error(), true)
