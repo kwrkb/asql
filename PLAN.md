@@ -25,26 +25,27 @@ Bring & Join (Phase 3) はまだ先。比較体験が磨き込まれてから。
 - コード品質改善 (PR #39): バグ修正・重複解消・パフォーマンス防御・設計改善
 - セキュリティ・安定性: Go toolchain pin to 1.26.2 (PR #42)、狭ターミナル応答性 (PR #43)、TUI レイアウト・モード遷移の堅牢化 (PR #44)
 - 最新リリース: v0.10.0
-- **次: Phase 3 (Bring & Join)**
+- Phase 3 (Bring & Join) 着手: 3-1/3-2 完了 (`b`/`J` キー)、3-3 は要件未確定のため継続検討
+- **次: Phase 3 残タスク (3-3) または Phase 2 横展開**
 
-## 直近完了: TUI レイアウト・モード遷移の堅牢化 (PR #44)
+## 直近完了: Phase 3 着手 — Bring & Join (3-1/3-2)
 
 目的:
-- Codex レビューで検出した狭ターミナルでのレイアウト崩れとモード遷移時の状態残留を解消する
+- VISION.md の Bring Data Philosophy を実現する第一歩。異種DBから取得したクエリ結果をローカルSQLiteに持ち寄り、JOINで観察できるようにする
 
 主要ステップ:
-- [x] `width - N` / `height - N` のオフセット計算に `<= 0` ガードと `max()` クランプを徹底
-- [x] AI/Snippet/Profile/HistorySearch の Blur を `blurActiveInput()` ヘルパーに集約
-- [x] モーダル overlay の `textinput.Width` を `resize()` で `calcModalWidth` から動的同期（`View()` の純粋性を回復）
-- [x] `renderCompareView` 等が View() 経路で行っていた状態変異を `Update`/`resize` に移動
-- [x] 新たな運用ルールを LESSONS.md に追記（View 純粋化 / 幅ガード / モーダル入力幅同期 / モード別 Blur ヘルパー）
+- [x] `internal/db/bring/` パッケージ新規作成。`Materialize()` が結果セットを全カラム TEXT 型で `CREATE TABLE` し、パラメータ化バッチINSERTで投入
+  > `QueryResult.Rows` はスキャン時点で `[][]string` に文字列化済み（型情報喪失）のため、軽量実装として全TEXT保存・文字列一致JOINを採用。`"NULL"`/`""` の表示センチネルは INSERT 時に実NULL/空文字へ逆変換するが、本物の文字列値 `"NULL"` との曖昧さは既知の制約として受容
+- [x] `internal/db/sqlite/adapter.go` に `NewAdapter(conn *sql.DB)` を追加し、bring パッケージが INSERT 用とJOIN実行用で同一コネクションプールを共有できるようにリファクタ
+- [x] `internal/ui/connmgr.go` に `Register()` を追加。`opener.Open` を経由せず bring 用ローカルDBを `connManager` に直接登録（固定の合成DSN `asql-bring` を使用し、`Switch` 経由の意図しない二重DB生成を回避）
+- [x] `internal/ui/bring.go` 新規作成。`b` キーでアクティブな結果をローカルテーブル (`t1`, `t2`, ...) として持ち寄り、`J` キーでローカルbring DBへ接続切替
+  > 新しい `mode` やオーバーレイは追加せず、既存のクエリ実行パイプライン（INSERTモード→`executeQueryCmd`→`applyResult`）をそのまま再利用。Stats/Export/Sort/Compare がJOIN結果に対しても無改修で動作する設計判断
 
 結果:
-- 17ファイル変更、+120/-48行
-- 全パッケージのテスト・`go vet` パス
-- 横 ~30 列、縦 ~10 行の狭画面で全モーダル（AI/Snippet/Profile/Export/History）が破綻せず描画可能
+- `go build && go vet ./... && go test ./...` 全パス
+- tmux 上での手動smoke test: 2つのSQLite DBから `users`/`scores` をそれぞれ `b` で持ち寄り、`J` で切替、`SELECT t1.name, t2.score FROM t1 JOIN t2 ON t1.id = t2.id` が正しい1行を返すことを確認。Stats overlay (`d`) もJOIN結果に対して動作
 
-過去の「直近完了」は `HISTORY.md` を参照（コード品質・パフォーマンス改善 PR #39 等）。
+過去の「直近完了」は `HISTORY.md` を参照（TUI レイアウト堅牢化 PR #44、コード品質・パフォーマンス改善 PR #39 等）。
 
 ## Phase 2: Multi-DB Observation — 比較の完成（完了）
 
@@ -66,11 +67,13 @@ Bring & Join (Phase 3) はまだ先。比較体験が磨き込まれてから。
 - [x] 4-4. 件数推移の簡易表示 (PR #38: Stats overlay でカーソル行にスパークライン表示)
 - [x] 4-5. 簡易ヒストグラム表示 (PR #40: Stats overlay で数値列に Unicode ブロック文字のヒストグラム表示)
 
-## Phase 3: Bring & Join（後回し）
+## Phase 3: Bring & Join（3-1/3-2 完了、3-3 検討中）
 
 目的：**「Bring Data Philosophy」**の体現。異種DBを直接統合せず、ローカルに持ち寄って気づく。
-前提：Phase 2 の比較体験が十分に磨き込まれてから。
 
-- [ ] 3-1. クエリ結果をローカル一時テーブルに保存 (SQLite等)
-- [ ] 3-2. ローカルでのJOIN実行
+- [x] 3-1. クエリ結果をローカル一時テーブルに保存 (SQLite)
+  > `b` キー。`internal/db/bring/` パッケージ、`internal/ui/bring.go`
+- [x] 3-2. ローカルでのJOIN実行
+  > `J` キーでローカルbring DBへ切替後、既存のクエリ実行パイプラインでJOINを実行
 - [ ] 3-3. 日次などの粒度統一サポート
+  > 要件が曖昧なため先送り。着手前に「どのカラムをどう丸めるか」のUXを再検討する

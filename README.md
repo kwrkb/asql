@@ -103,6 +103,8 @@ asql --version
 | `Ctrl+S` | Save current query as snippet |
 | `P` | Open connection profiles |
 | `Ctrl+K` | Open AI assistant |
+| `b` | Bring current result into the local SQLite database (Bring & Join) |
+| `J` | Switch to the local Bring & Join database |
 
 ### INSERT mode
 

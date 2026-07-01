@@ -107,6 +107,8 @@ asql --version
 | `x` | PROFILE | 接続を切替して現在クエリを再実行 |
 | `e` | NORMAL | エクスポートメニューを開く |
 | `Ctrl+K` | NORMAL | AI アシスタントを開く |
+| `b` | NORMAL | 現在の結果をローカルSQLite（Bring & Join）に持ち寄る |
+| `J` | NORMAL | ローカルの Bring & Join DB に接続を切替 |
 | `Ctrl+C` | *全モード* | 実行中のクエリ/AI をキャンセル、または終了 |
 | `q` | NORMAL | 終了 |
 

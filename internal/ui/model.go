@@ -149,6 +149,7 @@ type model struct {
 	completion completionState
 	sidebar    sidebarState
 	statsSt    statsState
+	bringSt    bringState
 }
 
 // CloseAll closes all database connections managed by this model.

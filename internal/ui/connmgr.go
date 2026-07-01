@@ -92,6 +92,20 @@ func (cm *connManager) Switch(name, dsn string) error {
 	return nil
 }
 
+// Register adds an already-open adapter as a new connection without making
+// it active and without going through opener.Open. Used for adapters created
+// internally (e.g. the Bring & Join local SQLite database), which have no
+// real DSN the opener could re-derive a connection from.
+func (cm *connManager) Register(name, dsn string, adapter db.DBAdapter) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.conns = append(cm.conns, connection{
+		name:    name,
+		dsn:     dsn,
+		adapter: adapter,
+	})
+}
+
 // IsConnected checks if a DSN is already connected.
 func (cm *connManager) IsConnected(dsn string) bool {
 	cm.mu.RLock()

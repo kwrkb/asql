@@ -696,3 +696,23 @@ if err != nil {
 ### `resolve-pr-comments` 後はマージ可否を `mergeStateStatus` で確認してから `--auto` でマージ予約する
 - PR #44 のレビュー対応コミットを push 直後、`mergeable: MERGEABLE / mergeStateStatus: UNSTABLE`（CI 進行中）の状態だった。手動で merge を待つより `gh pr merge --squash --auto --delete-branch` で予約するほうが、CI 完了即マージ＋ローカル/リモート両ブランチ削除まで一発で済む
 - **ルール**: レビュー対応 push 直後にマージしたい場合は (1) `gh pr view <N> --json mergeable,mergeStateStatus` で `MERGEABLE` を確認、(2) CI 進行中なら `gh pr merge <N> --squash --auto --delete-branch` で auto-merge 予約、(3) 完了後 `git fetch --prune` で remote-tracking 参照を整理する
+
+---
+
+## Phase 3 着手: Bring & Join (2026-07-01)
+
+### スキャン時点で型情報を失う設計では、持ち寄り先DBは全TEXT・文字列一致JOINを選ぶ
+- `dbutil.ScanRowsLimit`/`StringifyValue` が scan の時点で全セルを `[][]string` へ変換しており（`nil→"NULL"`、空文字列→`""` の表示センチネル等）、`QueryResult` 到達後にはどこにもタイプ付きの値が残っていない。元DBへの再クエリやColumnTypesからのSQLite型マッピングは、クロスDB型名の差異吸収とNULL曖昧性解消のどちらも完全には果たせない割に実装コストが大きい
+- **ルール**: 表示用に文字列化済みのデータを別DBへ持ち寄る機能を作るときは、まず「型を厳密に復元する」を最初の選択肢にしない。全カラムTEXT・文字列比較という軽量実装を基本案として提示し、数値比較やNULL判定の曖昧さを既知の制約として明示した上でユーザー承認を取ってから実装する
+
+### 新機能のために新しい Bubble Tea モードを安易に追加しない
+- Bring & Join の実装で「ローカル一時DBへの保存」と「JOIN実行」のために専用モード・専用テキストエリアを作る案もあったが、ローカルSQLite DBを `connManager` の「もう一つの接続」として登録し、既存のクエリ実行パイプライン（INSERTモード→`executeQueryCmd`→`applyResult`）をそのまま使う設計にしたことで、Stats/Export/Sort/Compare が無改修でJOIN結果にも効くようになった
+- **ルール**: 新機能が「既存のクエリ実行・表示パイプラインに乗せられるデータ」を生成するだけなら、新しい `mode`/オーバーレイを足す前に「既存の接続/実行経路に統合できないか」を先に検討する。新モード追加のコスト（`states.go`/`model.go`/`Update`/`View`/`blurActiveInput`/`resize` 全箇所への波及）は、既存パイプラインへの統合コストと比較してから選ぶ
+
+### `connManager.Switch` に未登録のダミーDSNを渡すと、内部生成DBが二重に開かれてデータが消える
+- `Switch(name, dsn)` は既知の `dsn` が `conns` に無い場合 `opener.Open(dsn)` を呼ぶ。`opener.Open` は `DetectType` で mysql/postgres と判定できない文字列をすべて sqlite 扱いするため、内部生成した一時SQLite DB（`:memory:`等、正規のDSNを持たない）を識別する目的でダミーDSN文字列を渡して `Switch` を呼ぶと、既存の接続と一致せず新規に空の `:memory:` DBが開かれてしまい、それまで投入したデータが消失する
+- **ルール**: アプリ内部で生成した `db.DBAdapter`（`opener.Open` を経由しない接続）を `connManager` に登録するときは、`Switch` 経由ではなく専用の `Register(name, dsn, adapter)` のような「既存 `conns` に直接追加するだけのメソッド」を使う。以降の再アクティブ化は固定の合成DSN定数で `Switch` を呼べば、既存エントリにマッチして再オープンされない
+
+### sqlite3 CLI が無い環境でのフィクスチャDB作成とTUI手動smoke testの手順
+- WSL環境に `sqlite3` CLI が入っておらず、TUI機能の手動検証用フィクスチャDBを作る手段に詰まった
+- **ルール**: (1) フィクスチャDB作成は `database/sql` + `_ "modernc.org/sqlite"` を使った使い捨ての `go run` スクリプトで `CREATE TABLE`/`INSERT` を直接実行する（プロジェクトの go.mod に既にドライバ依存があるので追加インストール不要）。(2) TUIの対話操作は `tmux new-session -d` でバックグラウンド起動し、`tmux send-keys` でキー入力（`C-l`/`C-j`等のctrlキーや文字列）を送り、`tmux capture-pane -p` で画面内容を読み取って検証する。プロファイル等で複数DB接続が必要な場合は `XDG_CONFIG_HOME` を一時ディレクトリに向けて `profiles.yaml` を事前投入すると、本番の `~/.config/asql/` を汚さずに済む

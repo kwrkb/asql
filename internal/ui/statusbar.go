@@ -21,9 +21,9 @@ func (m model) statusHints() string {
 		if m.pinned != nil {
 			return "c:close Tab:switch h/l:col s:sort j/k:row i:insert q:quit"
 		} else if m.aiSt.enabled {
-			return "c:compare d:stats h/l:col s:sort R:re-exec t:tables i:insert e:export S:snippets P:profiles C-k:AI q:quit"
+			return "c:compare d:stats h/l:col s:sort R:re-exec t:tables i:insert e:export S:snippets P:profiles b:bring J:join-db C-k:AI q:quit"
 		}
-		return "c:compare d:stats h/l:col s:sort R:re-exec t:tables i:insert e:export S:snippets P:profiles q:quit"
+		return "c:compare d:stats h/l:col s:sort R:re-exec t:tables i:insert e:export S:snippets P:profiles b:bring J:join-db q:quit"
 	case insertMode:
 		if m.completion.active {
 			return "Tab/C-n:next C-p:prev Enter:accept Esc:cancel"
