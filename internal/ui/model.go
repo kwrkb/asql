@@ -405,7 +405,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, loadTablesCmd(m.connMgr.Active())
 	case bringDoneMsg:
 		if msg.err != nil {
-			m.bringSt.tableSeq--
+			// Table names are never reused, even on failure: tableSeq is a
+			// monotonic counter and a table is only committed on success
+			// (see bring.Materialize), so a failed name is simply skipped
+			// rather than recycled. Rolling it back here would race with
+			// any bring that started after this one and already claimed a
+			// later name — decrementing could then make the next attempt
+			// collide with that already-used name and fail forever.
 			m.setStatus(fmt.Sprintf("Bring failed: %v", msg.err), true)
 			return m, nil
 		}

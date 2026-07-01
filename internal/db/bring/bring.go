@@ -59,6 +59,9 @@ func Open() (*sql.DB, *sqlite.Adapter, error) {
 // table behind — the caller can safely retry with the same tableName.
 func Materialize(ctx context.Context, conn *sql.DB, quote func(string) string, tableName string, result db.QueryResult) error {
 	cols := disambiguateColumns(result.Columns)
+	if len(cols) == 0 {
+		return fmt.Errorf("cannot materialize a result with no columns")
+	}
 
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
@@ -69,7 +72,7 @@ func Materialize(ctx context.Context, conn *sql.DB, quote func(string) string, t
 	if err := createTable(ctx, tx, quote, tableName, cols); err != nil {
 		return err
 	}
-	if len(result.Rows) > 0 && len(cols) > 0 {
+	if len(result.Rows) > 0 {
 		if err := insertRows(ctx, tx, quote, tableName, cols, result.Rows); err != nil {
 			return err
 		}

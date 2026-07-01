@@ -199,6 +199,19 @@ func TestMaterialize_EmptyResult(t *testing.T) {
 	}
 }
 
+func TestMaterialize_NoColumnsErrors(t *testing.T) {
+	conn, adapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+
+	result := db.QueryResult{Columns: nil, Rows: nil}
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err == nil {
+		t.Fatal("expected an error for a result with no columns, not a CREATE TABLE with an empty column list")
+	}
+}
+
 func TestMaterialize_TruncatedResult(t *testing.T) {
 	conn, adapter, err := Open()
 	if err != nil {

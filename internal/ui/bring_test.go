@@ -74,7 +74,13 @@ func TestBring_TwiceProducesSequentialTables(t *testing.T) {
 	}
 }
 
-func TestBring_FailureRollsBackTableSeqForRetry(t *testing.T) {
+// TestBring_FailureDoesNotReuseTableName guards against a race introduced by
+// making bringCurrentResult asynchronous: rolling tableSeq back on failure
+// would let a later, already-succeeded bring's name collide with the next
+// attempt (e.g. t1 fails after t2 already succeeded -> the next bring must
+// not retry "t2"). Table names are only ever skipped on failure, never
+// reused, so tableSeq must stay monotonic regardless of success/failure.
+func TestBring_FailureDoesNotReuseTableName(t *testing.T) {
 	m := newTestModel()
 	m.mode = normalMode
 	m.lastResult = db.QueryResult{
@@ -92,16 +98,16 @@ func TestBring_FailureRollsBackTableSeqForRetry(t *testing.T) {
 	if !um.statusError {
 		t.Error("expected error status after a failed bring")
 	}
-	if um.bringSt.tableSeq != 0 {
-		t.Fatalf("expected tableSeq to roll back to 0 after failure, got %d", um.bringSt.tableSeq)
+	if um.bringSt.tableSeq != 1 {
+		t.Fatalf("expected tableSeq to stay at 1 (name t1 skipped, not reused) after failure, got %d", um.bringSt.tableSeq)
 	}
 
-	// Retrying must generate the same table name, not skip to t2.
+	// Retrying must generate a fresh name, never reusing the failed one.
 	result2, cmd2 := um.updateNormal(runeMsg("b"))
 	rm2 := result2.(model)
 	done2 := cmd2().(bringDoneMsg)
-	if done2.name != "t1" {
-		t.Fatalf("expected retry to reuse name t1, got %q", done2.name)
+	if done2.name != "t2" {
+		t.Fatalf("expected retry to use a fresh name t2, got %q", done2.name)
 	}
 	_ = rm2
 }
@@ -158,4 +164,47 @@ func TestBring_SwitchActivatesLocalConnection(t *testing.T) {
 	if um.connMgr.Active() != rm.bringSt.adapter {
 		t.Error("expected active adapter to be the bring adapter")
 	}
+}
+
+// TestBring_OutOfOrderFailureDoesNotCollideWithLaterSuccess simulates two
+// bring operations in flight at once (possible now that bringCurrentResult
+// runs asynchronously via tea.Cmd) where the first (t1) fails only after the
+// second (t2) has already completed successfully. The next bring must not
+// retry the already-used name t2.
+func TestBring_OutOfOrderFailureDoesNotCollideWithLaterSuccess(t *testing.T) {
+	m := newTestModel()
+	m.mode = normalMode
+	m.lastResult = db.QueryResult{
+		Columns: []string{"id"},
+		Rows:    [][]string{{"1"}},
+	}
+
+	// Press 'b' twice before either completes: reserves t1 then t2.
+	result1, cmd1 := m.updateNormal(runeMsg("b"))
+	rm1 := result1.(model)
+	result2, cmd2 := rm1.updateNormal(runeMsg("b"))
+	rm2 := result2.(model)
+
+	// t2's materialize completes first (success).
+	doneT2 := cmd2().(bringDoneMsg)
+	updatedAfterT2, _ := rm2.Update(doneT2)
+	afterT2 := updatedAfterT2.(model)
+
+	// t1's materialize completes afterward (failure).
+	doneT1 := cmd1().(bringDoneMsg)
+	doneT1.err = fmt.Errorf("simulated failure")
+	updatedAfterT1, _ := afterT2.Update(doneT1)
+	afterT1 := updatedAfterT1.(model)
+
+	if afterT1.bringSt.tableSeq != 2 {
+		t.Fatalf("expected tableSeq to remain at 2 after t1's late failure, got %d", afterT1.bringSt.tableSeq)
+	}
+
+	result3, cmd3 := afterT1.updateNormal(runeMsg("b"))
+	rm3 := result3.(model)
+	done3 := cmd3().(bringDoneMsg)
+	if done3.name != "t3" {
+		t.Fatalf("expected the next bring to use a fresh name t3, got %q", done3.name)
+	}
+	_ = rm3
 }
