@@ -11,7 +11,13 @@ import (
 
 const (
 	bringConnName = "local"
-	bringDSN      = "asql-bring"
+	// bringDSN is a sentinel DSN for the local Bring & Join database, not a
+	// real connection string. It is prefixed with a NUL byte, which no shell
+	// can pass through argv and no real DSN can contain, so a user-supplied
+	// DSN (CLI arg or saved profile) can never collide with it — see
+	// IsActive/Switch usage below and the display-label handling in
+	// model.go's connSwitchedMsg case.
+	bringDSN = "\x00asql-bring"
 )
 
 // bringDoneMsg reports the outcome of materializing a result into the local

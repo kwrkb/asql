@@ -387,8 +387,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.querySeq++ // invalidate stale query results
 		m.connGen++  // invalidate stale column fetches
-		// Update dbPath to reflect new connection
-		m.dbPath = db.MaskDSN(m.connMgr.ActiveDSN())
+		// Update dbPath to reflect new connection. bringDSN is a NUL-prefixed
+		// sentinel, not a displayable DSN, so show a human-readable label
+		// instead of letting the raw control byte reach the status bar.
+		if m.connMgr.ActiveDSN() == bringDSN {
+			m.dbPath = "(local bring database)"
+		} else {
+			m.dbPath = db.MaskDSN(m.connMgr.ActiveDSN())
+		}
 		m.rawDSN = m.connMgr.ActiveDSN()
 		m.completion.colCache = nil
 		m.completion.colOrder = nil
