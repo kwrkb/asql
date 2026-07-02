@@ -141,6 +141,10 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.snippetSt.naming = false
 			m.textarea.Blur()
 			m.setStatus("Snippet mode", false)
+		case "b":
+			return m.bringCurrentResult()
+		case "J":
+			return m.switchToBring()
 		}
 	case tea.KeyTab:
 		if m.pinned != nil {

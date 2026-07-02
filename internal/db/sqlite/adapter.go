@@ -22,7 +22,18 @@ func Open(path string) (*Adapter, error) {
 	if err != nil {
 		return nil, err
 	}
+	return newAdapter(conn)
+}
 
+// NewAdapter wraps an already-open *sql.DB as a sqlite Adapter. Used when the
+// caller needs to retain the *sql.DB itself (e.g. to share the pool with code
+// that writes to the database outside of Adapter.Query, such as the Bring &
+// Join local database).
+func NewAdapter(conn *sql.DB) (*Adapter, error) {
+	return newAdapter(conn)
+}
+
+func newAdapter(conn *sql.DB) (*Adapter, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := conn.PingContext(ctx); err != nil {

@@ -1,10 +1,13 @@
 package ui
 
 import (
+	"database/sql"
+
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 
 	"github.com/kwrkb/asql/internal/ai"
+	"github.com/kwrkb/asql/internal/db"
 	"github.com/kwrkb/asql/internal/profile"
 	"github.com/kwrkb/asql/internal/snippet"
 )
@@ -106,4 +109,13 @@ type statsState struct {
 	stats   []columnStat
 	loading bool   // true while stats are being computed asynchronously
 	seq     uint64 // incremented on each stats request to discard stale results
+}
+
+// bringState holds state for the Bring & Join local SQLite database (no
+// dedicated mode: brought tables are queried through the normal INSERT-mode
+// query flow once active, see bring.go).
+type bringState struct {
+	conn     *sql.DB      // shared with adapter; used by bring.Materialize
+	adapter  db.DBAdapter // registered with connManager, which owns Close
+	tableSeq int          // next auto-generated table number (t1, t2, ...)
 }

@@ -96,3 +96,38 @@ func TestConnManager(t *testing.T) {
 		}
 	})
 }
+
+func TestConnManagerRegister(t *testing.T) {
+	base, err := sqlite.Open(":memory:")
+	if err != nil {
+		t.Fatalf("failed to open sqlite: %v", err)
+	}
+	defer base.Close()
+	cm := newConnManager("test", ":memory:", base)
+
+	bring, err := sqlite.Open(":memory:")
+	if err != nil {
+		t.Fatalf("failed to open bring sqlite: %v", err)
+	}
+	defer bring.Close()
+
+	cm.Register("local", "asql-bring", bring)
+	if len(cm.conns) != 2 {
+		t.Fatalf("expected 2 connections after Register, got %d", len(cm.conns))
+	}
+	if cm.Active() != base {
+		t.Error("Register must not change the active connection")
+	}
+
+	t.Run("Switch to registered DSN reuses it without reopening", func(t *testing.T) {
+		if err := cm.Switch("local", "asql-bring"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(cm.conns) != 2 {
+			t.Errorf("expected Switch to reuse the registered connection, got %d conns", len(cm.conns))
+		}
+		if cm.Active() != bring {
+			t.Error("expected the registered bring adapter to become active")
+		}
+	})
+}
