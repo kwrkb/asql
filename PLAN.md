@@ -26,6 +26,7 @@ Bring & Join (Phase 3) はまだ先。比較体験が磨き込まれてから。
 - セキュリティ・安定性: Go toolchain pin to 1.26.2 (PR #42)、狭ターミナル応答性 (PR #43)、TUI レイアウト・モード遷移の堅牢化 (PR #44)
 - 最新リリース: v0.10.0
 - Phase 3 (Bring & Join) 着手: 3-1/3-2 完了 (`b`/`J` キー)、3-3 は要件未確定のため継続検討
+- 定期メンテナンス: 直接依存 (`pgx v5.10.0`, `mysql v1.10.0`, `modernc.org/sqlite v1.53.0`) 更新、`govulncheck` 到達脆弱性 (GO-2026-5004) 解消
 - **次: Phase 3 残タスク (3-3) または Phase 2 横展開**
 
 ## 直近完了: Phase 3 着手 — Bring & Join (3-1/3-2)
