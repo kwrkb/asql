@@ -29,3 +29,8 @@ e2e/recordings/
 .gemini/
 status/
 !status/review.md
+
+# Secrets
+.env
+.env.*
+!.env.example
