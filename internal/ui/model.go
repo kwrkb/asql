@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -17,8 +16,10 @@ import (
 
 	"github.com/kwrkb/asql/internal/ai"
 	"github.com/kwrkb/asql/internal/db"
+	"github.com/kwrkb/asql/internal/db/bring"
 	"github.com/kwrkb/asql/internal/profile"
 	"github.com/kwrkb/asql/internal/snippet"
+	"github.com/kwrkb/asql/internal/ui/table"
 )
 
 type mode string
@@ -56,7 +57,14 @@ const (
 var typeStyle = lipgloss.NewStyle().Foreground(mutedTextColor)
 
 type queryExecutedMsg struct {
-	seq    uint64
+	seq uint64
+	// query and conn identify where result came from. They travel with the
+	// message so the accepted result and its origin stay together. Neither can
+	// be recovered later: the tail of queryHistory is the last query
+	// *attempted*, and the active connection can be switched without touching
+	// lastResult, so both would name something other than the rows on screen.
+	query  string
+	conn   string
 	result db.QueryResult
 	err    error
 }
@@ -115,6 +123,8 @@ type model struct {
 	queryCancel  context.CancelFunc
 	querySeq     uint64
 	lastResult   db.QueryResult
+	lastQuery    string   // query that produced lastResult (see queryExecutedMsg)
+	lastConn     string   // connection lastResult came from (see queryExecutedMsg)
 	queryHistory []string // executed queries (newest at end)
 	historyIdx   int      // -1 = new input, 0..n = history position
 	historyDraft string   // input saved before navigating history
@@ -391,7 +401,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// sentinel, not a displayable DSN, so show a human-readable label
 		// instead of letting the raw control byte reach the status bar.
 		if m.connMgr.ActiveDSN() == bringDSN {
-			m.dbPath = "(local bring database)"
+			m.dbPath = m.bringLabel()
 		} else {
 			m.dbPath = db.MaskDSN(m.connMgr.ActiveDSN())
 		}
@@ -399,7 +409,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.completion.colCache = nil
 		m.completion.colOrder = nil
 		m.sidebar.tables = nil
-		m.setStatus(fmt.Sprintf("Connected to %s", sanitize(m.connMgr.ActiveName())), false)
+		if m.connMgr.ActiveDSN() == bringDSN {
+			// Name the provenance table on arrival: "which of these tables is
+			// which" is the question this connection provokes, and this is the
+			// moment it comes up.
+			m.setStatus(fmt.Sprintf("Connected to %s — sources in %s",
+				sanitize(m.connMgr.ActiveName()), bring.ProvenanceTable), false)
+		} else {
+			m.setStatus(fmt.Sprintf("Connected to %s", sanitize(m.connMgr.ActiveName())), false)
+		}
 		m.mode = normalMode
 		m.textarea.Blur()
 		if msg.reExecute {
@@ -421,7 +439,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setStatus(fmt.Sprintf("Bring failed: %v", msg.err), true)
 			return m, nil
 		}
+		m.bringSt.brought++
+		// The label is otherwise only recomputed on a connection switch, and J
+		// refuses to switch when the bring DB is already active. Without this,
+		// bringing a JOIN result back into the bring DB leaves the status bar
+		// claiming the old table count until the user leaves and returns.
+		if m.connMgr.ActiveDSN() == bringDSN {
+			m.dbPath = m.bringLabel()
+		}
 		text := fmt.Sprintf("Brought as %s (%d cols, %d rows)", msg.name, msg.cols, msg.rows)
+		if msg.source != "" {
+			text = fmt.Sprintf("Brought %s as %s (%d cols, %d rows)",
+				sanitize(msg.source), msg.name, msg.cols, msg.rows)
+		}
 		if msg.truncated {
 			text += " [source truncated]"
 		}
@@ -492,6 +522,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.lastResult = msg.result
+		m.lastQuery = msg.query
+		m.lastConn = msg.conn
 		m.sortDir = sortNone
 		m.sortCol = 0
 		m.colCursor = 0

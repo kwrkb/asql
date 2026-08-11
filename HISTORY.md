@@ -2,6 +2,25 @@
 
 これまでに完了した主要な機能・マイルストーンの記録。
 
+## Phase 3: Bring & Join — 型情報保持と provenance
+**実装**: `QueryResult` に `Kinds [][]db.Kind`（NULL/Empty/Int/Float/Blob/Text）を追加し、スキャン時点でセルごとの意味を記録。`bring.Materialize` はこれを使って (a) 列ごとに SQLite affinity を宣言（INTEGER/REAL/TEXT/BLOB、混在列は型無し宣言＝BLOB affinity で各値の storage class を保持）、(b) 各セルを int64/float64/[]byte/string/NULL として bind する。数値ソート・JOINが文字列比較にならず、SQL NULL と文字列 `"NULL"`、空文字と `""` が区別可能になった。`Rows [][]string` は不変なので描画・ソート・エクスポート・比較の各経路は無改修、NULL/空文字の表示仕様も維持。`Kinds` が nil の `QueryResult` は従来の全TEXT挙動にフォールバックする。
+併せて `bring.Source`（持ち寄り順・ローカル表名・取得元接続・元クエリ）を導入し、bring DB 内の `_asql_bring` テーブルへデータと同一トランザクションで記録。行数・列数・truncated フラグも保持する。専用モードやオーバーレイは追加せず、既存のクエリ経路で `SELECT * FROM _asql_bring` として観察できる。ステータスバーは `(local bring: N tables)` を表示。
+Stats overlay の NULL 率も表示文字列一致ではなく kind で判定するようになり、値が文字列 `"NULL"` の列でも正確になった。
+**PR #50 レビュー対応**: (1) 整数と浮動小数が混在する列の `REAL` 宣言を撤回。SQLite の REAL affinity は bind した整数を浮動小数へ強制変換するため `9007199254740993` が `9007199254740992` に壊れていた。型無し宣言なら各値の storage class が保たれ、`ORDER BY` の数値順と `integer 3 = real 3.0` の JOIN も成立する。(2) `[]byte` の UTF-8 妥当性ではなく driver 報告の列型でバイナリ判定するよう変更。中身がたまたま UTF-8 妥当な BLOB 列が TEXT として持ち寄られ `X'"'"'616263'"'"'` との比較が外れていた。go-sql-driver は charset で `TEXT`/`BLOB` を分けるため MySQL の文字列データには影響しない。(3) provenance のクエリを `queryHistory` 末尾ではなく `queryExecutedMsg.query` 経由で受理された結果に紐付け（履歴は実行前に追記される「試行の記録」のため、後続クエリの失敗時に誤ったクエリが記録されていた）。(4) bring DB に接続中の持ち寄りでステータスバーの件数が更新されない問題を修正。
+
+---
+
+## bubbles/table の ANSI 幅バグ修正（vendor + 2行パッチ）
+**実装**: `bubbles/table` v1.0.0 は `runewidth.Truncate` でセル幅を測るが、`runewidth.StringWidth` は ANSI エスケープのバイトを表示幅として数える。列幅が約27セル未満だとスタイル付き文字列がエスケープの途中で切断され、端末が残りを飲み込むため、**カラム型注釈が不可視**になり、**比較モードの差分セルは内容ごと消える**状態だった（幅の広い列では正常に描画されるため長期間気づかれなかった）。
+上流の修正 charmbracelet/bubbles#884（`ansi.Truncate` への2行変更）はマージ先が v2 系のみで、v1 向け同一 PR #883 は未マージのまま閉鎖。bubbles v2 移行は bubbletea v2 / lipgloss v2 を巻き込むため見合わないと判断し、`internal/ui/table/` に v1.0.0 の `table.go`（450行・MIT、LICENSE 同梱）を vendor して上流と同じ2行だけを適用した。`x/ansi` は既に間接依存のため新規依存はゼロ。上流のテストスイートは vendor せず、パッチ対象の挙動だけを覆う `table_test.go` を自前で用意（未修正コードで落ちることを確認済み）。型注釈・選択カラムの reverse 強調・差分セルのハイライトがすべて色付きのまま復活。
+
+---
+
+## ドキュメント同期
+**実装**: README.md の AI 設定 Examples がフラット形式（`ai_endpoint:` をトップレベル）で書かれており、`internal/config` が期待するネスト形式（`ai:` 配下）と食い違っていた問題を修正。両 README に Stats overlay（`d` キー、NULL率・distinct・min/max・sparkline・histogram・10k行スキップ）と Bring & Join（`b`/`J` の手順、型保持、`_asql_bring` の列定義）の節を追加。キーバインド表に欠けていた `d` と STATS モードを追加。README.ja.md に AI の環境変数オーバーライド表を追加。
+
+---
+
 ## Phase 4: Histogram (4-5)
 **PR**: #40
 **実装**: Stats overlay (`d` キー) で数値列に Unicode ブロック文字のヒストグラム (▁▂▅█▇▃▁) を表示。等幅 binning（最大 20 bin）、`renderSparklineBars` を再利用。BIGINT UNSIGNED ラベルのオーバーフロー、混合型列（>50% パース失敗で抑制）、NaN/Inf 除外、10,000 行上限のガードを実装。`detectNumericColumn` は word-boundary マッチで INTERVAL/POINT 等の誤検出を回避。

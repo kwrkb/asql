@@ -13,6 +13,10 @@ import (
 func computeColumnStats(result db.QueryResult) []columnStat {
 	stats := make([]columnStat, len(result.Columns))
 	rowCount := len(result.Rows)
+	// When the result carries kinds, NULL is known exactly. Otherwise fall back
+	// to matching the display string, which also counts a value that is
+	// literally the text "NULL".
+	hasKinds := result.HasKinds()
 
 	for i, col := range result.Columns {
 		s := columnStat{Name: col}
@@ -23,12 +27,16 @@ func computeColumnStats(result db.QueryResult) []columnStat {
 		distinct := make(map[string]struct{})
 		firstNonNull := true
 
-		for _, row := range result.Rows {
+		for rowIdx, row := range result.Rows {
 			if i >= len(row) {
 				continue
 			}
 			val := row[i]
-			if val == "NULL" {
+			isNull := val == db.NullSentinel
+			if hasKinds {
+				isNull = result.KindAt(rowIdx, i) == db.KindNull
+			}
+			if isNull {
 				s.NullCnt++
 				continue
 			}
@@ -38,10 +46,13 @@ func computeColumnStats(result db.QueryResult) []columnStat {
 				s.Max = val
 				firstNonNull = false
 			} else {
-				if smartCompare(val, s.Min) < 0 {
+				// compareValues, not smartCompare: NULLs are already skipped
+				// above, so anything reaching here that reads "NULL" is text
+				// and must be ordered as text.
+				if compareValues(val, s.Min) < 0 {
 					s.Min = val
 				}
-				if smartCompare(val, s.Max) > 0 {
+				if compareValues(val, s.Max) > 0 {
 					s.Max = val
 				}
 			}

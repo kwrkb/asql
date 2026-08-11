@@ -4,6 +4,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/kwrkb/asql/internal/db"
 )
 
 type sortOrder int
@@ -14,21 +16,13 @@ const (
 	sortDesc
 )
 
-// smartCompare compares two cell values.
-// NULL is always sorted last. Numeric values are compared numerically.
-func smartCompare(a, b string) int {
-	aNULL := a == "NULL"
-	bNULL := b == "NULL"
-	if aNULL && bNULL {
-		return 0
-	}
-	if aNULL {
-		return 1
-	}
-	if bNULL {
-		return -1
-	}
-
+// compareValues orders two cell values with no NULL handling at all: they are
+// compared numerically when both parse as numbers, lexically otherwise.
+//
+// Callers that have already separated out the NULLs — computeColumnStats skips
+// them before computing min/max — must use this rather than smartCompare, or a
+// value whose text is literally "NULL" gets ordered as though it were one.
+func compareValues(a, b string) int {
 	af, aErr := strconv.ParseFloat(a, 64)
 	bf, bErr := strconv.ParseFloat(b, 64)
 	if aErr == nil && bErr == nil {
@@ -43,6 +37,29 @@ func smartCompare(a, b string) int {
 	}
 
 	return strings.Compare(a, b)
+}
+
+// smartCompare compares two display strings, ordering the NULL sentinel after
+// every other value.
+//
+// It matches on the display string, so a value whose text is literally "NULL"
+// sorts with the real NULLs. That is intended for the result table, where the
+// two are drawn identically and separating them would look like a bug; it is
+// wrong anywhere the caller can tell them apart, which is what compareValues
+// is for.
+func smartCompare(a, b string) int {
+	aNULL := a == db.NullSentinel
+	bNULL := b == db.NullSentinel
+	if aNULL && bNULL {
+		return 0
+	}
+	if aNULL {
+		return 1
+	}
+	if bNULL {
+		return -1
+	}
+	return compareValues(a, b)
 }
 
 // sortedRows returns a sorted copy of rows by the given column index and order.
@@ -67,8 +84,8 @@ func sortedRows(rows [][]string, col int, dir sortOrder) [][]string {
 			b = rows[bi][col]
 		}
 		// NULL always sorts last, regardless of direction.
-		aNULL := a == "NULL"
-		bNULL := b == "NULL"
+		aNULL := a == db.NullSentinel
+		bNULL := b == db.NullSentinel
 		if aNULL != bNULL {
 			return bNULL
 		}

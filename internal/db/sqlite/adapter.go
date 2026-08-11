@@ -151,7 +151,13 @@ func (a *Adapter) queryRows(ctx context.Context, query string) (db.QueryResult, 
 	}
 	defer rows.Close()
 
-	return dbutil.ScanRows(rows)
+	// modernc.org/sqlite returns []byte only for the BLOB storage class, so the
+	// Go type identifies a blob exactly — including for expressions, which
+	// carry no declared column type at all.
+	return dbutil.ScanRowsOpts(rows, dbutil.ScanOptions{
+		Limit:          dbutil.DefaultRowLimit,
+		BytesAreBinary: true,
+	})
 }
 
 // returnsRows determines whether a SQL statement will produce a result set.

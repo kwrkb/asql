@@ -24,6 +24,7 @@ const (
 // bring database (see bringCurrentResult).
 type bringDoneMsg struct {
 	name      string
+	source    string // connection the result came from, for the status line
 	cols      int
 	rows      int
 	truncated bool
@@ -56,8 +57,13 @@ func (m model) bringCurrentResult() (tea.Model, tea.Cmd) {
 	}
 
 	m.bringSt.tableSeq++
-	name := fmt.Sprintf("t%d", m.bringSt.tableSeq)
-	m.setStatus(fmt.Sprintf("Bringing as %s...", name), false)
+	src := bring.Source{
+		Seq:   m.bringSt.tableSeq,
+		Table: fmt.Sprintf("t%d", m.bringSt.tableSeq),
+		Conn:  m.lastConn,
+		Query: m.lastExecutedQuery(),
+	}
+	m.setStatus(fmt.Sprintf("Bringing as %s...", src.Table), false)
 
 	conn := m.bringSt.conn
 	quote := m.bringSt.adapter.QuoteIdentifier
@@ -65,15 +71,43 @@ func (m model) bringCurrentResult() (tea.Model, tea.Cmd) {
 	return m, func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 		defer cancel()
-		err := bring.Materialize(ctx, conn, quote, name, result)
+		err := bring.Materialize(ctx, conn, quote, src, result)
 		return bringDoneMsg{
-			name:      name,
+			name:      src.Table,
+			source:    src.Conn,
 			cols:      len(result.Columns),
 			rows:      len(result.Rows),
 			truncated: result.Truncated,
 			err:       err,
 		}
 	}
+}
+
+// lastExecutedQuery returns the query that produced lastResult.
+//
+// It reads m.lastQuery, which is set only when a queryExecutedMsg is accepted.
+// Neither the editor nor the tail of queryHistory would do: the editor may have
+// been edited since the result came back, and queryHistory records every query
+// *attempted*, so a query that failed, was cancelled, or is still in flight
+// would be credited with the previous query's rows.
+//
+// m.lastConn, used just above for the source connection, is captured the same
+// way and for the same reason: switching connections leaves lastResult on
+// screen untouched, so the active connection is not necessarily the one those
+// rows came from.
+func (m model) lastExecutedQuery() string {
+	return m.lastQuery
+}
+
+// bringLabel is what the status bar shows in place of a DSN while the local
+// bring database is active. bringDSN is a NUL-prefixed sentinel, not a
+// displayable connection string, and "how many tables have I brought" is the
+// one piece of state that is otherwise invisible from the status bar.
+func (m model) bringLabel() string {
+	if m.bringSt.brought == 1 {
+		return "(local bring: 1 table)"
+	}
+	return fmt.Sprintf("(local bring: %d tables)", m.bringSt.brought)
 }
 
 // switchToBring activates the local Bring & Join SQLite database as the

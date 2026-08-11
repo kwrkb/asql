@@ -115,7 +115,12 @@ type statsState struct {
 // dedicated mode: brought tables are queried through the normal INSERT-mode
 // query flow once active, see bring.go).
 type bringState struct {
-	conn     *sql.DB      // shared with adapter; used by bring.Materialize
-	adapter  db.DBAdapter // registered with connManager, which owns Close
-	tableSeq int          // next auto-generated table number (t1, t2, ...)
+	conn    *sql.DB      // shared with adapter; used by bring.Materialize
+	adapter db.DBAdapter // registered with connManager, which owns Close
+	// tableSeq is the last auto-generated table number (t1, t2, ...). It is
+	// monotonic and counts attempts, so a failed bring burns a number rather
+	// than recycling it; brought counts only the successful ones and is what
+	// the status bar reports.
+	tableSeq int
+	brought  int
 }

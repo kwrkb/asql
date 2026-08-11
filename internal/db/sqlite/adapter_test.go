@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/kwrkb/asql/internal/db"
 )
 
 func TestContainsReturning(t *testing.T) {
@@ -495,4 +497,89 @@ func TestQuery(t *testing.T) {
 			t.Errorf("expected REAL, got %q", result.ColumnTypes[2])
 		}
 	})
+}
+
+func TestQueryKinds(t *testing.T) {
+	ctx := context.Background()
+	a, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer a.Close()
+
+	if _, err := a.conn.ExecContext(ctx, `CREATE TABLE k (i INTEGER, f REAL, s TEXT, b BLOB)`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := a.conn.ExecContext(ctx,
+		`INSERT INTO k VALUES (1, 1.5, 'a', ?), (NULL, NULL, '', ?)`,
+		[]byte{0xff, 0xfe}, nil); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	res, err := a.Query(ctx, `SELECT i, f, s, b FROM k ORDER BY rowid`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if !res.HasKinds() {
+		t.Fatal("expected Kinds to be populated")
+	}
+	if len(res.Kinds) != len(res.Rows) {
+		t.Fatalf("Kinds has %d rows, Rows has %d", len(res.Kinds), len(res.Rows))
+	}
+	for r, row := range res.Rows {
+		if len(res.Kinds[r]) != len(row) {
+			t.Fatalf("row %d: %d kinds for %d cells", r, len(res.Kinds[r]), len(row))
+		}
+	}
+
+	want := [][]db.Kind{
+		{db.KindInt, db.KindFloat, db.KindText, db.KindBlob},
+		{db.KindNull, db.KindNull, db.KindEmpty, db.KindNull},
+	}
+	for r := range want {
+		for c := range want[r] {
+			if got := res.KindAt(r, c); got != want[r][c] {
+				t.Errorf("KindAt(%d,%d) = %d, want %d (cell %q)", r, c, got, want[r][c], res.Rows[r][c])
+			}
+		}
+	}
+
+	// The display contract must be unchanged: NULL renders as NULL, an empty
+	// string renders as the `""` sentinel.
+	if res.Rows[1][0] != "NULL" {
+		t.Errorf("NULL cell rendered as %q, want NULL", res.Rows[1][0])
+	}
+	if res.Rows[1][2] != `""` {
+		t.Errorf("empty cell rendered as %q, want the \"\" sentinel", res.Rows[1][2])
+	}
+
+	// Out-of-range access degrades to text rather than panicking.
+	if res.KindAt(99, 0) != db.KindText || res.KindAt(0, 99) != db.KindText {
+		t.Error("out-of-range KindAt should return KindText")
+	}
+}
+
+func TestQueryKinds_MessageOnlyResultHasNoKinds(t *testing.T) {
+	ctx := context.Background()
+	a, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer a.Close()
+
+	res, err := a.Query(ctx, `CREATE TABLE x (v TEXT)`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if res.HasKinds() {
+		t.Errorf("message-only result should carry no kinds, got %v", res.Kinds)
+	}
+
+	res, err = a.Query(ctx, `SELECT v FROM x`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if res.HasKinds() {
+		t.Errorf("zero-row result should carry no kinds, got %v", res.Kinds)
+	}
 }

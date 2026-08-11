@@ -324,3 +324,73 @@ func TestTruncate(t *testing.T) {
 		}
 	}
 }
+
+func TestComputeColumnStats_NullCountUsesKinds(t *testing.T) {
+	// Two cells display as "NULL": one is a real SQL NULL, one is the four
+	// characters. Only the first should count toward the NULL rate.
+	result := db.QueryResult{
+		Columns: []string{"name"},
+		Rows:    [][]string{{"NULL"}, {"NULL"}, {"alice"}, {"bob"}},
+		Kinds: [][]db.Kind{
+			{db.KindNull},
+			{db.KindText},
+			{db.KindText},
+			{db.KindText},
+		},
+	}
+
+	stats := computeColumnStats(result)
+	if stats[0].NullCnt != 1 {
+		t.Errorf("NullCnt = %d, want 1 (the literal text NULL is not a NULL)", stats[0].NullCnt)
+	}
+	if stats[0].NullRate != 0.25 {
+		t.Errorf("NullRate = %v, want 0.25", stats[0].NullRate)
+	}
+	// The literal "NULL" text is a distinct value alongside alice and bob.
+	if stats[0].Distinct != 3 {
+		t.Errorf("Distinct = %d, want 3", stats[0].Distinct)
+	}
+}
+
+func TestComputeColumnStats_NullCountFallsBackWithoutKinds(t *testing.T) {
+	result := db.QueryResult{
+		Columns: []string{"name"},
+		Rows:    [][]string{{"NULL"}, {"NULL"}, {"alice"}, {"bob"}},
+	}
+
+	stats := computeColumnStats(result)
+	if stats[0].NullCnt != 2 {
+		t.Errorf("NullCnt = %d, want 2 (string-sentinel fallback)", stats[0].NullCnt)
+	}
+}
+
+func TestComputeColumnStats_MinMaxOrdersLiteralNullAsText(t *testing.T) {
+	// With kinds available the literal text "NULL" is not a NULL, so it must
+	// also be ordered as text: lexically "NULL" < "zzz".
+	result := db.QueryResult{
+		Columns: []string{"name"},
+		Rows:    [][]string{{"NULL"}, {"zzz"}},
+		Kinds:   [][]db.Kind{{db.KindText}, {db.KindText}},
+	}
+
+	stats := computeColumnStats(result)
+	if stats[0].NullCnt != 0 {
+		t.Fatalf("NullCnt = %d, want 0", stats[0].NullCnt)
+	}
+	if stats[0].Min != "NULL" || stats[0].Max != "zzz" {
+		t.Errorf("Min/Max = %q/%q, want NULL/zzz", stats[0].Min, stats[0].Max)
+	}
+}
+
+func TestCompareValues_IgnoresTheNullSentinelRule(t *testing.T) {
+	if compareValues("NULL", "zzz") >= 0 {
+		t.Error(`compareValues("NULL", "zzz") should order NULL first, as plain text`)
+	}
+	if smartCompare("NULL", "zzz") <= 0 {
+		t.Error(`smartCompare("NULL", "zzz") should still order the sentinel last`)
+	}
+	// Numeric comparison is unchanged in both.
+	if compareValues("9", "10") >= 0 || smartCompare("9", "10") >= 0 {
+		t.Error("9 should compare below 10 numerically")
+	}
+}

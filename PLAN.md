@@ -27,27 +27,51 @@ Bring & Join (Phase 3) はまだ先。比較体験が磨き込まれてから。
 - 最新リリース: v0.10.0
 - Phase 3 (Bring & Join) 着手: 3-1/3-2 完了 (`b`/`J` キー)、3-3 は要件未確定のため継続検討
 - 定期メンテナンス: 直接依存 (`pgx v5.10.0`, `mysql v1.10.0`, `modernc.org/sqlite v1.53.0`) 更新、`govulncheck` 到達脆弱性 (GO-2026-5004) 解消
-- **次: Phase 3 残タスク (3-3) または Phase 2 横展開**
+- Bring & Join の型情報保持と provenance 記録 (`_asql_bring`) 完了、README を実装に同期
+- `bubbles/table` の ANSI 幅バグを vendor + 2行パッチで修正（型注釈・差分ハイライトが復活）
+- readonly mode は設計のみ完了（`docs/readonly-design.md`）。実装は未着手
+- **次: readonly mode の実装可否判断、または Phase 3 残タスク (3-3)**
 
-## 直近完了: Phase 3 着手 — Bring & Join (3-1/3-2)
+## 直近完了: Bring & Join の意味保存 — 型情報保持と provenance
 
 目的:
-- VISION.md の Bring Data Philosophy を実現する第一歩。異種DBから取得したクエリ結果をローカルSQLiteに持ち寄り、JOINで観察できるようにする
+- 持ち寄ったデータが「何だったか」を失わないこと。VISION の Bring Data Philosophy は、持ち寄った先で観察できて初めて成立する
 
 主要ステップ:
-- [x] `internal/db/bring/` パッケージ新規作成。`Materialize()` が結果セットを全カラム TEXT 型で `CREATE TABLE` し、パラメータ化バッチINSERTで投入
-  > `QueryResult.Rows` はスキャン時点で `[][]string` に文字列化済み（型情報喪失）のため、軽量実装として全TEXT保存・文字列一致JOINを採用。`"NULL"`/`""` の表示センチネルは INSERT 時に実NULL/空文字へ逆変換するが、本物の文字列値 `"NULL"` との曖昧さは既知の制約として受容
-- [x] `internal/db/sqlite/adapter.go` に `NewAdapter(conn *sql.DB)` を追加し、bring パッケージが INSERT 用とJOIN実行用で同一コネクションプールを共有できるようにリファクタ
-- [x] `internal/ui/connmgr.go` に `Register()` を追加。`opener.Open` を経由せず bring 用ローカルDBを `connManager` に直接登録（固定の合成DSN `asql-bring` を使用し、`Switch` 経由の意図しない二重DB生成を回避）
-- [x] `internal/ui/bring.go` 新規作成。`b` キーでアクティブな結果をローカルテーブル (`t1`, `t2`, ...) として持ち寄り、`J` キーでローカルbring DBへ接続切替
-  > 新しい `mode` やオーバーレイは追加せず、既存のクエリ実行パイプライン（INSERTモード→`executeQueryCmd`→`applyResult`）をそのまま再利用。Stats/Export/Sort/Compare がJOIN結果に対しても無改修で動作する設計判断
+- [x] `db.QueryResult` に `Kinds [][]db.Kind` を追加し、`dbutil.ScanRowsLimit` がスキャン時点でセルごとの意味（NULL / 空文字 / 整数 / 浮動小数 / バイナリ / テキスト）を記録
+  > `Rows [][]string` は不変。描画・ソート・エクスポート・比較・詳細表示はすべて無改修で、NULL と空文字の表示仕様も維持される。`Kinds` が nil の `QueryResult` は従来の全TEXT挙動にフォールバックするため、既存の構造体リテラルは全て互換
+- [x] `bring.Materialize` が Kinds から列ごとの SQLite affinity を決め、各セルを型付きで bind
+  > 混在列は「型を宣言しない」（BLOB affinity）を選択。TEXT 宣言だと bind した int64 が text に潰れ、型を運んだ意味がなくなることを実測で確認した。affinity 判定は「実際に bind される値」（`effectiveKind`）で行い、int64 に収まらない値が INTEGER 列に入って REAL へ暗黙変換される事故を防ぐ
+- [x] `bring.Source` と `_asql_bring` テーブルで持ち寄り元を記録（データと同一トランザクション）
+  > 新しいモードもオーバーレイも追加せず、既存のクエリ経路で観察できる普通のテーブルにした。先頭アンダースコアでサイドバー先頭に並ぶ
+- [x] Stats overlay の NULL 率を kind ベースに変更
+- [x] README.md / README.ja.md を実装に同期（AI 設定の階層混在バグ、Stats overlay、Bring & Join、`d` キー）
+- [x] PR #50 の Codex レビュー指摘4件に対応（混在 int/float の REAL affinity による精度欠落、UTF-8 妥当なバイナリ列の誤判定、provenance が履歴末尾を参照、bring ラベルの更新漏れ）
+  > 詳細は LESSONS.md「PR #50 レビュー対応」。4件とも現在のソースと実測で検証してから採用し、各回帰テストが対応する修正を戻すと落ちることを確認済み
+- [x] `bubbles/table` の ANSI 幅バグを修正（作業中の TUI smoke test で発見した既存バグ）
+  > `runewidth.StringWidth` が ANSI エスケープのバイトを表示幅として数えるため、列幅が約27セル未満だとスタイル付き文字列がエスケープの途中で切断され、端末が残りを飲み込んでいた。**カラム型注釈が不可視**、**比較モードの差分セルは内容ごと消失**。変更前のコミット `0d3b668` で再現を確認済み
+  > 上流の修正 (charmbracelet/bubbles#884) は `ansi.Truncate` への2行変更だが、マージ先は v2 系のみ。v1 向けの同一 PR (#883) は未マージのまま閉じられており v1.0.0 には来ない。bubbles v2 への移行は bubbletea v2 / lipgloss v2 を巻き込むため2行の修正には見合わない
+  > `internal/ui/table/` に v1.0.0 の `table.go` (450行・MIT) を vendor し、上流と同じ2行だけを適用。`x/ansi` は既に間接依存だったので新規依存はゼロ。型注釈・選択カラム強調・差分ハイライトがすべて色付きのまま復活した
 
 結果:
-- `go build && go vet ./... && go test ./...` 全パス
-- tmux 上での手動smoke test: 2つのSQLite DBから `users`/`scores` をそれぞれ `b` で持ち寄り、`J` で切替、`SELECT t1.name, t2.score FROM t1 JOIN t2 ON t1.id = t2.id` が正しい1行を返すことを確認。Stats overlay (`d`) もJOIN結果に対して動作
-- `/code-review xhigh --fix` で8件の設計バグを検出・修正: INSERT失敗時にテーブルが残り同名リトライが永久失敗する不整合（CREATE TABLE+INSERTを単一トランザクション化）、列数の多い結果でのバインドパラメータ上限超過（バッチサイズを列数考慮の動的算出に変更）、`:memory:` DBが5分アイドルで破棄される（bring接続の `SetConnMaxLifetime` を無効化）、大文字小文字違いの列名衝突見逃しと重複列disambiguateによる別列データの誤上書き（アルゴリズム修正）、`Materialize` の同期実行によるUIフリーズ（`tea.Cmd` 化）、合成DSNのプロファイル保存経由での漏洩（保存時にガード追加）、未使用フィールド削除
+- `go build ./... && go vet ./... && go test ./...` 全パス
+- 追加テスト: affinity 決定、混在列の storage class 保持、数値ソート/JOIN、文字列 `"NULL"` と SQL NULL の区別、BLOB の hex 往復、int64 範囲外のフォールバック、provenance の記録とロールバック
 
-過去の「直近完了」は `HISTORY.md` を参照（TUI レイアウト堅牢化 PR #44、コード品質・パフォーマンス改善 PR #39 等）。
+## 未着手: readonly mode
+
+目的:
+- 本番DBを観察用途で安全に開く。守るのは「意図しない書き込み」であって「意図的な書き込み」ではない
+
+設計は `docs/readonly-design.md` に記載済み。実装前に以下の決定が必要:
+- [ ] セッション全体 (`--readonly`) か、プロファイル単位 (`readonly: true`) か、両方か
+  > セッション全体だけなら `connManager` にフラグ1つで済み、配線が半分になる
+- [ ] `profiles.yaml` にキーを増やすか（上と連動）
+- [ ] 環境変数 `ASQL_READONLY` を用意するか
+
+検証済みの前提:
+- SQLite は `file:<path>?mode=ro` が有効（`PRAGMA query_only=0` でも解除できない）。一方 `_pragma=query_only(1)` は解除できてしまうので単独では信頼できない。`mode=ro` でも `ATTACH` は通るため、SQL guard 側での `attach` 拒否は必須
+- MySQL の go-sql-driver は DSN の未知パラメータを新規コネクションごとに `SET` するため、プール越しにも効く（実サーバ未検証）
+- AI 生成 SQL は textarea に挿入されるだけで実行は必ず `adapter.Query` を通るので、アダプタラッパ1箇所で自動的に同じ制約がかかる
 
 ## Phase 2: Multi-DB Observation — 比較の完成（完了）
 
@@ -69,7 +93,7 @@ Bring & Join (Phase 3) はまだ先。比較体験が磨き込まれてから。
 - [x] 4-4. 件数推移の簡易表示 (PR #38: Stats overlay でカーソル行にスパークライン表示)
 - [x] 4-5. 簡易ヒストグラム表示 (PR #40: Stats overlay で数値列に Unicode ブロック文字のヒストグラム表示)
 
-## Phase 3: Bring & Join（3-1/3-2 完了、3-3 検討中）
+## Phase 3: Bring & Join（3-1/3-2/3-4 完了、3-3 検討中）
 
 目的：**「Bring Data Philosophy」**の体現。異種DBを直接統合せず、ローカルに持ち寄って気づく。
 
@@ -77,5 +101,7 @@ Bring & Join (Phase 3) はまだ先。比較体験が磨き込まれてから。
   > `b` キー。`internal/db/bring/` パッケージ、`internal/ui/bring.go`
 - [x] 3-2. ローカルでのJOIN実行
   > `J` キーでローカルbring DBへ切替後、既存のクエリ実行パイプラインでJOINを実行
+- [x] 3-4. 持ち寄り時の型情報保持と provenance 記録
+  > `db.Kind` によるスキャン時点の意味記録と `_asql_bring` テーブル。詳細は HISTORY.md
 - [ ] 3-3. 日次などの粒度統一サポート
   > 要件が曖昧なため先送り。着手前に「どのカラムをどう丸めるか」のUXを再検討する
