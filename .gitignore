@@ -27,6 +27,7 @@ e2e/recordings/
 
 # AI tools
 .gemini/
+.codex
 status/
 !status/review.md
 
