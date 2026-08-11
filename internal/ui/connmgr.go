@@ -17,16 +17,21 @@ type connManager struct {
 	mu     sync.RWMutex
 	conns  []connection
 	active int // index of active connection
+	// readonly makes every connection opened through Switch refuse writes.
+	// It does not apply to Register, which takes adapters asql opened for
+	// itself — see the note there.
+	readonly bool
 }
 
-func newConnManager(name, dsn string, adapter db.DBAdapter) *connManager {
+func newConnManager(name, dsn string, adapter db.DBAdapter, readonly bool) *connManager {
 	return &connManager{
 		conns: []connection{{
 			name:    name,
 			dsn:     dsn,
 			adapter: adapter,
 		}},
-		active: 0,
+		active:   0,
+		readonly: readonly,
 	}
 }
 
@@ -78,7 +83,11 @@ func (cm *connManager) Switch(name, dsn string) error {
 	}
 
 	// Open new connection
-	adapter, err := opener.Open(dsn)
+	open := opener.Open
+	if cm.readonly {
+		open = opener.OpenReadonly
+	}
+	adapter, err := open(dsn)
 	if err != nil {
 		return err
 	}
@@ -96,6 +105,11 @@ func (cm *connManager) Switch(name, dsn string) error {
 // it active and without going through opener.Open. Used for adapters created
 // internally (e.g. the Bring & Join local SQLite database), which have no
 // real DSN the opener could re-derive a connection from.
+//
+// Registered adapters stay writable even in a readonly session, and that is
+// deliberate: the local bring database is asql's own scratch space, and a
+// readonly session that could not materialize a result would lose Bring & Join
+// entirely. What readonly protects is the databases the user connected to.
 func (cm *connManager) Register(name, dsn string, adapter db.DBAdapter) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()

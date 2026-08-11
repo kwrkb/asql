@@ -51,6 +51,9 @@ asql --save-profile myprofile "postgres://user:pass@host:5432/db"
 # 引数なし — 保存済みプロファイルから対話的に選択
 asql
 
+# リードオンリーセッション
+asql --readonly @production
+
 # ヘルプ / バージョン表示
 asql --help
 asql --version
@@ -76,6 +79,60 @@ asql --version
 - **テーブルサイドバー** — テーブル一覧をブラウズし、ワンキーで SELECT を挿入
 - **エクスポート** — CSV / JSON / Markdown でコピー、またはファイル保存
 - **AI アシスタント** — OpenAI 互換 API で自然言語から SQL を生成
+- **リードオンリーセッション** — `--readonly` で書き込む文を拒否。打ち間違いの `DELETE` から本番接続を守る
+
+## リードオンリーモード
+
+観察するだけの DB に接続するときは `--readonly` を付ける。
+
+```bash
+asql --readonly @production
+asql --readonly "postgres://user:pass@db.example.com:5432/app"
+```
+
+すべての文は送信前に分類され、読み取り専用と認識できないものは拒否される。
+拒否理由は何が弾かれたかを名指しする。
+
+```
+readonly: DELETE is not allowed (asql --readonly)
+```
+
+ステータスバーの接続表示に `ro` が付く（`production:POSTGRES ro`）ため、モードが
+見えなくなることはない。SQLite はさらにドライバのリードオンリーモードで開く。
+
+`INSERT` / `UPDATE` / `DELETE` / `DROP` 以外に拒否されるもの:
+
+- 結果を書き出す `SELECT` — PostgreSQL の `SELECT ... INTO backup`、MySQL の `SELECT ... INTO OUTFILE`
+- 1 回の実行に複数の文（`SELECT 1; DELETE FROM t`）
+- データ変更 CTE（`WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone`）
+- 書き込む文の `EXPLAIN ANALYZE` — PostgreSQL は対象を実際に実行する
+- スキーマ参照以外の PRAGMA。関数構文の `PRAGMA query_only(0)` を含む
+- 認識できないキーワードすべて
+- 確信を持って読めない文すべて（下記）
+
+asql は方言ごとの字句規則を追わず、**移植可能な部分集合だけ**を読む。そこから外れる書き方は、
+接続先の DB に関わらず拒否する。部分集合は、引用符の二重化で閉じる `'...'` / `"..."` / `` `...` ``、
+`[...]`、ダッシュの後に空白のある `-- `、素の `/* ... */`。
+
+したがって次は、その DB では無害な場合でも拒否される:
+
+| 拒否される | 方言で意味が変わるため | 代わりの書き方 |
+|---|---|---|
+| `'it\'s'` / `"a\"b"` | `NO_BACKSLASH_ESCAPES` / `standard_conforming_strings` / `ANSI_QUOTES` 次第でリテラルの終端が変わる | `'it''s'` / `"a""b"` |
+| `SELECT 1 # 2` | `#` は MySQL では行コメント、PostgreSQL ではビット XOR 演算子 | `SELECT 1 -- 2`、または文字列の中 |
+| `SELECT 1--1` | `--` は MySQL だけ後ろに空白が必要 | `SELECT 1 - -1` |
+| `/*! ... */` | MySQL は中身を実行する | 素の `/* ... */` |
+
+理由は厳密さのためではない。引用やコメントがどこで終わるかが、その後のキーワードの位置を決める。
+読み違えたスキャナは**書き込みを読み取りとして通す**。曖昧な書き方を拒否すれば、その誤りの
+クラスごと消える。移植可能な綴り方は常に使える。
+
+**これはサンドボックスではない。** 守るのは「意図しない書き込み」であって
+「意図的な書き込み」ではない。回避不能であることは保証しないし、DB 側の権限設定の
+代わりにはならない。
+
+リードオンリーセッションでも Bring & Join は使える。持ち寄り先のローカル DB は
+asql 自身の作業領域なので書き込み可能なまま残る（`b` で持ち寄り、`J` で JOIN）。
 
 ## 比較モード
 

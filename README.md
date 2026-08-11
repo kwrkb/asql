@@ -51,6 +51,9 @@ asql --save-profile myprofile "postgres://user:pass@host:5432/db"
 # No arguments — select from saved profiles interactively
 asql
 
+# Read-only session
+asql --readonly @production
+
 # Help / version
 asql --help
 asql --version
@@ -76,6 +79,67 @@ asql --version
 - **Table sidebar** — browse tables, insert SELECT with one key
 - **Export** — copy results as CSV / JSON / Markdown, or save to file
 - **AI assistant** — generate SQL from natural language via any OpenAI-compatible API
+- **Read-only sessions** — `--readonly` refuses statements that would write, so a production connection survives a mistyped `DELETE`
+
+## Read-only Mode
+
+Start asql with `--readonly` when you are connecting to a database you only
+mean to look at:
+
+```bash
+asql --readonly @production
+asql --readonly "postgres://user:pass@db.example.com:5432/app"
+```
+
+Every statement is classified before it is sent. Anything not recognized as
+read-only is refused with a message naming what was rejected:
+
+```
+readonly: DELETE is not allowed (asql --readonly)
+```
+
+The status bar marks the connection with `ro` (`production:POSTGRES ro`) so the
+mode is never invisible. SQLite databases are additionally opened through the
+driver's read-only mode.
+
+What the guard refuses, beyond the obvious `INSERT` / `UPDATE` / `DELETE` /
+`DROP`:
+
+- `SELECT` forms that write their result somewhere — PostgreSQL's `SELECT ... INTO backup`, MySQL's `SELECT ... INTO OUTFILE`
+- multiple statements in one submission (`SELECT 1; DELETE FROM t`)
+- data-modifying CTEs (`WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone`)
+- `EXPLAIN ANALYZE` of a writing statement — PostgreSQL runs its target
+- pragmas outside schema inspection, including the function form `PRAGMA query_only(0)`
+- any keyword it does not recognize
+- anything it cannot read confidently — see below
+
+asql reads one portable subset of SQL rather than each dialect's own lexical
+rules, and refuses what falls outside it — whatever database you are connected
+to. The subset is `'...'` / `"..."` / `` `...` `` closed by doubling the quote,
+`[...]`, `-- ` with a space after the dashes, and plain `/* ... */`.
+
+So these are refused everywhere, including where they are harmless:
+
+| Refused | Because dialects disagree | Write instead |
+|---|---|---|
+| `'it\'s'`, `"a\"b"` | a backslash closes the quote or not, depending on `NO_BACKSLASH_ESCAPES` / `standard_conforming_strings` / `ANSI_QUOTES` | `'it''s'`, `"a""b"` |
+| `SELECT 1 # 2` | `#` is a comment on MySQL, the bitwise-XOR operator on PostgreSQL | `SELECT 1 -- 2` or `#` inside a string |
+| `SELECT 1--1` | `--` needs a following space on MySQL but not elsewhere | `SELECT 1 - -1` |
+| `/*! ... */` | MySQL runs the contents instead of ignoring them | a plain `/* ... */` |
+
+The reason is not pedantry: where a quoted run or a comment ends is what
+decides where every later keyword falls, so a scanner that guesses wrong reads
+a write as a read. Refusing the ambiguous spelling ends that whole class of
+mistake, and the portable spelling is always available.
+
+**This is not a sandbox.** It is there for the `DELETE` you did not mean to
+run, not for a user who means to write. asql does not promise that a determined
+statement cannot get through, and a read-only connection is not a substitute
+for database permissions.
+
+Bring & Join keeps working in a read-only session: the local bring database is
+asql's own scratch space and stays writable, so you can still press `b` to
+copy a result into it and `J` to join there.
 
 ## Compare Mode
 

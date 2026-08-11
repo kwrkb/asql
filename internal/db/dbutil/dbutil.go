@@ -576,6 +576,10 @@ func ShortenTypeName(typeName string) string {
 }
 
 // Dialect controls which quoting styles the SQL scanner recognizes.
+//
+// It describes only what ContainsReturning needs. The statement guard does not
+// take a dialect at all — see the note at the top of sqlscan.go on why reading
+// one portable subset beats teaching a scanner every dialect's lexical rules.
 type Dialect struct {
 	BracketQuote  bool // SQLite/MSSQL [identifier] style
 	DollarQuote   bool // PostgreSQL $$string$$ style

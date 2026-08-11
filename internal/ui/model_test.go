@@ -83,7 +83,7 @@ func newTestModel() *model {
 	vp := viewport.New(0, 0)
 	ta := textarea.New()
 	return &model{
-		connMgr:    newConnManager("test", "", nil),
+		connMgr:    newConnManager("test", "", nil, false),
 		table:      tbl,
 		viewport:   vp,
 		textarea:   ta,

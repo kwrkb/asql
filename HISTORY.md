@@ -2,6 +2,26 @@
 
 これまでに完了した主要な機能・マイルストーンの記録。
 
+## readonly mode (`--readonly`)
+
+**実装**: 本番DBを観察用途で開くための読み取り専用セッション。守る対象は「意図しない書き込み」であって「意図的な書き込み」ではなく、完全なSQLサンドボックスは非目標（`docs/readonly-design.md`）。
+
+二層構成。**層1（主）**は `internal/db/readonly` の `DBAdapter` ラッパで、`Query` の先頭で文を分類する。ここが SQL の唯一の実行経路なので、SQLエディタ・スニペット・履歴・サイドバーの生成SELECT・AI が書き込んだSQLがすべて追加対応なしに同じ制約を受ける。`Tables`/`Columns`/`Schema` はアダプタ内部の固定クエリなので素通し。分類は許可リスト方式で、**未知のキーワードは拒否**する。
+
+先頭キーワードだけでは足りない3つの経路を個別に塞いだ。(a) **データ変更CTE** — `WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone` は `CteBodyKeyword` が `select` を返すため本体だけ見ると通る。`dbutil.CteTermKeywords` を追加し、`AS (` で始まる全項（入れ子含む）の先頭キーワードを検査する。(b) **`EXPLAIN ANALYZE`** — PostgreSQL は対象文を実際に実行する。`dbutil.StripExplain` で対象文を取り出し、同じ分類を再帰適用する（`ANALYZE` を特別扱いしない形）。(c) **複文** — `SELECT 1; DELETE FROM t` は先頭が `select`。`dbutil.HasMultipleStatements` で末尾以外の区切りを拒否する。PRAGMA は「`=` の有無」ではなくスキーマ参照系の許可リストで判定する（SQLite は関数構文の setter `PRAGMA query_only(0)` を受け付けるため）。
+
+**PR #52 レビュー対応**: Codex の指摘で `SELECT ... INTO` の穴を塞いだ。PostgreSQL の `SELECT * INTO backup FROM t` はテーブルを作って埋め、MySQL の `SELECT ... INTO OUTFILE` はサーバにファイルを書くが、どちらも先頭キーワードが `select` のため素通りしていた（実測で確認）。許可対象の文でも裸の `INTO` を含むものは拒否する。
+
+**スキャナの方針転換（レビュー3巡の結果）**: 当初は方言ごとの字句規則を実装したが、1つ直すたびに次が出た。3巡で計6件、すべて「読み取り文に見える書き込み」— `#`（MySQL では行コメント / PostgreSQL ではビット XOR 演算子）、`--`（MySQL だけ後ろに空白が必要）、`\'`（終端が `NO_BACKSLASH_ESCAPES` / `standard_conforming_strings` / `ANSI_QUOTES` というサーバ設定次第）、`/*! ... */`（MySQL/MariaDB は中身を実行する）。これは設計文書が非目標に挙げた「方言ごとの全構文を追いかける作業」そのもので、続ける限り穴は「まだ見つかっていないだけ」になる。
+
+そこで**スキャナから方言を外し、移植可能な部分集合だけを読む形に反転させた**（`dbutil.UnlexableReason`）。読むのは引用符の二重化で閉じる `'...'` / `"..."` / `` `...` ``、`[...]`、空白必須の `-- `、素の `/* ... */` のみ。外れるものは接続先に関わらず拒否する。`Dialect` の追加フラグ5つと専用関数3つが1規則に畳まれ、`readonly.Check` は DB 種別を取らなくなった。失うのは方言固有の書き方だけで、移植可能な綴り方（引用符の二重化、ダッシュの後の空白）は常に使える。
+
+**層2（従）**は SQLite のみ。`file:<path>?mode=ro` で開き、`PRAGMA query_only(0)` を実行しても書き込みが戻らないことをテストで固定した。MySQL / PostgreSQL は実サーバで検証できないため層1のみで出荷。したがってこの2つでは層1が唯一の防御であり、上記 (a)(b) は「あれば良い」ではなく必須。
+
+**配線**: スコープはセッション全体 `--readonly` のみ（`profiles.yaml` のキーと `ASQL_READONLY` は用意しない）。`connManager` がフラグを持ち、セッション中に開く接続も `opener.OpenReadonly` を通す。`Register` 経由のローカル bring DB は writable のまま残し、readonly セッションでも Bring & Join が使える。ステータスバーは接続ごとに `prod:SQLITE ro` と表示する（bring DB に切り替えると `ro` は消える＝無い保護を主張しない）。拒否メッセージは何が拒否されたかを名指しする（`readonly: DELETE is not allowed (asql --readonly)`）。
+
+---
+
 ## Phase 3: Bring & Join — 型情報保持と provenance
 **実装**: `QueryResult` に `Kinds [][]db.Kind`（NULL/Empty/Int/Float/Blob/Text）を追加し、スキャン時点でセルごとの意味を記録。`bring.Materialize` はこれを使って (a) 列ごとに SQLite affinity を宣言（INTEGER/REAL/TEXT/BLOB、混在列は型無し宣言＝BLOB affinity で各値の storage class を保持）、(b) 各セルを int64/float64/[]byte/string/NULL として bind する。数値ソート・JOINが文字列比較にならず、SQL NULL と文字列 `"NULL"`、空文字と `""` が区別可能になった。`Rows [][]string` は不変なので描画・ソート・エクスポート・比較の各経路は無改修、NULL/空文字の表示仕様も維持。`Kinds` が nil の `QueryResult` は従来の全TEXT挙動にフォールバックする。
 併せて `bring.Source`（持ち寄り順・ローカル表名・取得元接続・元クエリ）を導入し、bring DB 内の `_asql_bring` テーブルへデータと同一トランザクションで記録。行数・列数・truncated フラグも保持する。専用モードやオーバーレイは追加せず、既存のクエリ経路で `SELECT * FROM _asql_bring` として観察できる。ステータスバーは `(local bring: N tables)` を表示。

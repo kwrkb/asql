@@ -170,7 +170,10 @@ func (m model) CloseAll() {
 	}
 }
 
-func NewModel(adapter db.DBAdapter, dbPath string, rawDSN string, connName string, aiClient *ai.Client, snippets []snippet.Snippet, profiles []profile.Profile) model {
+// NewModel builds the TUI model. readonly marks the session as read-only: the
+// adapter passed in is expected to already be guarded, and every connection
+// opened later is guarded too.
+func NewModel(adapter db.DBAdapter, dbPath string, rawDSN string, connName string, aiClient *ai.Client, snippets []snippet.Snippet, profiles []profile.Profile, readonly bool) model {
 	input := textarea.New()
 
 	placeholder := db.Placeholder(adapter.Type())
@@ -247,7 +250,7 @@ func NewModel(adapter db.DBAdapter, dbPath string, rawDSN string, connName strin
 	histSearchIn.CharLimit = 200
 	histSearchIn.Width = 40
 
-	cm := newConnManager(connName, rawDSN, adapter)
+	cm := newConnManager(connName, rawDSN, adapter, readonly)
 
 	m := model{
 		connMgr:    cm,
