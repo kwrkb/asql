@@ -364,3 +364,340 @@ func TestOpen_ConnectionSurvivesBeyondDefaultLifetime(t *testing.T) {
 		t.Fatalf("expected no connections closed due to lifetime expiry, got %d", stats.MaxLifetimeClosed)
 	}
 }
+
+// --- typed bring (QueryResult.Kinds) ---
+
+// typedResult builds a QueryResult whose Kinds are set explicitly, the way
+// dbutil.ScanRows would set them.
+func typedResult(columns []string, rows [][]string, kinds [][]db.Kind) db.QueryResult {
+	return db.QueryResult{Columns: columns, Rows: rows, Kinds: kinds}
+}
+
+func TestMaterialize_DeclaredAffinityFromKinds(t *testing.T) {
+	conn, adapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+
+	result := typedResult(
+		[]string{"i", "f", "s", "b", "mixed", "allnull"},
+		[][]string{
+			{"1", "1.5", "a", "ff00", "1", "NULL"},
+			{"2", "2.5", "b", "0102", "x", "NULL"},
+		},
+		[][]db.Kind{
+			{db.KindInt, db.KindFloat, db.KindText, db.KindBlob, db.KindInt, db.KindNull},
+			{db.KindInt, db.KindFloat, db.KindText, db.KindBlob, db.KindText, db.KindNull},
+		},
+	)
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+
+	// The declared type is what the UI shows in the column header, so assert on
+	// exactly the string DatabaseTypeName reports back.
+	got, err := adapter.Query(context.Background(), `SELECT * FROM t1`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	want := []string{"INTEGER", "REAL", "TEXT", "BLOB", "", ""}
+	if len(got.ColumnTypes) != len(want) {
+		t.Fatalf("ColumnTypes = %v, want %v", got.ColumnTypes, want)
+	}
+	for i, w := range want {
+		if got.ColumnTypes[i] != w {
+			t.Errorf("column %s: declared type = %q, want %q", result.Columns[i], got.ColumnTypes[i], w)
+		}
+	}
+}
+
+func TestMaterialize_MixedColumnKeepsPerValueStorageClass(t *testing.T) {
+	conn, adapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+
+	// A mixed column must not be declared TEXT: SQLite would then coerce the
+	// bound int64 to text and the numeric ordering would be lost again.
+	result := typedResult(
+		[]string{"v"},
+		[][]string{{"5"}, {"abc"}, {"2.5"}},
+		[][]db.Kind{{db.KindInt}, {db.KindText}, {db.KindFloat}},
+	)
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+
+	got, err := adapter.Query(context.Background(), `SELECT typeof(v) FROM t1 ORDER BY rowid`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	want := []string{"integer", "text", "real"}
+	if len(got.Rows) != len(want) {
+		t.Fatalf("got %d rows, want %d", len(got.Rows), len(want))
+	}
+	for i, w := range want {
+		if got.Rows[i][0] != w {
+			t.Errorf("row %d: typeof = %q, want %q", i, got.Rows[i][0], w)
+		}
+	}
+}
+
+func TestMaterialize_NumericOrderingNotLexicographic(t *testing.T) {
+	conn, adapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+
+	// Lexicographically "10" < "9"; numerically it is the other way round.
+	result := typedResult(
+		[]string{"n"},
+		[][]string{{"9"}, {"10"}, {"100"}},
+		[][]db.Kind{{db.KindInt}, {db.KindInt}, {db.KindInt}},
+	)
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+
+	got, err := adapter.Query(context.Background(), `SELECT n FROM t1 ORDER BY n`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	want := []string{"9", "10", "100"}
+	for i, w := range want {
+		if got.Rows[i][0] != w {
+			t.Fatalf("ORDER BY n = %v, want %v (string sort would give 10,100,9)", got.Rows, want)
+		}
+	}
+}
+
+func TestMaterialize_NumericJoinAcrossBroughtTables(t *testing.T) {
+	conn, adapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+
+	left := typedResult(
+		[]string{"id", "name"},
+		[][]string{{"1", "alice"}, {"2", "bob"}},
+		[][]db.Kind{{db.KindInt, db.KindText}, {db.KindInt, db.KindText}},
+	)
+	right := typedResult(
+		[]string{"id", "score"},
+		[][]string{{"1", "10"}, {"2", "20"}},
+		[][]db.Kind{{db.KindInt, db.KindInt}, {db.KindInt, db.KindInt}},
+	)
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", left); err != nil {
+		t.Fatalf("Materialize t1: %v", err)
+	}
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t2", right); err != nil {
+		t.Fatalf("Materialize t2: %v", err)
+	}
+
+	got, err := adapter.Query(context.Background(),
+		`SELECT t1.name, t2.score FROM t1 JOIN t2 ON t1.id = t2.id ORDER BY t2.score DESC`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(got.Rows) != 2 || got.Rows[0][0] != "bob" || got.Rows[1][0] != "alice" {
+		t.Fatalf("numeric JOIN + DESC ordering = %+v, want bob then alice", got.Rows)
+	}
+}
+
+func TestMaterialize_LiteralNullTextIsNotSQLNull(t *testing.T) {
+	conn, adapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+
+	// Row 1 holds a real SQL NULL; row 2 holds the four characters N,U,L,L.
+	// Without kinds these are the same display string and indistinguishable.
+	result := typedResult(
+		[]string{"id", "name"},
+		[][]string{{"1", "NULL"}, {"2", "NULL"}},
+		[][]db.Kind{{db.KindInt, db.KindNull}, {db.KindInt, db.KindText}},
+	)
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+
+	got, err := adapter.Query(context.Background(), `SELECT id FROM t1 WHERE name IS NULL`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(got.Rows) != 1 || got.Rows[0][0] != "1" {
+		t.Fatalf("IS NULL matched %+v, want only the row scanned as SQL NULL", got.Rows)
+	}
+
+	got, err = adapter.Query(context.Background(), `SELECT id FROM t1 WHERE name = 'NULL'`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(got.Rows) != 1 || got.Rows[0][0] != "2" {
+		t.Fatalf(`= 'NULL' matched %+v, want only the row whose text is literally NULL`, got.Rows)
+	}
+}
+
+func TestMaterialize_LiteralQuotePairIsNotEmptyString(t *testing.T) {
+	conn, adapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+
+	result := typedResult(
+		[]string{"id", "name"},
+		[][]string{{"1", `""`}, {"2", `""`}},
+		[][]db.Kind{{db.KindInt, db.KindEmpty}, {db.KindInt, db.KindText}},
+	)
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+
+	got, err := adapter.Query(context.Background(), `SELECT id FROM t1 WHERE name = ''`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(got.Rows) != 1 || got.Rows[0][0] != "1" {
+		t.Fatalf(`= '' matched %+v, want only the row scanned as an empty string`, got.Rows)
+	}
+}
+
+func TestMaterialize_BlobRoundTrip(t *testing.T) {
+	conn, adapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+
+	// 0xff 0x00 0xfe is not valid UTF-8, so StringifyValueKind hex-escapes it.
+	result := typedResult(
+		[]string{"b"},
+		[][]string{{"ff00fe"}},
+		[][]db.Kind{{db.KindBlob}},
+	)
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+
+	var raw []byte
+	if err := conn.QueryRowContext(context.Background(), `SELECT b FROM t1`).Scan(&raw); err != nil {
+		t.Fatalf("scan blob: %v", err)
+	}
+	if string(raw) != string([]byte{0xff, 0x00, 0xfe}) {
+		t.Fatalf("blob round-trip = % x, want ff 00 fe", raw)
+	}
+}
+
+func TestMaterialize_UnparsableNumberFallsBackToText(t *testing.T) {
+	conn, adapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+
+	// A uint64 above math.MaxInt64 stringifies fine but does not fit a SQLite
+	// signed 64-bit integer. It must stay text rather than wrap negative.
+	result := typedResult(
+		[]string{"n"},
+		[][]string{{"18446744073709551615"}},
+		[][]db.Kind{{db.KindInt}},
+	)
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+
+	got, err := adapter.Query(context.Background(), `SELECT n, typeof(n) FROM t1`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if got.Rows[0][0] != "18446744073709551615" || got.Rows[0][1] != "text" {
+		t.Fatalf("got %+v, want the value preserved as text", got.Rows)
+	}
+}
+
+func TestMaterialize_NoKindsKeepsLegacyAllTextBehaviour(t *testing.T) {
+	conn, adapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+
+	result := db.QueryResult{
+		Columns: []string{"n"},
+		Rows:    [][]string{{"1"}},
+	}
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+
+	got, err := adapter.Query(context.Background(), `SELECT typeof(n) FROM t1`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if got.Rows[0][0] != "text" {
+		t.Fatalf("typeof = %q, want text for a kindless result", got.Rows[0][0])
+	}
+}
+
+func TestMaterialize_TypesSurviveAFullScanRoundTrip(t *testing.T) {
+	// End-to-end: a real query through dbutil.ScanRows produces the kinds, and
+	// bringing that result preserves each value's storage class. This is the
+	// path the TUI actually takes.
+	src, srcAdapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open source: %v", err)
+	}
+	defer src.Close()
+
+	if _, err := src.Exec(`CREATE TABLE src (i INTEGER, f REAL, s TEXT, e TEXT, n TEXT, b BLOB)`); err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	if _, err := src.Exec(`INSERT INTO src VALUES (42, 2.5, 'NULL', '', NULL, ?)`, []byte{0xff, 0xfe}); err != nil {
+		t.Fatalf("seed source: %v", err)
+	}
+
+	result, err := srcAdapter.Query(context.Background(), `SELECT * FROM src`)
+	if err != nil {
+		t.Fatalf("source Query: %v", err)
+	}
+	if !result.HasKinds() {
+		t.Fatal("ScanRows did not record kinds")
+	}
+
+	dst, dstAdapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open dest: %v", err)
+	}
+	defer dst.Close()
+
+	if err := Materialize(context.Background(), dst, dstAdapter.QuoteIdentifier, "t1", result); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+
+	got, err := dstAdapter.Query(context.Background(),
+		`SELECT typeof(i), typeof(f), typeof(s), typeof(e), typeof(n), typeof(b), s, e FROM t1`)
+	if err != nil {
+		t.Fatalf("dest Query: %v", err)
+	}
+	row := got.Rows[0]
+	wantTypes := []string{"integer", "real", "text", "text", "null", "blob"}
+	for i, w := range wantTypes {
+		if row[i] != w {
+			t.Errorf("column %d: typeof = %q, want %q", i, row[i], w)
+		}
+	}
+	// The source column s holds the four characters NULL; it must survive as
+	// text, not collapse into SQL NULL. Column e holds a real empty string.
+	if row[6] != "NULL" {
+		t.Errorf("literal text NULL = %q, want the display sentinel for the text NULL", row[6])
+	}
+	if row[7] != `""` {
+		t.Errorf("empty string = %q, want the `\"\"` display sentinel", row[7])
+	}
+}

@@ -12,18 +12,42 @@ import (
 
 // StringifyValue converts a database value to its string representation.
 func StringifyValue(value any) string {
+	s, _ := StringifyValueKind(value)
+	return s
+}
+
+// StringifyValueKind converts a database value to its string representation and
+// reports what that string stands for. The string is identical to what
+// StringifyValue returns; the kind is the only extra information, and it is
+// available here because this is the last point at which the driver's typed
+// value exists (Rows is [][]string from here on).
+//
+// Integer and float values are formatted with fmt.Sprint, which uses the
+// shortest round-tripping representation for floats, so KindInt/KindFloat
+// strings parse back to the original value exactly.
+func StringifyValueKind(value any) (string, db.Kind) {
 	switch v := value.(type) {
 	case nil:
-		return "NULL"
+		return "NULL", db.KindNull
 	case []byte:
+		// A []byte that is valid UTF-8 is text, not binary: the MySQL driver
+		// returns []byte for every VARCHAR/TEXT column, so classifying those as
+		// blobs would mistype most MySQL string data. Only the hex-escaped
+		// branch — where the display string is no longer the value — is a blob.
 		if utf8.Valid(v) {
-			return string(v)
+			return string(v), db.KindText
 		}
-		return fmt.Sprintf("%x", v)
+		return fmt.Sprintf("%x", v), db.KindBlob
 	case time.Time:
-		return v.Format(time.RFC3339)
+		return v.Format(time.RFC3339), db.KindText
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return fmt.Sprint(v), db.KindInt
+	case float32, float64:
+		return fmt.Sprint(v), db.KindFloat
 	default:
-		return fmt.Sprint(v)
+		// bool, and anything else a driver returns, keeps its fmt.Sprint form
+		// and is treated as text — that is exactly what is displayed.
+		return fmt.Sprint(v), db.KindText
 	}
 }
 
@@ -61,6 +85,10 @@ func ScanRowsLimit(rows *sql.Rows, limit int) (db.QueryResult, error) {
 	}
 
 	resultRows := make([][]string, 0)
+	// Kinds are accumulated into one flat buffer and sliced per row afterwards,
+	// so scanning costs one amortized allocation for the whole result instead of
+	// a second per-row allocation next to each record.
+	var flatKinds []db.Kind
 	truncated := false
 	for rows.Next() {
 		if limit > 0 && len(resultRows) >= limit {
@@ -72,16 +100,29 @@ func ScanRowsLimit(rows *sql.Rows, limit int) (db.QueryResult, error) {
 		}
 		record := make([]string, len(columns))
 		for i, value := range values {
-			s := StringifyValue(value)
+			s, k := StringifyValueKind(value)
 			if s == "" {
-				s = `""`
+				// Empty strings are displayed as the `""` sentinel so they stay
+				// visually distinct from NULL. Record that the sentinel stands
+				// for an empty string rather than for those two characters.
+				s, k = `""`, db.KindEmpty
 			}
 			record[i] = s
+			flatKinds = append(flatKinds, k)
 		}
 		resultRows = append(resultRows, record)
 	}
 	if err := rows.Err(); err != nil {
 		return db.QueryResult{}, err
+	}
+
+	var kinds [][]db.Kind
+	if len(columns) > 0 && len(resultRows) > 0 {
+		kinds = make([][]db.Kind, len(resultRows))
+		for i := range kinds {
+			start, end := i*len(columns), (i+1)*len(columns)
+			kinds[i] = flatKinds[start:end:end]
+		}
 	}
 
 	msg := fmt.Sprintf("%d row(s) returned", len(resultRows))
@@ -93,6 +134,7 @@ func ScanRowsLimit(rows *sql.Rows, limit int) (db.QueryResult, error) {
 		Columns:     columns,
 		ColumnTypes: colTypes,
 		Rows:        resultRows,
+		Kinds:       kinds,
 		Message:     msg,
 		Truncated:   truncated,
 	}, nil

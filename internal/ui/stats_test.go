@@ -324,3 +324,42 @@ func TestTruncate(t *testing.T) {
 		}
 	}
 }
+
+func TestComputeColumnStats_NullCountUsesKinds(t *testing.T) {
+	// Two cells display as "NULL": one is a real SQL NULL, one is the four
+	// characters. Only the first should count toward the NULL rate.
+	result := db.QueryResult{
+		Columns: []string{"name"},
+		Rows:    [][]string{{"NULL"}, {"NULL"}, {"alice"}, {"bob"}},
+		Kinds: [][]db.Kind{
+			{db.KindNull},
+			{db.KindText},
+			{db.KindText},
+			{db.KindText},
+		},
+	}
+
+	stats := computeColumnStats(result)
+	if stats[0].NullCnt != 1 {
+		t.Errorf("NullCnt = %d, want 1 (the literal text NULL is not a NULL)", stats[0].NullCnt)
+	}
+	if stats[0].NullRate != 0.25 {
+		t.Errorf("NullRate = %v, want 0.25", stats[0].NullRate)
+	}
+	// The literal "NULL" text is a distinct value alongside alice and bob.
+	if stats[0].Distinct != 3 {
+		t.Errorf("Distinct = %d, want 3", stats[0].Distinct)
+	}
+}
+
+func TestComputeColumnStats_NullCountFallsBackWithoutKinds(t *testing.T) {
+	result := db.QueryResult{
+		Columns: []string{"name"},
+		Rows:    [][]string{{"NULL"}, {"NULL"}, {"alice"}, {"bob"}},
+	}
+
+	stats := computeColumnStats(result)
+	if stats[0].NullCnt != 2 {
+		t.Errorf("NullCnt = %d, want 2 (string-sentinel fallback)", stats[0].NullCnt)
+	}
+}

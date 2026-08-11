@@ -7,7 +7,9 @@ package bring
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/kwrkb/asql/internal/db"
@@ -48,11 +50,19 @@ func Open() (*sql.DB, *sqlite.Adapter, error) {
 }
 
 // Materialize creates a new table named tableName in conn and copies result
-// into it. Every column is stored as TEXT: QueryResult.Rows is already
-// stringified by the source adapter's scan (see dbutil.StringifyValue), so no
-// typed value survives to materialize from. Display sentinels are reversed at
-// insert time so brought values round-trip close to their original form (see
-// reverseSentinel).
+// into it.
+//
+// Values keep their meaning across the copy when result carries kind
+// information (db.QueryResult.Kinds, recorded at scan time): each column is
+// declared with the SQLite affinity implied by the kinds observed in it, and
+// each cell is bound as an int64/float64/[]byte/string/NULL rather than as its
+// display string. Numbers therefore sort and JOIN numerically, and SQL NULL is
+// distinguishable from the literal text "NULL".
+//
+// When result carries no kinds — e.g. a QueryResult assembled by hand — every
+// column falls back to TEXT and display sentinels are reversed heuristically
+// (see reverseSentinel), which is lossy for values that are literally "NULL"
+// or `""`.
 //
 // CREATE TABLE and all INSERTs run inside a single transaction so a failure
 // partway through (e.g. a bound-parameter overflow) leaves no orphaned empty
@@ -63,24 +73,91 @@ func Materialize(ctx context.Context, conn *sql.DB, quote func(string) string, t
 		return fmt.Errorf("cannot materialize a result with no columns")
 	}
 
+	affinities := columnAffinities(result, len(cols))
+
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
-	if err := createTable(ctx, tx, quote, tableName, cols); err != nil {
+	if err := createTable(ctx, tx, quote, tableName, cols, affinities); err != nil {
 		return err
 	}
 	if len(result.Rows) > 0 {
-		if err := insertRows(ctx, tx, quote, tableName, cols, result.Rows); err != nil {
+		if err := insertRows(ctx, tx, quote, tableName, cols, result); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
 }
 
-func createTable(ctx context.Context, tx *sql.Tx, quote func(string) string, tableName string, cols []string) error {
+// columnAffinities picks a declared SQLite type per column from the kinds
+// observed in that column's cells. An empty string means "declare no type",
+// which gives the column BLOB affinity: SQLite then stores every value in its
+// own storage class instead of coercing it. That is the right choice for a
+// column whose values are genuinely mixed — declaring TEXT there would
+// stringify the numbers back and undo the whole point of carrying kinds.
+func columnAffinities(result db.QueryResult, colCount int) []string {
+	out := make([]string, colCount)
+	if !result.HasKinds() {
+		for i := range out {
+			out[i] = "TEXT"
+		}
+		return out
+	}
+
+	for c := range out {
+		var seen uint8
+		for r, row := range result.Rows {
+			var cell string
+			if c < len(row) {
+				cell = row[c]
+			}
+			// Classify by the kind the cell will actually be bound as, not by
+			// the kind recorded at scan time: a column declared INTEGER coerces
+			// even a text-bound value, so an unparsable "integer" must widen the
+			// column rather than be silently converted on the way in.
+			switch effectiveKind(cell, result.KindAt(r, c)) {
+			case db.KindNull:
+				// NULL is compatible with every affinity — a column of ints and
+				// NULLs is still an INTEGER column — so it never widens the set.
+			case db.KindInt:
+				seen |= seenInt
+			case db.KindFloat:
+				seen |= seenFloat
+			case db.KindBlob:
+				seen |= seenBlob
+			default: // KindText, KindEmpty
+				seen |= seenText
+			}
+		}
+		switch seen {
+		case 0: // no rows, or every value NULL
+			out[c] = ""
+		case seenInt:
+			out[c] = "INTEGER"
+		case seenFloat, seenInt | seenFloat:
+			out[c] = "REAL"
+		case seenText:
+			out[c] = "TEXT"
+		case seenBlob:
+			out[c] = "BLOB"
+		default: // mixed storage classes
+			out[c] = ""
+		}
+	}
+	return out
+}
+
+const (
+	seenInt uint8 = 1 << iota
+	seenFloat
+	seenText
+	seenBlob
+)
+
+func createTable(ctx context.Context, tx *sql.Tx, quote func(string) string, tableName string, cols, affinities []string) error {
 	var sb strings.Builder
 	sb.WriteString("CREATE TABLE ")
 	sb.WriteString(quote(tableName))
@@ -90,7 +167,10 @@ func createTable(ctx context.Context, tx *sql.Tx, quote func(string) string, tab
 			sb.WriteString(", ")
 		}
 		sb.WriteString(quote(c))
-		sb.WriteString(" TEXT")
+		if i < len(affinities) && affinities[i] != "" {
+			sb.WriteString(" ")
+			sb.WriteString(affinities[i])
+		}
 	}
 	sb.WriteString(")")
 
@@ -100,7 +180,9 @@ func createTable(ctx context.Context, tx *sql.Tx, quote func(string) string, tab
 	return nil
 }
 
-func insertRows(ctx context.Context, tx *sql.Tx, quote func(string) string, tableName string, cols []string, rows [][]string) error {
+func insertRows(ctx context.Context, tx *sql.Tx, quote func(string) string, tableName string, cols []string, result db.QueryResult) error {
+	rows := result.Rows
+	hasKinds := result.HasKinds()
 	quotedCols := make([]string, len(cols))
 	for i, c := range cols {
 		quotedCols[i] = quote(c)
@@ -130,7 +212,11 @@ func insertRows(ctx context.Context, tx *sql.Tx, quote func(string) string, tabl
 				if c < len(row) {
 					cell = row[c]
 				}
-				args = append(args, reverseSentinel(cell))
+				if hasKinds {
+					args = append(args, bindValue(cell, result.KindAt(start+i, c)))
+				} else {
+					args = append(args, reverseSentinel(cell))
+				}
 			}
 		}
 		if _, err := tx.ExecContext(ctx, query.String(), args...); err != nil {
@@ -139,6 +225,54 @@ func insertRows(ctx context.Context, tx *sql.Tx, quote func(string) string, tabl
 	}
 
 	return nil
+}
+
+// effectiveKind reports the kind a cell will actually be bound as. Decoding is
+// best-effort: a display string that does not parse as its recorded kind falls
+// back to text rather than failing the whole bring, since a surprising cell is
+// still worth observing. columnAffinities and bindValue both go through this
+// function so a column's declared type always matches the values put into it.
+func effectiveKind(cell string, kind db.Kind) db.Kind {
+	switch kind {
+	case db.KindInt:
+		// Unsigned values above math.MaxInt64 land here: SQLite integers are
+		// signed 64-bit, so they stay text rather than wrapping negative or
+		// being widened to a lossy float.
+		if _, err := strconv.ParseInt(cell, 10, 64); err != nil {
+			return db.KindText
+		}
+	case db.KindFloat:
+		if _, err := strconv.ParseFloat(cell, 64); err != nil {
+			return db.KindText
+		}
+	case db.KindBlob:
+		if _, err := hex.DecodeString(cell); err != nil {
+			return db.KindText
+		}
+	}
+	return kind
+}
+
+// bindValue turns a display string back into the SQL value it stands for,
+// using the kind recorded when the source row was scanned.
+func bindValue(cell string, kind db.Kind) any {
+	switch effectiveKind(cell, kind) {
+	case db.KindNull:
+		return nil
+	case db.KindEmpty:
+		return ""
+	case db.KindInt:
+		n, _ := strconv.ParseInt(cell, 10, 64)
+		return n
+	case db.KindFloat:
+		f, _ := strconv.ParseFloat(cell, 64)
+		return f
+	case db.KindBlob:
+		b, _ := hex.DecodeString(cell)
+		return b
+	default:
+		return cell
+	}
 }
 
 // reverseSentinel undoes dbutil.StringifyValue's display sentinels so

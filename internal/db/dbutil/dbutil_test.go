@@ -1,8 +1,12 @@
 package dbutil
 
 import (
+	"math"
+	"strconv"
 	"testing"
 	"time"
+
+	"github.com/kwrkb/asql/internal/db"
 )
 
 func TestStringifyValue(t *testing.T) {
@@ -185,5 +189,68 @@ func TestCteBodyKeyword(t *testing.T) {
 				t.Errorf("CteBodyKeyword(%q) = %q, want %q", tt.query, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestStringifyValueKind(t *testing.T) {
+	ts := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name     string
+		value    any
+		wantStr  string
+		wantKind db.Kind
+	}{
+		{"nil", nil, "NULL", db.KindNull},
+		{"int64", int64(42), "42", db.KindInt},
+		{"negative int64", int64(-7), "-7", db.KindInt},
+		{"float64", float64(2.5), "2.5", db.KindFloat},
+		{"float64 exponent", float64(1e21), "1e+21", db.KindFloat},
+		{"string", "hello", "hello", db.KindText},
+		{"literal NULL text", "NULL", "NULL", db.KindText},
+		{"bool", true, "true", db.KindText},
+		{"time", ts, "2026-08-11T12:00:00Z", db.KindText},
+		{"utf8 bytes are text", []byte("héllo"), "héllo", db.KindText},
+		{"binary bytes are blob", []byte{0xff, 0x00, 0xfe}, "ff00fe", db.KindBlob},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotStr, gotKind := StringifyValueKind(tt.value)
+			if gotStr != tt.wantStr {
+				t.Errorf("string = %q, want %q", gotStr, tt.wantStr)
+			}
+			if gotKind != tt.wantKind {
+				t.Errorf("kind = %d, want %d", gotKind, tt.wantKind)
+			}
+			// StringifyValue must keep returning exactly the same string.
+			if legacy := StringifyValue(tt.value); legacy != tt.wantStr {
+				t.Errorf("StringifyValue = %q, want %q", legacy, tt.wantStr)
+			}
+		})
+	}
+}
+
+func TestStringifyValueKind_NumericStringsRoundTrip(t *testing.T) {
+	// KindInt/KindFloat promise that the display string parses back exactly;
+	// bring relies on that to rebuild typed values.
+	for _, v := range []int64{0, 1, -1, math.MaxInt64, math.MinInt64} {
+		s, k := StringifyValueKind(v)
+		if k != db.KindInt {
+			t.Fatalf("%d: kind = %d, want KindInt", v, k)
+		}
+		got, err := strconv.ParseInt(s, 10, 64)
+		if err != nil || got != v {
+			t.Errorf("%d: round-trip via %q gave (%d, %v)", v, s, got, err)
+		}
+	}
+	for _, v := range []float64{0, 0.1, -2.5, 1e-9, math.MaxFloat64, math.SmallestNonzeroFloat64} {
+		s, k := StringifyValueKind(v)
+		if k != db.KindFloat {
+			t.Fatalf("%v: kind = %d, want KindFloat", v, k)
+		}
+		got, err := strconv.ParseFloat(s, 64)
+		if err != nil || got != v {
+			t.Errorf("%v: round-trip via %q gave (%v, %v)", v, s, got, err)
+		}
 	}
 }
