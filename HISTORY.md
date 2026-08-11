@@ -10,11 +10,11 @@
 
 先頭キーワードだけでは足りない3つの経路を個別に塞いだ。(a) **データ変更CTE** — `WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone` は `CteBodyKeyword` が `select` を返すため本体だけ見ると通る。`dbutil.CteTermKeywords` を追加し、`AS (` で始まる全項（入れ子含む）の先頭キーワードを検査する。(b) **`EXPLAIN ANALYZE`** — PostgreSQL は対象文を実際に実行する。`dbutil.StripExplain` で対象文を取り出し、同じ分類を再帰適用する（`ANALYZE` を特別扱いしない形）。(c) **複文** — `SELECT 1; DELETE FROM t` は先頭が `select`。`dbutil.HasMultipleStatements` で末尾以外の区切りを拒否する。PRAGMA は「`=` の有無」ではなくスキーマ参照系の許可リストで判定する（SQLite は関数構文の setter `PRAGMA query_only(0)` を受け付けるため）。
 
-**PR #52 レビュー対応**: Codex の指摘で `SELECT ... INTO` の穴を塞いだ。PostgreSQL の `SELECT * INTO backup FROM t` はテーブルを作って埋め、MySQL の `SELECT ... INTO OUTFILE` はサーバにファイルを書くが、どちらも先頭キーワードが `select` のため素通りしていた（実測で確認）。`ContainsReturning` を `dbutil.ContainsKeyword` に一般化し、許可対象の文でも裸の `INTO` を含むものは拒否する。`INTO` は全方言で予約語なので、リテラル・引用識別子・コメントの外に現れたら常に句である。
+**PR #52 レビュー対応**: Codex の指摘で `SELECT ... INTO` の穴を塞いだ。PostgreSQL の `SELECT * INTO backup FROM t` はテーブルを作って埋め、MySQL の `SELECT ... INTO OUTFILE` はサーバにファイルを書くが、どちらも先頭キーワードが `select` のため素通りしていた（実測で確認）。許可対象の文でも裸の `INTO` を含むものは拒否する。
 
-指摘2巡目では**スキャナ自身の方言依存**を2件塞いだ。(1) `#` は MySQL では行コメントだが PostgreSQL ではビット XOR 演算子で、無条件にコメント扱いすると `SELECT 1 # 2; DELETE FROM t` の `;` 以降が消えて複文検査をすり抜ける。`Dialect.HashComment` で切り替える。(2) `'it\'s'` の終端位置は `NO_BACKSLASH_ESCAPES` / `standard_conforming_strings` 次第で変わり、外すとリテラルの範囲がずれて後続の `INTO` や `;` を飲み込む（`SELECT E'it\'s' INTO backup FROM t` が許可されていた）。推測せず、曖昧なら拒否する（`HasAmbiguousStringEscape`）。PostgreSQL の `E'...'` は設定に関わらずエスケープが効くと確定しているので正しく読んで通常どおり分類する。
+**スキャナの方針転換（レビュー3巡の結果）**: 当初は方言ごとの字句規則を実装したが、1つ直すたびに次が出た。3巡で計6件、すべて「読み取り文に見える書き込み」— `#`（MySQL では行コメント / PostgreSQL ではビット XOR 演算子）、`--`（MySQL だけ後ろに空白が必要）、`\'`（終端が `NO_BACKSLASH_ESCAPES` / `standard_conforming_strings` / `ANSI_QUOTES` というサーバ設定次第）、`/*! ... */`（MySQL/MariaDB は中身を実行する）。これは設計文書が非目標に挙げた「方言ごとの全構文を追いかける作業」そのもので、続ける限り穴は「まだ見つかっていないだけ」になる。
 
-3巡目は MySQL 固有の字句規則を3件。(1) MySQL は `--` の後に空白/制御文字がないとコメントにならないため `SELECT 1--1; DELETE FROM t` の `;` が見えていなかった（`1--1` は算術式）。(2) `/*! ... */` は MySQL/MariaDB が**中身を実行する**コメントで、捨ててはいけない。中身を解析せず一律に拒否する。(3) MySQL の `"` は ANSI_QUOTES 未設定なら文字列なので、`"a\"b"` の終端も設定依存になる。単引用符と同じく曖昧なら拒否する。
+そこで**スキャナから方言を外し、移植可能な部分集合だけを読む形に反転させた**（`dbutil.UnlexableReason`）。読むのは引用符の二重化で閉じる `'...'` / `"..."` / `` `...` ``、`[...]`、空白必須の `-- `、素の `/* ... */` のみ。外れるものは接続先に関わらず拒否する。`Dialect` の追加フラグ5つと専用関数3つが1規則に畳まれ、`readonly.Check` は DB 種別を取らなくなった。失うのは方言固有の書き方だけで、移植可能な綴り方（引用符の二重化、ダッシュの後の空白）は常に使える。
 
 **層2（従）**は SQLite のみ。`file:<path>?mode=ro` で開き、`PRAGMA query_only(0)` を実行しても書き込みが戻らないことをテストで固定した。MySQL / PostgreSQL は実サーバで検証できないため層1のみで出荷。したがってこの2つでは層1が唯一の防御であり、上記 (a)(b) は「あれば良い」ではなく必須。
 

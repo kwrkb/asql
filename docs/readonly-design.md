@@ -51,8 +51,11 @@ ui.executeQueryCmd → adapter.Query(ctx, query)
 
 分類ルール（許可リスト方式。**未知のキーワードは拒否**）:
 
+まず `UnlexableReason` が「読めない構文」を拒否し、その後に文を分類する。
+
 | 判定 | 扱い |
 |------|------|
+| 移植可能な部分集合の外 | **拒否**（後述） |
 | `select` / `values` / `table` / `show` / `describe` / `desc` | **後述。`INTO` を含むものは拒否**、それ以外は許可 |
 | `with` | **後述。本体だけでなく全 CTE 項を検査する** |
 | `explain` | **後述。説明対象の文を再帰的に検査する** |
@@ -72,33 +75,33 @@ ui.executeQueryCmd → adapter.Query(ctx, query)
 （`dbutil.ContainsKeyword`）。MySQL の `SELECT a INTO @var` はセッション変数への代入だけだが、
 これも一緒に拒否する。区別するには代入先の解析が必要で、観察ツールには見合わない。
 
-#### スキャナは方言を見る — `#` と `\'` は方言で意味が変わる
+#### スキャナは方言を追わない — 移植可能な部分集合だけを読む
 
-分類の前に「文が正しく読めているか」を確かめる必要がある。読み違えたスキャナは、
-その後ろのキーワードを全部取り逃がす。
+分類の前に「文が正しく読めているか」を確かめる必要がある。読み違えたスキャナは、その先のキーワードを
+全部取り逃がす。当初は方言ごとの字句規則を実装したが、**1 つ直すたびに次が出る**構造だった（PR #52 の
+レビュー 3 巡で計 6 件、すべて「読み取り文に見える書き込み」）:
 
-**`#` はコメントとは限らない。** MySQL では行コメントだが、PostgreSQL では**ビット XOR 演算子**。
-無条件にコメント扱いすると `SELECT 1 # 2; DELETE FROM t` の `;` 以降が丸ごと消え、複文検査をすり抜ける
-（実測で確認）。`Dialect.HashComment` で方言ごとに切り替える。
+- `#` は MySQL では行コメント、PostgreSQL では**ビット XOR 演算子**
+- `--` は MySQL では後ろに空白/制御文字が要るが、PostgreSQL / SQLite では不要（`1--1` の意味が変わる）
+- `\'` がリテラルを閉じるかは `NO_BACKSLASH_ESCAPES` / `standard_conforming_strings` / `ANSI_QUOTES`
+  という**サーバ設定**次第で、SQL テキストからは決まらない
+- `/*! ... */` は MySQL/MariaDB だけ**中身が実行される**
 
-**`\'` の解釈はサーバ設定で変わる。** MySQL は `NO_BACKSLASH_ESCAPES`、PostgreSQL は
-`standard_conforming_strings` 次第で、`'it\'s'` の終端位置が変わる。どちらに倒しても外したときは
-リテラルの範囲がずれ、後続の `INTO` や `;` を飲み込む（実測: `SELECT E'it\'s' INTO backup FROM t` が許可されていた）。
+これは「非目的」に書いた**方言ごとの全構文を追いかける作業**そのものであり、続ける限り穴は
+「まだ見つかっていないだけ」になる。
 
-したがって**推測せず、曖昧なら拒否する**（`HasAmbiguousStringEscape`）。例外は PostgreSQL の `E'...'` で、
-ここは設定に関わらずエスケープが効くと確定しているので正しく読んで通常どおり分類する。
-利用者側の回避策は `''`（引用符の二重化）で、これは全方言で曖昧さがない。
+**したがってスキャナは方言を取らない。** 移植可能な部分集合だけを読み、外れるものは解釈せず拒否する
+（`dbutil.UnlexableReason`）。部分集合は以下:
 
-MySQL にはさらに 3 つ、スキャナが知らないと素通りする形がある（いずれも実測で確認）:
+| 読む | 形 |
+|---|---|
+| 引用 | `'...'` / `"..."` / `` `...` `` — 閉じるのは引用符の二重化のみ。`[...]` |
+| 行コメント | `-- ` — ダッシュの後に空白/制御文字が必須 |
+| ブロックコメント | `/* ... */` — ただし `/*!` `/*M!` は除く |
 
-| 入力 | 誤読 | 規則 |
-|---|---|---|
-| `SELECT 1--1; DELETE FROM t` | `--` を常にコメント扱いして `;` 以降を落とす | MySQL は `--` の後に空白/制御文字が要る（`Dialect.DoubleDashNeedsSpace`）。`1--1` は算術式 |
-| `SELECT 1; /*! DELETE FROM t */` | ブロックコメントとして捨てる | MySQL/MariaDB は `/*! ... */` の中身を**実行する**。中身を解析せず一律に拒否（`HasExecutableComment`） |
-| `SELECT "a\"b"; DELETE FROM t` | `a\"` で終わったと誤読し `;` 以降を飲み込む | MySQL の `"` は ANSI_QUOTES 未設定なら文字列。単引用符と同じく曖昧なら拒否 |
-
-`/*! ... */` だけは「正しく読む」のではなく**拒否**を選んだ。中身は任意の SQL であり、
-観察ツールにこの構文の用途がないため、解析する価値がない。
+これ以外（引用内のバックスラッシュエスケープ、裸の `#`、空白なしの `--`、実行コメント、閉じていない引用や
+コメント）は、**接続先の方言に関わらず**拒否する。失うのは方言固有の書き方だけで、移植可能な綴り方
+（引用符の二重化、ダッシュの後の空白）は常に使える。得られるのは、穴の**個別対応ではなくクラスの消滅**。
 
 #### WITH: 本体キーワードだけを見るのは不十分
 
@@ -222,10 +225,8 @@ guard 本体は小さい。コストはこちらにある。
   - `PRAGMA table_info(x)` → 許可 / `PRAGMA query_only=0` → 拒否 / **`PRAGMA query_only(0)` → 拒否**（関数構文の setter）
   - **`SELECT * INTO backup FROM t` → 拒否**（PostgreSQL はテーブルを作る）/ **`SELECT ... INTO OUTFILE '/tmp/x'` → 拒否**（MySQL はファイルを書く）
   - `SELECT 'INTO' FROM t` → 許可 / `SELECT * FROM into_log` → 許可（リテラルと識別子の中）
-  - **`SELECT 1 # 2; DELETE FROM t`（PostgreSQL）→ 拒否**（`#` は演算子なので複文）/ `SELECT 1 # comment`（MySQL）→ 許可
-  - **`SELECT 1--1; DELETE FROM t`（MySQL）→ 拒否**（`--` の後に空白がないのでコメントではない）/ `SELECT 1--1 FROM t`（PostgreSQL）→ 許可
-  - **`SELECT 1; /*! DELETE FROM t */`（MySQL）→ 拒否** / 同じ文が PostgreSQL では許可（ただのコメント）
-  - **`SELECT "a\"b"; DELETE FROM t`（MySQL）→ 拒否** / `SELECT "plain" FROM t` → 許可
+  - 移植可能な部分集合の外は接続先に関わらず拒否: `SELECT 1 # 2` / `SELECT 1--1` / `SELECT 1; /*! DELETE FROM t */` / `SELECT 'it\'s'` / `SELECT "a\"b"` / `SELECT E'it\'s'`
+  - 移植可能な綴りは常に許可: `SELECT 'it''s'` / `SELECT "a""b"` / `` SELECT `order` `` / `SELECT 1 -- note` / `SELECT 1 /* note */`
   - **`SELECT 'it\'s' FROM t`（MySQL/PostgreSQL）→ 拒否**（リテラルの範囲がサーバ設定依存）/ `SELECT E'it\'s' FROM t` → 許可 / `SELECT 'it''s'` → 許可
   - `PRAGMA journal_mode` → 拒否（許可リストに無い）
   - `ATTACH DATABASE ...` → 拒否

@@ -24,10 +24,10 @@
 | `adapter.go` | `DBAdapter` インターフェース（`Type` / `Query` / `Tables` / `Columns` / `Schema` / `QuoteIdentifier` / `Close`）と `QueryResult`・`Kind` |
 | `open.go` | DSN のユーティリティ（`MaskDSN` / `DetectType` / `DisplayName` / `Placeholder` / `InitialQuery`） |
 | `opener/` | DSN から各アダプタを生成する接着剤 |
-| `dbutil/` | 全アダプタ共通。値の文字列化と kind 判定（`classifyValue` / `StringifyValueKind`）、行スキャン（`ScanRowsOpts`、10,000 行上限）、SQL スキャナ（`LeadingKeyword` / `CteBodyKeyword` / `ContainsReturning`、`sqlscan.go` に `HasMultipleStatements` / `CteTermKeywords` / `StripExplain` / `PragmaName`） |
+| `dbutil/` | 全アダプタ共通。値の文字列化と kind 判定（`classifyValue` / `StringifyValueKind`）、行スキャン（`ScanRowsOpts`、10,000 行上限）、SQL スキャナ（`LeadingKeyword` / `CteBodyKeyword` / `ContainsReturning`）。`sqlscan.go` は**移植可能な部分集合**だけを読む文形状スキャナ（`UnlexableReason` / `HasMultipleStatements` / `CteTermKeywords` / `StripExplain` / `PragmaName` / `ContainsKeyword`）で、方言を取らない |
 | `sqlite/`, `mysql/`, `postgres/` | 各 DB のアダプタ実装 |
 | `bring/` | 持ち寄り先のローカル SQLite。`Open` / `Materialize`（affinity 決定 + 型付き bind）/ `recordProvenance`（`_asql_bring`） |
-| `readonly/` | `--readonly` の文ガード（`Check`）と `DBAdapter` ラッパ（`Wrap`）。許可リストは policy、文の形の判定は `dbutil/sqlscan.go` |
+| `readonly/` | `--readonly` の文ガード（`Check`）と `DBAdapter` ラッパ（`Wrap`）。許可リストは policy、文の形の判定は `dbutil/sqlscan.go`。接続先の DB 種別は見ない |
 
 `QueryResult.Rows [][]string` は不変で、`Kinds [][]db.Kind` が意味（NULL/空文字/整数/浮動小数/バイナリ/テキスト）を並走して運ぶ。
 `Kinds` が nil なら従来の全 TEXT 挙動にフォールバックする。

@@ -82,75 +82,58 @@ func IsRefused(err error) bool {
 }
 
 // Check reports whether query may run against a read-only connection.
-// dbType is the value reported by db.DBAdapter.Type; it selects the quoting
-// styles the scanner recognizes.
-func Check(query string, dbType string) error {
-	d := dbutil.DialectFor(dbType)
+func Check(query string) error {
 	// Before classifying anything, make sure the statement can be read at all.
-	// A backslash-escaped quote means the quoted run's extent — and so where
-	// every later keyword falls — depends on a server setting the guard cannot
-	// see (NO_BACKSLASH_ESCAPES, standard_conforming_strings, ANSI_QUOTES).
-	if dbutil.HasAmbiguousStringEscape(query, d) {
-		return &Error{
-			Subject: "a backslash-escaped quote in a quoted string",
-			Detail:  "its extent depends on a server setting; double the quote instead of escaping it",
-		}
+	// The scanner reads one portable subset of SQL; a construct outside it is
+	// refused rather than interpreted, because where a quoted run or a comment
+	// ends is what decides where every later keyword falls. See the note at
+	// the top of internal/db/dbutil/sqlscan.go.
+	if reason := dbutil.UnlexableReason(query); reason != "" {
+		return &Error{Subject: reason, Detail: "asql reads a portable subset of SQL"}
 	}
-	// A MySQL executable comment is SQL the server runs, not text it ignores,
-	// so a scanner that skips it as a comment misses whatever it carries. This
-	// check has to come before the ones below, which all skip comments —
-	// including this one — as insignificant.
-	if dbutil.HasExecutableComment(query, d) {
-		return &Error{
-			Subject: "a MySQL executable comment (/*! ... */)",
-			Detail:  "the server runs its contents as SQL",
-		}
-	}
-	if dbutil.HasMultipleStatements(query, d) {
+	if dbutil.HasMultipleStatements(query) {
 		return &Error{
 			Subject: "multiple statements",
 			Detail:  "only the first statement would be classified",
 		}
 	}
-	return classify(query, d, 0)
+	return classify(query, 0)
 }
 
 // maxExplainDepth bounds the EXPLAIN recursion. One level covers every real
 // use; deeper nesting is refused rather than followed.
 const maxExplainDepth = 1
 
-func classify(query string, d dbutil.Dialect, depth int) error {
-	// LeadingKeyword and CteBodyKeyword skip comments without consulting the
-	// dialect, so they treat `#` and a bare `--` as comments everywhere. That
-	// errs toward reading past text the server would not have skipped, which
-	// can only move the keyword this function sees further along — and the
-	// statements that exploits (`--DELETE FROM t` on MySQL, `#` at the start on
-	// PostgreSQL) are syntax errors on the server rather than writes.
+func classify(query string, depth int) error {
+	// LeadingKeyword and CteBodyKeyword have their own comment handling, which
+	// is laxer than the portable subset. That only matters for text
+	// UnlexableReason already refused, and it errs toward reading further into
+	// the statement rather than stopping short.
 	keyword := dbutil.LeadingKeyword(query)
 	switch {
 	case keyword == "":
 		return &Error{Subject: "this statement", Detail: "no SQL keyword found"}
 
 	case allowedLeading[keyword]:
-		return checkIntoTarget(query, d)
+		return checkIntoTarget(query)
 
 	case keyword == "with":
-		return classifyWith(query, d)
+		return classifyWith(query)
 
 	case keyword == "explain":
 		if depth >= maxExplainDepth {
 			return &Error{Subject: "nested EXPLAIN", Detail: "cannot be classified"}
 		}
-		target, ok := dbutil.StripExplain(query, d)
+		target, ok := dbutil.StripExplain(query)
 		if !ok {
 			return &Error{Subject: "EXPLAIN", Detail: "its target could not be read"}
 		}
 		// EXPLAIN ANALYZE runs the statement it explains, so the target is
 		// classified exactly as if it had been submitted on its own.
-		return classify(target, d, depth+1)
+		return classify(target, depth+1)
 
 	case keyword == "pragma":
-		name, ok := dbutil.PragmaName(query, d)
+		name, ok := dbutil.PragmaName(query)
 		if !ok {
 			return &Error{Subject: "PRAGMA", Detail: "its name could not be read"}
 		}
@@ -168,8 +151,8 @@ func classify(query string, d dbutil.Dialect, depth int) error {
 // are themselves allowed. Checking the body alone would let a data-modifying
 // CTE through, since those run as part of the same statement while leaving the
 // body keyword a plain SELECT.
-func classifyWith(query string, d dbutil.Dialect) error {
-	terms, ok := dbutil.CteTermKeywords(query, d)
+func classifyWith(query string) error {
+	terms, ok := dbutil.CteTermKeywords(query)
 	if !ok {
 		return &Error{Subject: "WITH", Detail: "its CTE terms could not be read"}
 	}
@@ -199,7 +182,7 @@ func classifyWith(query string, d dbutil.Dialect) error {
 	if !allowedLeading[body] {
 		return &Error{Subject: strings.ToUpper(body), Detail: "as the body of WITH"}
 	}
-	return checkIntoTarget(query, d)
+	return checkIntoTarget(query)
 }
 
 // checkIntoTarget refuses a statement that would send its result somewhere
@@ -211,13 +194,13 @@ func classifyWith(query string, d dbutil.Dialect) error {
 // with SELECT, and neither MySQL nor PostgreSQL has a verified connection-level
 // layer here, so the statement would reach the database and write for real.
 //
-// INTO is reserved in every dialect asql speaks, so a bare INTO outside string
-// literals and quoted identifiers is always the clause and never a column name.
+// INTO is reserved in every dialect asql speaks, so a bare INTO outside quoted
+// runs and comments is always the clause and never a column name.
 // MySQL's `SELECT a INTO @var` only assigns a session variable and is refused
 // along with the rest — separating it would mean parsing the target, which buys
 // nothing for an observation tool.
-func checkIntoTarget(query string, d dbutil.Dialect) error {
-	if dbutil.ContainsKeyword(query, "into", d) {
+func checkIntoTarget(query string) error {
+	if dbutil.ContainsKeyword(query, "into") {
 		return &Error{
 			Subject: "SELECT ... INTO",
 			Detail:  "it writes its result to a table or a file",

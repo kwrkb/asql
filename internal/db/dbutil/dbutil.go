@@ -575,56 +575,26 @@ func ShortenTypeName(typeName string) string {
 	return lower
 }
 
-// Dialect controls which quoting and comment styles the SQL scanner
-// recognizes. The zero value is the conservative reading: standard quoting
-// only, no dialect extensions.
+// Dialect controls which quoting styles the SQL scanner recognizes.
+//
+// It describes only what ContainsReturning needs. The statement guard does not
+// take a dialect at all — see the note at the top of sqlscan.go on why reading
+// one portable subset beats teaching a scanner every dialect's lexical rules.
 type Dialect struct {
 	BracketQuote  bool // SQLite/MSSQL [identifier] style
 	DollarQuote   bool // PostgreSQL $$string$$ style
 	BacktickQuote bool // SQLite/MySQL `identifier` style
-	// HashComment means # starts a line comment (MySQL). It must stay false
-	// for PostgreSQL, where # is the bitwise-XOR operator: reading `SELECT 1 # 2`
-	// as a comment swallows the rest of the line, including a `;` that starts
-	// another statement.
-	HashComment bool
-	// DoubleDashNeedsSpace means -- opens a comment only when the second dash
-	// is followed by whitespace or a control character (MySQL). Without the
-	// rule, `SELECT 1--1; DELETE FROM t` looks like a commented-out tail while
-	// MySQL reads 1--1 as arithmetic and runs the DELETE.
-	DoubleDashNeedsSpace bool
-	// ExecutableComment means /*! ... */ is executed rather than ignored
-	// (MySQL and MariaDB, which also spells it /*M! ... */).
-	ExecutableComment bool
-	// DoubleQuoteMayBeString means " delimits a string rather than an
-	// identifier unless ANSI_QUOTES is set (MySQL). Combined with
-	// BackslashEscape it makes the extent of a double-quoted run
-	// setting-dependent in the same way single quotes are.
-	DoubleQuoteMayBeString bool
-	// BackslashEscape means a backslash can escape a quote inside a
-	// single-quoted string. Whether it actually does is a server setting on
-	// both MySQL (NO_BACKSLASH_ESCAPES) and PostgreSQL
-	// (standard_conforming_strings), which is why scanners report the
-	// construct as ambiguous rather than pick a reading — see
-	// HasAmbiguousStringEscape.
-	BackslashEscape bool
 }
 
 // ContainsReturning scans query for the RETURNING keyword, correctly skipping
 // string literals, quoted identifiers, comments, and dialect-specific quoting.
 func ContainsReturning(query string, dialect Dialect) bool {
-	return ContainsKeyword(query, "returning", dialect)
-}
-
-// ContainsKeyword reports whether keyword appears in query as a bare word —
-// not inside a string literal, a quoted identifier, a comment, or as part of a
-// longer identifier. keyword must be lowercase; the match is case-insensitive.
-func ContainsKeyword(query string, keyword string, dialect Dialect) bool {
-	kw := keyword
+	const kw = "returning"
 	i := 0
 	n := len(query)
 	for i < n {
 		switch {
-		case query[i] == '-' && i+1 < n && query[i+1] == '-' && lineCommentOpens(query, i, dialect):
+		case query[i] == '-' && i+1 < n && query[i+1] == '-':
 			for i < n && query[i] != '\n' {
 				i++
 			}
@@ -638,13 +608,9 @@ func ContainsKeyword(query string, keyword string, dialect Dialect) bool {
 				i++
 			}
 		case query[i] == '\'':
-			i, _ = skipSingleQuotedDialect(query, i, dialect)
+			i = skipSingleQuoted(query, i)
 		case query[i] == '"':
-			i, _ = skipDoubleQuotedDialect(query, i, dialect)
-		case dialect.HashComment && query[i] == '#':
-			for i < n && query[i] != '\n' {
-				i++
-			}
+			i = skipDoubleQuoted(query, i)
 		case dialect.BacktickQuote && query[i] == '`':
 			i = skipBacktickQuoted(query, i)
 		case dialect.BracketQuote && query[i] == '[':

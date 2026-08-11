@@ -41,7 +41,7 @@ func IsWrapped(adapter db.DBAdapter) bool {
 func (a *Adapter) Type() string { return a.inner.Type() }
 
 func (a *Adapter) Query(ctx context.Context, query string) (db.QueryResult, error) {
-	if err := Check(query, a.inner.Type()); err != nil {
+	if err := Check(query); err != nil {
 		return db.QueryResult{}, err
 	}
 	return a.inner.Query(ctx, query)

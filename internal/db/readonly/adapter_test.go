@@ -96,18 +96,35 @@ func TestAdapterPassesMetadataThrough(t *testing.T) {
 	}
 }
 
-// The dialect used to scan a statement comes from the wrapped adapter, so a
-// backtick-quoted identifier is understood on MySQL and a dollar-quoted string
-// on PostgreSQL.
-func TestAdapterUsesTheWrappedDialect(t *testing.T) {
-	mysqlGuard := Wrap(&fakeAdapter{dbType: "mysql"})
-	if _, err := mysqlGuard.Query(context.Background(), "SELECT `;` FROM t"); err != nil {
-		t.Errorf("MySQL backtick identifier refused: %v", err)
+// The guard does not ask the adapter which database it is talking to: it
+// reads one portable subset of SQL and refuses anything outside it. Quoting
+// that is portable works everywhere; quoting that only one dialect
+// understands is refused everywhere, whatever the connection.
+func TestAdapterDoesNotDependOnTheDatabaseType(t *testing.T) {
+	portable := []string{
+		"SELECT `a` FROM t",     // backtick identifier
+		`SELECT "a""b" FROM t`,  // doubled double quote
+		"SELECT 'it''s' FROM t", // doubled single quote
+		"SELECT [a b] FROM t",   // bracket identifier
+	}
+	unportable := []string{
+		"SELECT $$;$$",          // PostgreSQL dollar quoting
+		`SELECT 'it\'s' FROM t`, // backslash-escaped quote
+		"SELECT 1 # 2",          // # is a comment on MySQL, an operator on PostgreSQL
 	}
 
-	pgGuard := Wrap(&fakeAdapter{dbType: "postgres"})
-	if _, err := pgGuard.Query(context.Background(), "SELECT $$;$$"); err != nil {
-		t.Errorf("PostgreSQL dollar-quoted string refused: %v", err)
+	for _, dbType := range []string{"sqlite", "mysql", "postgres"} {
+		guarded := Wrap(&fakeAdapter{dbType: dbType})
+		for _, query := range portable {
+			if _, err := guarded.Query(context.Background(), query); err != nil {
+				t.Errorf("[%s] portable quoting refused: %q: %v", dbType, query, err)
+			}
+		}
+		for _, query := range unportable {
+			if _, err := guarded.Query(context.Background(), query); err == nil {
+				t.Errorf("[%s] %q was accepted; the guard reads a portable subset", dbType, query)
+			}
+		}
 	}
 }
 

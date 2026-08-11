@@ -1,32 +1,88 @@
 package dbutil
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-func TestHasMultipleStatements(t *testing.T) {
+func TestUnlexableReason(t *testing.T) {
 	tests := []struct {
-		name    string
-		query   string
-		dialect Dialect
-		want    bool
+		name       string
+		query      string
+		unlexable  bool
+		mentioning string
 	}{
-		{"single", "SELECT 1", Dialect{}, false},
-		{"trailing semicolon", "SELECT 1;", Dialect{}, false},
-		{"trailing semicolon and whitespace", "SELECT 1;  \n", Dialect{}, false},
-		{"trailing semicolon and comment", "SELECT 1; -- done", Dialect{}, false},
-		{"two statements", "SELECT 1; DELETE FROM t", Dialect{}, true},
-		{"empty statement", "SELECT 1;;", Dialect{}, true},
-		{"semicolon in string", "SELECT ';'", Dialect{}, false},
-		{"semicolon in line comment", "SELECT 1 -- ; DELETE\n", Dialect{}, false},
-		{"semicolon in block comment", "SELECT 1 /* ; DELETE */", Dialect{}, false},
-		{"semicolon in quoted identifier", `SELECT "a;b" FROM t`, Dialect{}, false},
-		{"semicolon in backtick identifier", "SELECT `a;b` FROM t", Dialect{BacktickQuote: true}, false},
-		{"semicolon in bracket identifier", "SELECT [a;b] FROM t", Dialect{BracketQuote: true}, false},
-		{"semicolon in dollar quote", "SELECT $$a;b$$", Dialect{DollarQuote: true}, false},
-		{"empty query", "", Dialect{}, false},
+		{"plain select", "SELECT * FROM t", false, ""},
+		{"doubled single quote", "SELECT 'it''s' FROM t", false, ""},
+		{"doubled double quote", `SELECT "a""b" FROM t`, false, ""},
+		{"doubled backtick", "SELECT `a``b` FROM t", false, ""},
+		{"bracket identifier", "SELECT [a b] FROM t", false, ""},
+		{"line comment with space", "SELECT 1 -- note\n", false, ""},
+		{"line comment at end of input", "SELECT 1 --", false, ""},
+		{"block comment", "SELECT 1 /* note */", false, ""},
+		{"backslash not before a quote", `SELECT 'a\nb' FROM t`, false, ""},
+
+		// The constructs dialects disagree about.
+		{"escaped single quote", `SELECT 'it\'s' FROM t`, true, "backslash-escaped quote"},
+		{"escaped double quote", `SELECT "a\"b" FROM t`, true, "backslash-escaped quote"},
+		{"escaped backslash", `SELECT 'a\\' FROM t`, true, "backslash-escaped quote"},
+		{"postgres escape string", `SELECT E'it\'s' FROM t`, true, "backslash-escaped quote"},
+		{"hash", "SELECT 1 # 2", true, "#"},
+		{"double dash without space", "SELECT 1--1", true, "no space after the dashes"},
+		{"executable comment", "SELECT 1 /*! DELETE FROM t */", true, "executable comment"},
+		{"mariadb executable comment", "SELECT 1 /*M! DELETE FROM t */", true, "executable comment"},
+		{"versioned executable comment", "SELECT 1 /*!50110 DELETE FROM t */", true, "executable comment"},
+		{"unterminated string", "SELECT 'abc FROM t", true, "unterminated"},
+		{"unterminated block comment", "SELECT 1 /* note", true, "unterminated"},
+
+		// Inside a quoted run, none of them are constructs.
+		{"hash inside a literal", "SELECT '#' FROM t", false, ""},
+		{"executable comment inside a literal", "SELECT '/*! x */' FROM t", false, ""},
+		{"dashes inside a literal", "SELECT '--1' FROM t", false, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := HasMultipleStatements(tt.query, tt.dialect); got != tt.want {
+			reason := UnlexableReason(tt.query)
+			if tt.unlexable && reason == "" {
+				t.Fatalf("UnlexableReason(%q) = \"\", want a reason", tt.query)
+			}
+			if !tt.unlexable && reason != "" {
+				t.Fatalf("UnlexableReason(%q) = %q, want it readable", tt.query, reason)
+			}
+			if tt.mentioning != "" && !strings.Contains(reason, tt.mentioning) {
+				t.Errorf("UnlexableReason(%q) = %q, want it to mention %q", tt.query, reason, tt.mentioning)
+			}
+		})
+	}
+}
+
+func TestHasMultipleStatements(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  bool
+	}{
+		{"single", "SELECT 1", false},
+		{"trailing semicolon", "SELECT 1;", false},
+		{"trailing semicolon and whitespace", "SELECT 1;  \n", false},
+		{"trailing semicolon and comment", "SELECT 1; -- done", false},
+		{"two statements", "SELECT 1; DELETE FROM t", true},
+		{"empty statement", "SELECT 1;;", true},
+		{"semicolon in string", "SELECT ';'", false},
+		{"semicolon in line comment", "SELECT 1 -- ; DELETE\n", false},
+		{"semicolon in block comment", "SELECT 1 /* ; DELETE */", false},
+		{"semicolon in quoted identifier", `SELECT "a;b" FROM t`, false},
+		{"semicolon in backtick identifier", "SELECT `a;b` FROM t", false},
+		{"semicolon in bracket identifier", "SELECT [a;b] FROM t", false},
+		{"empty query", "", false},
+		// The dialect-specific comment forms are not comments here, so the
+		// separator they would have hidden stays visible.
+		{"semicolon after a bare double dash", "SELECT 1--1; DELETE FROM t", true},
+		{"semicolon after a hash", "SELECT 1 # 2; DELETE FROM t", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := HasMultipleStatements(tt.query); got != tt.want {
 				t.Errorf("HasMultipleStatements(%q) = %v, want %v", tt.query, got, tt.want)
 			}
 		})
@@ -72,7 +128,7 @@ func TestCteTermKeywords(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := CteTermKeywords(tt.query, Dialect{})
+			got, ok := CteTermKeywords(tt.query)
 			if ok != tt.ok {
 				t.Fatalf("CteTermKeywords(%q) ok = %v, want %v", tt.query, ok, tt.ok)
 			}
@@ -111,7 +167,7 @@ func TestStripExplain(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := StripExplain(tt.query, Dialect{})
+			got, ok := StripExplain(tt.query)
 			if ok != tt.ok {
 				t.Fatalf("StripExplain(%q) ok = %v, want %v", tt.query, ok, tt.ok)
 			}
@@ -141,7 +197,7 @@ func TestPragmaName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := PragmaName(tt.query, Dialect{})
+			got, ok := PragmaName(tt.query)
 			if ok != tt.ok {
 				t.Fatalf("PragmaName(%q) ok = %v, want %v", tt.query, ok, tt.ok)
 			}
@@ -152,156 +208,30 @@ func TestPragmaName(t *testing.T) {
 	}
 }
 
-func TestDialectFor(t *testing.T) {
-	if d := DialectFor("sqlite"); !d.BracketQuote || !d.BacktickQuote || d.DollarQuote {
-		t.Errorf("sqlite dialect = %+v", d)
-	}
-	if d := DialectFor("mysql"); !d.BacktickQuote || d.BracketQuote || d.DollarQuote {
-		t.Errorf("mysql dialect = %+v", d)
-	}
-	if d := DialectFor("postgres"); !d.DollarQuote || d.BacktickQuote || d.BracketQuote {
-		t.Errorf("postgres dialect = %+v", d)
-	}
-	if d := DialectFor("something-else"); d.DollarQuote || d.BacktickQuote || d.BracketQuote {
-		t.Errorf("unknown dialect = %+v, want the conservative default", d)
-	}
-}
-
 func TestContainsKeyword(t *testing.T) {
 	tests := []struct {
 		name    string
 		query   string
 		keyword string
-		dialect Dialect
 		want    bool
 	}{
-		{"present", "SELECT * INTO backup FROM t", "into", Dialect{}, true},
-		{"absent", "SELECT * FROM t", "into", Dialect{}, false},
-		{"case insensitive", "select * into backup from t", "into", Dialect{}, true},
-		{"inside string literal", "SELECT 'INTO' FROM t", "into", Dialect{}, false},
-		{"inside quoted identifier", `SELECT "into" FROM t`, "into", Dialect{}, false},
-		{"inside backtick identifier", "SELECT `into` FROM t", "into", Dialect{BacktickQuote: true}, false},
-		{"inside bracket identifier", "SELECT [into] FROM t", "into", Dialect{BracketQuote: true}, false},
-		{"inside dollar quote", "SELECT $$into$$", "into", Dialect{DollarQuote: true}, false},
-		{"inside line comment", "SELECT 1 -- into backup", "into", Dialect{}, false},
-		{"inside block comment", "SELECT 1 /* into backup */", "into", Dialect{}, false},
-		{"prefix of a longer identifier", "SELECT * FROM into_log", "into", Dialect{}, false},
-		{"suffix of a longer identifier", "SELECT * FROM log_into", "into", Dialect{}, false},
+		{"present", "SELECT * INTO backup FROM t", "into", true},
+		{"absent", "SELECT * FROM t", "into", false},
+		{"case insensitive", "select * into backup from t", "into", true},
+		{"inside string literal", "SELECT 'INTO' FROM t", "into", false},
+		{"inside quoted identifier", `SELECT "into" FROM t`, "into", false},
+		{"inside backtick identifier", "SELECT `into` FROM t", "into", false},
+		{"inside bracket identifier", "SELECT [into] FROM t", "into", false},
+		{"inside line comment", "SELECT 1 -- into backup", "into", false},
+		{"inside block comment", "SELECT 1 /* into backup */", "into", false},
+		{"prefix of a longer identifier", "SELECT * FROM into_log", "into", false},
+		{"suffix of a longer identifier", "SELECT * FROM log_into", "into", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := ContainsKeyword(tt.query, tt.keyword, tt.dialect); got != tt.want {
+			if got := ContainsKeyword(tt.query, tt.keyword); got != tt.want {
 				t.Errorf("ContainsKeyword(%q, %q) = %v, want %v", tt.query, tt.keyword, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestHasAmbiguousStringEscape(t *testing.T) {
-	mysql := DialectFor("mysql")
-	postgres := DialectFor("postgres")
-	sqlite := DialectFor("sqlite")
-
-	tests := []struct {
-		name    string
-		query   string
-		dialect Dialect
-		want    bool
-	}{
-		{"plain literal", `SELECT 'abc' FROM t`, mysql, false},
-		{"doubled quote", `SELECT 'it''s' FROM t`, mysql, false},
-		{"escaped quote on mysql", `SELECT 'it\'s' FROM t`, mysql, true},
-		{"escaped backslash on mysql", `SELECT 'a\\' FROM t`, mysql, true},
-		{"escaped quote on postgres", `SELECT 'it\'s' FROM t`, postgres, true},
-		{"escape string on postgres", `SELECT E'it\'s' FROM t`, postgres, false},
-		{"escape string lowercase", `SELECT e'it\'s' FROM t`, postgres, false},
-		{"e is part of an identifier", `SELECT tale'it\'s' FROM t`, postgres, true},
-		{"backslash without a quote", `SELECT 'a\nb' FROM t`, mysql, false},
-		{"sqlite has no escapes", `SELECT 'it\'s' FROM t`, sqlite, false},
-		{"backslash inside a quoted identifier", "SELECT `a\\'b` FROM t", mysql, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := HasAmbiguousStringEscape(tt.query, tt.dialect); got != tt.want {
-				t.Errorf("HasAmbiguousStringEscape(%q) = %v, want %v", tt.query, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestHasMultipleStatementsHashRule(t *testing.T) {
-	const query = "SELECT 1 # 2; DELETE FROM t"
-	if !HasMultipleStatements(query, DialectFor("postgres")) {
-		t.Error("PostgreSQL: # is the bitwise-XOR operator, so the ; still separates statements")
-	}
-	if HasMultipleStatements("SELECT 1 # 2; DELETE FROM t", DialectFor("mysql")) {
-		t.Error("MySQL: # starts a comment, so there is only one statement")
-	}
-	if !HasMultipleStatements("SELECT 1 # c\n; DELETE FROM t", DialectFor("mysql")) {
-		t.Error("MySQL: a # comment ends at the newline and must not hide the separator")
-	}
-}
-
-func TestLineCommentRules(t *testing.T) {
-	mysql := DialectFor("mysql")
-	postgres := DialectFor("postgres")
-
-	// MySQL reads 1--1 as arithmetic, so the separator is still a separator.
-	if !HasMultipleStatements("SELECT 1--1; DELETE FROM t", mysql) {
-		t.Error("MySQL: -- without following whitespace is not a comment")
-	}
-	if HasMultipleStatements("SELECT 1-- 1; DELETE FROM t", mysql) {
-		t.Error("MySQL: -- followed by a space is a comment and hides the rest of the line")
-	}
-	// PostgreSQL needs no whitespace after the dashes.
-	if HasMultipleStatements("SELECT 1--1; DELETE FROM t", postgres) {
-		t.Error("PostgreSQL: --1; DELETE is a comment")
-	}
-}
-
-func TestHasExecutableComment(t *testing.T) {
-	mysql := DialectFor("mysql")
-	postgres := DialectFor("postgres")
-
-	tests := []struct {
-		name    string
-		query   string
-		dialect Dialect
-		want    bool
-	}{
-		{"executable", "SELECT 1; /*! DELETE FROM t */", mysql, true},
-		{"versioned", "SELECT 1; /*!50110 DELETE FROM t */", mysql, true},
-		{"mariadb", "SELECT 1; /*M! DELETE FROM t */", mysql, true},
-		{"plain block comment", "SELECT 1 /* plain */ FROM t", mysql, false},
-		{"optimizer hint", "SELECT /*+ NO_ICP(t) */ * FROM t", mysql, false},
-		{"inside a string literal", "SELECT '/*! DELETE */' FROM t", mysql, false},
-		{"inside a backtick identifier", "SELECT `/*! x */` FROM t", mysql, false},
-		{"not a mysql dialect", "SELECT 1; /*! DELETE FROM t */", postgres, false},
-		{"no comment at all", "SELECT 1 FROM t", mysql, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := HasExecutableComment(tt.query, tt.dialect); got != tt.want {
-				t.Errorf("HasExecutableComment(%q) = %v, want %v", tt.query, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestHasAmbiguousStringEscapeDoubleQuoted(t *testing.T) {
-	mysql := DialectFor("mysql")
-	postgres := DialectFor("postgres")
-
-	if !HasAmbiguousStringEscape(`SELECT "a\"b" FROM t`, mysql) {
-		t.Error("MySQL: a double-quoted run is a string unless ANSI_QUOTES is set")
-	}
-	if HasAmbiguousStringEscape(`SELECT "plain" FROM t`, mysql) {
-		t.Error("MySQL: a double-quoted run without escapes is unambiguous")
-	}
-	if HasAmbiguousStringEscape(`SELECT "a""b" FROM t`, mysql) {
-		t.Error("MySQL: a doubled quote is portable and unambiguous")
-	}
-	if HasAmbiguousStringEscape(`SELECT "a\"b" FROM t`, postgres) {
-		t.Error("PostgreSQL: double quotes always delimit an identifier, no escapes apply")
 	}
 }
