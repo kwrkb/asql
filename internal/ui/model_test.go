@@ -5,13 +5,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/kwrkb/asql/internal/db"
+	"github.com/kwrkb/asql/internal/ui/table"
 )
 
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)

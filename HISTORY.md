@@ -9,6 +9,12 @@ Stats overlay の NULL 率も表示文字列一致ではなく kind で判定す
 
 ---
 
+## bubbles/table の ANSI 幅バグ修正（vendor + 2行パッチ）
+**実装**: `bubbles/table` v1.0.0 は `runewidth.Truncate` でセル幅を測るが、`runewidth.StringWidth` は ANSI エスケープのバイトを表示幅として数える。列幅が約27セル未満だとスタイル付き文字列がエスケープの途中で切断され、端末が残りを飲み込むため、**カラム型注釈が不可視**になり、**比較モードの差分セルは内容ごと消える**状態だった（幅の広い列では正常に描画されるため長期間気づかれなかった）。
+上流の修正 charmbracelet/bubbles#884（`ansi.Truncate` への2行変更）はマージ先が v2 系のみで、v1 向け同一 PR #883 は未マージのまま閉鎖。bubbles v2 移行は bubbletea v2 / lipgloss v2 を巻き込むため見合わないと判断し、`internal/ui/table/` に v1.0.0 の `table.go`（450行・MIT、LICENSE 同梱）を vendor して上流と同じ2行だけを適用した。`x/ansi` は既に間接依存のため新規依存はゼロ。上流のテストスイートは vendor せず、パッチ対象の挙動だけを覆う `table_test.go` を自前で用意（未修正コードで落ちることを確認済み）。型注釈・選択カラムの reverse 強調・差分セルのハイライトがすべて色付きのまま復活。
+
+---
+
 ## ドキュメント同期
 **実装**: README.md の AI 設定 Examples がフラット形式（`ai_endpoint:` をトップレベル）で書かれており、`internal/config` が期待するネスト形式（`ai:` 配下）と食い違っていた問題を修正。両 README に Stats overlay（`d` キー、NULL率・distinct・min/max・sparkline・histogram・10k行スキップ）と Bring & Join（`b`/`J` の手順、型保持、`_asql_bring` の列定義）の節を追加。キーバインド表に欠けていた `d` と STATS モードを追加。README.ja.md に AI の環境変数オーバーライド表を追加。
 

@@ -3,11 +3,11 @@ package ui
 import (
 	"fmt"
 
-	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/kwrkb/asql/internal/db"
 	"github.com/kwrkb/asql/internal/db/dbutil"
+	"github.com/kwrkb/asql/internal/ui/table"
 )
 
 const minWidthForCompare = 80

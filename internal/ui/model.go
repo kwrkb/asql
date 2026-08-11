@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -20,6 +19,7 @@ import (
 	"github.com/kwrkb/asql/internal/db/bring"
 	"github.com/kwrkb/asql/internal/profile"
 	"github.com/kwrkb/asql/internal/snippet"
+	"github.com/kwrkb/asql/internal/ui/table"
 )
 
 type mode string

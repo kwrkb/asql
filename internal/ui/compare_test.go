@@ -4,9 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/table"
-
 	"github.com/kwrkb/asql/internal/db"
+	"github.com/kwrkb/asql/internal/ui/table"
 )
 
 func TestCellDiffAt(t *testing.T) {

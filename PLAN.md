@@ -28,6 +28,7 @@ Bring & Join (Phase 3) はまだ先。比較体験が磨き込まれてから。
 - Phase 3 (Bring & Join) 着手: 3-1/3-2 完了 (`b`/`J` キー)、3-3 は要件未確定のため継続検討
 - 定期メンテナンス: 直接依存 (`pgx v5.10.0`, `mysql v1.10.0`, `modernc.org/sqlite v1.53.0`) 更新、`govulncheck` 到達脆弱性 (GO-2026-5004) 解消
 - Bring & Join の型情報保持と provenance 記録 (`_asql_bring`) 完了、README を実装に同期
+- `bubbles/table` の ANSI 幅バグを vendor + 2行パッチで修正（型注釈・差分ハイライトが復活）
 - readonly mode は設計のみ完了（`docs/readonly-design.md`）。実装は未着手
 - **次: readonly mode の実装可否判断、または Phase 3 残タスク (3-3)**
 
@@ -45,37 +46,14 @@ Bring & Join (Phase 3) はまだ先。比較体験が磨き込まれてから。
   > 新しいモードもオーバーレイも追加せず、既存のクエリ経路で観察できる普通のテーブルにした。先頭アンダースコアでサイドバー先頭に並ぶ
 - [x] Stats overlay の NULL 率を kind ベースに変更
 - [x] README.md / README.ja.md を実装に同期（AI 設定の階層混在バグ、Stats overlay、Bring & Join、`d` キー）
+- [x] `bubbles/table` の ANSI 幅バグを修正（作業中の TUI smoke test で発見した既存バグ）
+  > `runewidth.StringWidth` が ANSI エスケープのバイトを表示幅として数えるため、列幅が約27セル未満だとスタイル付き文字列がエスケープの途中で切断され、端末が残りを飲み込んでいた。**カラム型注釈が不可視**、**比較モードの差分セルは内容ごと消失**。変更前のコミット `0d3b668` で再現を確認済み
+  > 上流の修正 (charmbracelet/bubbles#884) は `ansi.Truncate` への2行変更だが、マージ先は v2 系のみ。v1 向けの同一 PR (#883) は未マージのまま閉じられており v1.0.0 には来ない。bubbles v2 への移行は bubbletea v2 / lipgloss v2 を巻き込むため2行の修正には見合わない
+  > `internal/ui/table/` に v1.0.0 の `table.go` (450行・MIT) を vendor し、上流と同じ2行だけを適用。`x/ansi` は既に間接依存だったので新規依存はゼロ。型注釈・選択カラム強調・差分ハイライトがすべて色付きのまま復活した
 
 結果:
 - `go build ./... && go vet ./... && go test ./...` 全パス
 - 追加テスト: affinity 決定、混在列の storage class 保持、数値ソート/JOIN、文字列 `"NULL"` と SQL NULL の区別、BLOB の hex 往復、int64 範囲外のフォールバック、provenance の記録とロールバック
-
-## 未着手: 既存バグ — スタイル付き文字列が bubbles/table で切り詰められる
-
-**発見**: 型情報保持の作業中、TUI の smoke test でカラムヘッダに型注釈が表示されないことに気づいた。変更前のコミット (0d3b668) をビルドして同じ現象を確認済みで、**今回の変更とは無関係な既存バグ**。
-
-**原因**: `bubbles/table` v1.0.0 の `headersView`/`renderRow` は `runewidth.Truncate(title, col.Width, "…")` を使うが、`runewidth.StringWidth` は ANSI エスケープのバイトを表示幅として数える。TrueColor プロファイルでの実測:
-
-```
-"id \x1b[38;2;147;163;184mint\x1b[0m"   lipgloss.Width=6  runewidth.StringWidth=27
-Truncate(w=12) -> "id \x1b[38;2;14…"     ← エスケープの途中で切断され、端末が残りを飲み込む
-Truncate(w=32) -> 無傷
-```
-
-`columnWidth` は幅を [12, 32] に丸めるため、スタイル付き文字列を渡す箇所は幅が 27 未満のとき壊れる。
-
-**影響範囲**（いずれも列幅に依存し、幅が広ければ正常に描画される。だから長らく気づかれなかった）:
-- [ ] カラム型注釈（`result.go` / `compare.go` のヘッダ組み立て）— 幅が約27セル未満の列で不可視。`columnWidth` の上限32に達する幅広の列では正常に出る
-- [ ] 差分セルのハイライト（`diffCellStyle.Render(cell)`）— 同条件で**セルの中身ごと消える**（runewidth=25 対 可視3文字）。表示が欠けるぶん型注釈より重い
-- [ ] 選択カラムヘッダの `Reverse(true)` — エスケープが8文字と短いので「列名の可視長 + 8 <= 列幅」なら生き残る。短い列名では問題なく、長い列名で壊れる
-
-**上流の修正はない**: bubbles v1.0.0 が最新。table.go は `charmbracelet/x/ansi` のエスケープ対応 truncate をテストでしか使っていない。
-
-**修正案（要判断）**:
-1. **table に ANSI を渡さない** — 型注釈をプレーンテキスト（`id int`）にすれば `StringWidth=6` で無傷になり、型表示は完全に直る。VISION の「色は最小限」とも整合する。ただし差分ハイライトと選択カラム強調は色以外の表現（記号など）に置き換える必要があり、Phase 2-4 の見た目が変わる
-2. **表の描画を自前で持つ** — `bubbles/table` の `View()` に依存せず行を組み立てる。自由度は上がるが変更が大きく、「軽さ」と引き換えになる
-
-案1の「型注釈だけ先に直す」は単独で安全かつ小さい。差分ハイライトの表現をどうするかはユーザー判断が要る。
 
 ## 未着手: readonly mode
 
