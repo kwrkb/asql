@@ -45,12 +45,44 @@ ui.executeQueryCmd → adapter.Query(ctx, query)
 
 | 判定 | 扱い |
 |------|------|
-| `select` / `values` / `table` / `explain` / `show` / `describe` / `desc` | 許可 |
-| `with` → `CteBodyKeyword` が上記のいずれか | 許可 |
-| `with` → それ以外 | 拒否 |
+| `select` / `values` / `table` / `show` / `describe` / `desc` | 許可 |
+| `with` | **後述。本体だけでなく全 CTE 項を検査する** |
+| `explain` | **後述。説明対象の文を再帰的に検査する** |
 | `pragma` | **後述の部分許可** |
 | 上記以外（`insert`/`update`/`delete`/`drop`/`alter`/`create`/`truncate`/`replace`/`merge`/`grant`/`attach`/`vacuum`/…） | 拒否 |
 | 空・キーワード抽出失敗 | 拒否 |
+
+#### WITH: 本体キーワードだけを見るのは不十分
+
+PostgreSQL は **データ変更 CTE** を持つ。`CteBodyKeyword` は本体の文だけを返すため、CTE 側の DML を見逃す。既存スキャナで実測:
+
+```
+WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone
+  LeadingKeyword="with"  CteBodyKeyword="select"     ← 本体だけ見ると許可されてしまう
+WITH a AS (SELECT 1), b AS (UPDATE t SET x=1 RETURNING *) SELECT * FROM a
+  LeadingKeyword="with"  CteBodyKeyword="select"     ← 2番目の CTE も見逃す
+```
+
+CTE の評価は本体の実行と同時に起きるので、これは「読み取りクエリのふりをした DELETE」がそのまま通る穴になる。
+
+**したがって `with` は、本体キーワードと全 CTE 項の両方が許可対象である場合にのみ許可する。** `dbutil` に `CteTermKeywords(query) []string` を追加し（`CteBodyKeyword` と同じ括弧深度・文字列リテラル・ドル引用符の追跡を再利用して、各 CTE 定義の括弧内の先頭キーワードを列挙する）、1つでも許可リスト外があれば拒否する。列挙に失敗した場合も拒否する（未知は拒否の原則）。
+
+MySQL と SQLite はデータ変更 CTE を持たないが、方言で分岐させず一律に拒否する。方言ごとに緩めると、方言判定を誤ったときに穴になる。
+
+#### EXPLAIN: 説明対象の文を再帰的に検査する
+
+PostgreSQL の `EXPLAIN ANALYZE` は**対象の文を実際に実行する**。`EXPLAIN ANALYZE DELETE FROM t` は先頭キーワードが `explain` なので、素朴な許可リストでは通ってしまう（実測: `LeadingKeyword="explain"`）。層2は PostgreSQL では未検証のまま出荷しうる（後述）ため、ここを層1で止められないと防御がゼロになる。
+
+**したがって `explain` は、説明対象の文自体が許可される場合にのみ許可する。** 手順:
+
+1. `EXPLAIN` を読み飛ばす
+2. 直後が `(` ならその対応する `)` まで読み飛ばす（`EXPLAIN (ANALYZE, BUFFERS) ...`）
+3. 続く**オプション語**を読み飛ばす。対象は次の固定集合のみ: `ANALYZE` / `VERBOSE` / `COSTS` / `SETTINGS` / `GENERIC_PLAN` / `BUFFERS` / `WAL` / `TIMING` / `SUMMARY` / `FORMAT` とその値、および SQLite の `QUERY PLAN`。この集合に無い識別子が来たら、それが対象の文の先頭キーワードである
+4. 残りの文をこの分類ルールに**再帰的に**かける
+
+この形なら `ANALYZE` を特別扱いする必要がない。`EXPLAIN ANALYZE SELECT ...` は内側が `select` なので許可され（SELECT が実行されるが読み取りのみ）、`EXPLAIN ANALYZE DELETE ...` は内側が `delete` なので拒否される。`EXPLAIN DELETE ...`（PostgreSQL では実行されない）も同じ規則で拒否されるが、観察用途での損失は小さく、実行有無を方言ごとに判定するより安全側に倒す。
+
+再帰は1段で打ち切る（`EXPLAIN EXPLAIN ...` は拒否）。
 
 加えて **複文の拒否** が必要。現状の `LeadingKeyword` は先頭しか見ないので、`SELECT 1; DELETE FROM t` は先頭が `select` で通ってしまう。文字列リテラル・引用識別子・コメントを飛ばしながらセミコロンを探し、末尾セミコロン以外の区切りが1つでもあれば拒否する。`dbutil` のスキャナ（`skipSingleQuoted` 等）が既にあるので、それを使う小さな関数を1つ足せばよい。
 
@@ -106,6 +138,8 @@ file::memory:?_pragma=query_only(1) で接続
 
 結論: 層2は SQLite でのみ検証済み。MySQL/PostgreSQL は実装時にライブサーバで確認し、確認が取れない場合は層1のみで出荷してよい（層2はあくまで belt-and-braces）。**「readonly接続だから安全」とREADMEに書かないこと。**
 
+ただしこれは、**PostgreSQL では層1が唯一の防御になりうる**ということでもある。データ変更 CTE と `EXPLAIN ANALYZE` はどちらも PostgreSQL 固有の実行経路なので、上記2つの検査は「あれば良い」ではなく必須。
+
 ## 配線が必要な箇所（実装コストの実体）
 
 guard 本体は小さい。コストはこちらにある。
@@ -128,7 +162,12 @@ guard 本体は小さい。コストはこちらにある。
 ## テスト方針
 
 - `internal/db/readonly` のテーブル駆動テスト: 許可/拒否の分類。特に
-  - `WITH x AS (SELECT 1) DELETE FROM t` → 拒否
+  - `WITH x AS (SELECT 1) DELETE FROM t` → 拒否（本体が DML）
+  - **`WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone` → 拒否**（CTE 項が DML。本体は `select`）
+  - **`WITH a AS (SELECT 1), b AS (UPDATE t SET x=1 RETURNING *) SELECT * FROM a` → 拒否**（2番目の CTE 項）
+  - `WITH a AS (SELECT 1) SELECT * FROM a` → 許可
+  - **`EXPLAIN ANALYZE DELETE FROM t` → 拒否** / **`EXPLAIN (ANALYZE, BUFFERS) DELETE FROM t` → 拒否**
+  - `EXPLAIN SELECT 1` → 許可 / `EXPLAIN ANALYZE SELECT 1` → 許可 / `EXPLAIN QUERY PLAN SELECT 1` → 許可
   - `SELECT 1; DELETE FROM t` → 拒否
   - `/* comment */ -- x\n SELECT 1` → 許可
   - `SELECT 'DELETE FROM t'` → 許可（文字列リテラル内）
@@ -142,7 +181,8 @@ guard 本体は小さい。コストはこちらにある。
 
 | 項目 | 規模 |
 |------|------|
-| `internal/db/readonly` パッケージ + テスト | 中（分類ルールの正確さがすべて） |
+| `internal/db/readonly` パッケージ + テスト | 中（分類ルールの正確さがすべて。CTE 項の列挙と EXPLAIN の再帰で当初想定より増える） |
+| `dbutil.CteTermKeywords` の追加 | 小（`CteBodyKeyword` のスキャナを再利用） |
 | アダプタラッパ | 小 |
 | connmgr / profile / CLI 配線 | 中（ユーザー向け設定面に触るのでレビュー要） |
 | ステータスバー表示 | 小 |
