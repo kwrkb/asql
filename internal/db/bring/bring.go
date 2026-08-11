@@ -133,6 +133,10 @@ func recordProvenance(ctx context.Context, tx *sql.Tx, quote func(string) string
 		return fmt.Errorf("create %s: %w", ProvenanceTable, err)
 	}
 
+	// OR REPLACE keeps a retry idempotent: a bring that failed after this
+	// statement (or a caller that reuses a sequence number) overwrites its own
+	// row instead of failing on the primary key. It cannot clobber a different
+	// table's record, because n comes from a monotonic per-session counter.
 	stmt := fmt.Sprintf(
 		`INSERT OR REPLACE INTO %s (n, table_name, source, row_count, col_count, truncated, query)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`, name)

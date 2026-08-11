@@ -168,6 +168,11 @@ func (m *model) toggleSort() {
 func (m *model) applySortedResult() {
 	result := m.lastResult
 	result.Rows = sortedRows(m.lastResult.Rows, m.sortCol, m.sortDir)
+	// Sorting is display-only: m.lastResult keeps its original row order, so its
+	// Rows and Kinds stay aligned for consumers that need them (bring, stats).
+	// This local copy is reordered, so drop its Kinds rather than leave them
+	// pointing at the wrong rows — see the invariant on db.QueryResult.Kinds.
+	result.Kinds = nil
 	m.applyResultWithSort(result)
 	m.table.GotoTop()
 }

@@ -81,6 +81,10 @@ func (m *model) pinCurrentResult() *pinnedPane {
 	widths := make([]int, len(m.cachedColWidths))
 	copy(widths, m.cachedColWidths)
 
+	// result is the unsorted snapshot: togglePinnedSort writes its output to
+	// displayRows and never back into result.Rows, so result.Kinds stays
+	// aligned with result.Rows. Anything reading Kinds here must index by
+	// result.Rows position, not by displayRows position.
 	return &pinnedPane{
 		result:        m.lastResult,
 		connName:      m.connMgr.ActiveName(),

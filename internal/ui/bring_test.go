@@ -5,8 +5,11 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/kwrkb/asql/internal/db"
 	"github.com/kwrkb/asql/internal/db/bring"
+	"github.com/kwrkb/asql/internal/db/sqlite"
 )
 
 func TestBring_NoResultIsNoOp(t *testing.T) {
@@ -304,5 +307,97 @@ func TestBring_DoneMsgNamesTheSourceConnection(t *testing.T) {
 	fm := failed.(model)
 	if fm.bringSt.brought != 1 {
 		t.Errorf("brought = %d after a failed bring, want it unchanged", fm.bringSt.brought)
+	}
+}
+
+func TestBring_ProvenanceForSidebarInsertedQuery(t *testing.T) {
+	// The common path: pick a table in the sidebar, execute what it inserted,
+	// then bring the result. prepareAndExecuteQuery records it in history, so
+	// provenance must pick it up without any special casing.
+	adapter, err := sqlite.Open(":memory:")
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { adapter.Close() })
+
+	m := NewModel(adapter, "test.db", "test.db", "src", nil, nil, nil)
+	m.mode = sidebarMode
+	m.sidebar.open = true
+	m.sidebar.tables = []string{"users"}
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	sm := next.(model)
+	inserted := strings.TrimSpace(sm.textarea.Value())
+	if !strings.Contains(inserted, "users") {
+		t.Fatalf("sidebar inserted %q, expected a SELECT on users", inserted)
+	}
+
+	// Execute it the way INSERT mode does, then stand in for the result.
+	sm.prepareAndExecuteQuery(inserted)
+	sm.lastResult = db.QueryResult{
+		Columns: []string{"id"},
+		Rows:    [][]string{{"1"}},
+		Kinds:   [][]db.Kind{{db.KindInt}},
+	}
+
+	if got := sm.lastExecutedQuery(); got != inserted {
+		t.Fatalf("lastExecutedQuery = %q, want %q", got, inserted)
+	}
+
+	sm.mode = normalMode
+	result, cmd := sm.updateNormal(runeMsg("b"))
+	rm := result.(model)
+	done := cmd().(bringDoneMsg)
+	if done.err != nil {
+		t.Fatalf("bring failed: %v", done.err)
+	}
+	if done.source != "src" {
+		t.Errorf("done.source = %q, want the source connection name", done.source)
+	}
+
+	got, err := rm.bringSt.adapter.Query(t.Context(),
+		`SELECT query FROM `+bring.ProvenanceTable)
+	if err != nil {
+		t.Fatalf("query provenance: %v", err)
+	}
+	if got.Rows[0][0] != inserted {
+		t.Errorf("recorded query = %q, want %q", got.Rows[0][0], inserted)
+	}
+}
+
+func TestBring_ReBringingProvenanceTableIsHarmless(t *testing.T) {
+	// Nothing stops a user on the bring DB from selecting _asql_bring and
+	// pressing b. The new record must not clobber the existing ones.
+	m := newTestModel()
+	m.mode = normalMode
+	m.lastResult = db.QueryResult{
+		Columns: []string{"id"},
+		Rows:    [][]string{{"1"}},
+		Kinds:   [][]db.Kind{{db.KindInt}},
+	}
+
+	first, cmd := m.updateNormal(runeMsg("b"))
+	fm := first.(model)
+	if done := cmd().(bringDoneMsg); done.err != nil {
+		t.Fatalf("first bring failed: %v", done.err)
+	}
+
+	fm.queryHistory = []string{"SELECT * FROM _asql_bring"}
+	second, cmd2 := fm.updateNormal(runeMsg("b"))
+	sm := second.(model)
+	if done := cmd2().(bringDoneMsg); done.err != nil {
+		t.Fatalf("second bring failed: %v", done.err)
+	}
+
+	got, err := sm.bringSt.adapter.Query(t.Context(),
+		`SELECT n, table_name FROM `+bring.ProvenanceTable+` ORDER BY n`)
+	if err != nil {
+		t.Fatalf("query provenance: %v", err)
+	}
+	if len(got.Rows) != 2 {
+		t.Fatalf("provenance rows = %+v, want 2 distinct records", got.Rows)
+	}
+	if got.Rows[0][1] != "t1" || got.Rows[1][1] != "t2" {
+		t.Errorf("provenance = %+v, want t1 and t2", got.Rows)
 	}
 }
