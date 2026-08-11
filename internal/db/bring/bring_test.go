@@ -1009,3 +1009,47 @@ func TestMaterialize_EmptyStringIsStillAnEmptyString(t *testing.T) {
 		t.Errorf("got typeof %q length %q, want text/0", got.Rows[0][0], got.Rows[0][1])
 	}
 }
+
+func TestMaterialize_NaNStaysTextRatherThanBecomingNull(t *testing.T) {
+	// SQLite stores a bound NaN as SQL NULL. Letting that happen would make a
+	// NaN indistinguishable from a real NULL — precisely the confusion kinds
+	// exist to remove — so it must stay text. Infinities bind fine and must
+	// still round-trip as reals.
+	conn, adapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+
+	result := typedResult(
+		[]string{"v"},
+		[][]string{{"NaN"}, {"+Inf"}, {"-Inf"}, {"1.5"}},
+		[][]db.Kind{{db.KindFloat}, {db.KindFloat}, {db.KindFloat}, {db.KindFloat}},
+	)
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier,
+		Source{Seq: 1, Table: "t1"}, result); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+
+	got, err := adapter.Query(context.Background(), `SELECT v, typeof(v) FROM t1 ORDER BY rowid`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if got.Rows[0][0] != "NaN" || got.Rows[0][1] != "text" {
+		t.Errorf("NaN stored as %q (%s), want the text NaN", got.Rows[0][0], got.Rows[0][1])
+	}
+	for i, want := range map[int]string{1: "+Inf", 2: "-Inf", 3: "1.5"} {
+		if got.Rows[i][0] != want || got.Rows[i][1] != "real" {
+			t.Errorf("row %d = %q (%s), want %q as a real", i, got.Rows[i][0], got.Rows[i][1], want)
+		}
+	}
+
+	// A NaN must not be reachable through IS NULL.
+	nulls, err := adapter.Query(context.Background(), `SELECT count(*) FROM t1 WHERE v IS NULL`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if nulls.Rows[0][0] != "0" {
+		t.Errorf("IS NULL matched %s rows, want 0", nulls.Rows[0][0])
+	}
+}

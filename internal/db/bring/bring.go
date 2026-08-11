@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -310,7 +311,12 @@ func effectiveKind(cell string, kind db.Kind) db.Kind {
 			return db.KindText
 		}
 	case db.KindFloat:
-		if _, err := strconv.ParseFloat(cell, 64); err != nil {
+		f, err := strconv.ParseFloat(cell, 64)
+		// SQLite stores a bound NaN as SQL NULL, which would make it
+		// indistinguishable from a real NULL — the exact confusion carrying
+		// kinds exists to remove. Keep it as the text "NaN" instead. Infinities
+		// need no such guard: SQLite stores and returns them unchanged.
+		if err != nil || math.IsNaN(f) {
 			return db.KindText
 		}
 	case db.KindBlob:

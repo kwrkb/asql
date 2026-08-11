@@ -32,7 +32,7 @@ func computeColumnStats(result db.QueryResult) []columnStat {
 				continue
 			}
 			val := row[i]
-			isNull := val == "NULL"
+			isNull := val == db.NullSentinel
 			if hasKinds {
 				isNull = result.KindAt(rowIdx, i) == db.KindNull
 			}
@@ -46,10 +46,13 @@ func computeColumnStats(result db.QueryResult) []columnStat {
 				s.Max = val
 				firstNonNull = false
 			} else {
-				if smartCompare(val, s.Min) < 0 {
+				// compareValues, not smartCompare: NULLs are already skipped
+				// above, so anything reaching here that reads "NULL" is text
+				// and must be ordered as text.
+				if compareValues(val, s.Min) < 0 {
 					s.Min = val
 				}
-				if smartCompare(val, s.Max) > 0 {
+				if compareValues(val, s.Max) > 0 {
 					s.Max = val
 				}
 			}
