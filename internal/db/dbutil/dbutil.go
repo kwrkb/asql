@@ -585,7 +585,14 @@ type Dialect struct {
 // ContainsReturning scans query for the RETURNING keyword, correctly skipping
 // string literals, quoted identifiers, comments, and dialect-specific quoting.
 func ContainsReturning(query string, dialect Dialect) bool {
-	const kw = "returning"
+	return ContainsKeyword(query, "returning", dialect)
+}
+
+// ContainsKeyword reports whether keyword appears in query as a bare word —
+// not inside a string literal, a quoted identifier, a comment, or as part of a
+// longer identifier. keyword must be lowercase; the match is case-insensitive.
+func ContainsKeyword(query string, keyword string, dialect Dialect) bool {
+	kw := keyword
 	i := 0
 	n := len(query)
 	for i < n {

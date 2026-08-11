@@ -27,6 +27,19 @@ func TestCheck(t *testing.T) {
 		{"keyword inside string literal", "sqlite", "SELECT 'DELETE FROM t'", false},
 		{"keyword inside identifier", "sqlite", "SELECT * FROM delete_log", false},
 
+		// A read-only leading keyword is not enough: these SELECTs write.
+		{"select into table", "postgres", "SELECT * INTO backup FROM production_table", true},
+		{"select into temp table", "postgres", "SELECT * INTO TEMP backup FROM t", true},
+		{"select into outfile", "mysql", "SELECT * FROM t INTO OUTFILE '/tmp/x.csv'", true},
+		{"select into dumpfile", "mysql", "SELECT a FROM t INTO DUMPFILE '/tmp/x.bin'", true},
+		{"select into variable", "mysql", "SELECT a INTO @v FROM t", true},
+		{"with body select into", "postgres", "WITH a AS (SELECT 1) SELECT * INTO backup FROM a", true},
+		{"explain select into", "postgres", "EXPLAIN SELECT * INTO backup FROM t", true},
+		{"into inside string literal", "postgres", "SELECT 'INTO' FROM t", false},
+		{"into inside identifier", "postgres", "SELECT * FROM into_log", false},
+		{"into as quoted identifier", "postgres", `SELECT "into" FROM t`, false},
+		{"into inside comment", "postgres", "SELECT 1 -- INTO backup", false},
+
 		// Writing statements.
 		{"insert", "sqlite", "INSERT INTO t VALUES (1)", true},
 		{"update", "sqlite", "UPDATE t SET a = 1", true},
@@ -143,6 +156,7 @@ func TestErrorMessageNamesTheSubject(t *testing.T) {
 		{"SELECT 1; DELETE FROM t", "multiple statements"},
 		{"WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone", "DELETE"},
 		{"EXPLAIN ANALYZE DELETE FROM t", "DELETE"},
+		{"SELECT * INTO backup FROM t", "SELECT ... INTO"},
 	}
 	for _, tt := range tests {
 		err := Check(tt.query, "sqlite")

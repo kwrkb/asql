@@ -53,12 +53,24 @@ ui.executeQueryCmd → adapter.Query(ctx, query)
 
 | 判定 | 扱い |
 |------|------|
-| `select` / `values` / `table` / `show` / `describe` / `desc` | 許可 |
+| `select` / `values` / `table` / `show` / `describe` / `desc` | **後述。`INTO` を含むものは拒否**、それ以外は許可 |
 | `with` | **後述。本体だけでなく全 CTE 項を検査する** |
 | `explain` | **後述。説明対象の文を再帰的に検査する** |
 | `pragma` | **後述の部分許可** |
 | 上記以外（`insert`/`update`/`delete`/`drop`/`alter`/`create`/`truncate`/`replace`/`merge`/`grant`/`attach`/`vacuum`/…） | 拒否 |
 | 空・キーワード抽出失敗 | 拒否 |
+
+#### SELECT: 先頭キーワードが読み取り系でも書き込む形がある
+
+`SELECT` を無条件に許可してはいけない。PostgreSQL の `SELECT * INTO backup FROM t` は
+テーブルを作って埋めるし、MySQL の `SELECT ... INTO OUTFILE '/path'` はサーバ上にファイルを書く。
+どちらも先頭キーワードは `select` で、しかもこの2つの DB には検証済みの層2がないため、
+層1で止めなければ実際に書き込みが起きる。
+
+**したがって、許可対象の文であっても `INTO` を含むものは拒否する。** `INTO` は asql が扱う全方言で
+予約語なので、文字列リテラル・引用識別子・コメントの外に裸で現れた `INTO` は常に句であって列名ではない
+（`dbutil.ContainsKeyword`）。MySQL の `SELECT a INTO @var` はセッション変数への代入だけだが、
+これも一緒に拒否する。区別するには代入先の解析が必要で、観察ツールには見合わない。
 
 #### WITH: 本体キーワードだけを見るのは不十分
 
@@ -180,6 +192,8 @@ guard 本体は小さい。コストはこちらにある。
   - `/* comment */ -- x\n SELECT 1` → 許可
   - `SELECT 'DELETE FROM t'` → 許可（文字列リテラル内）
   - `PRAGMA table_info(x)` → 許可 / `PRAGMA query_only=0` → 拒否 / **`PRAGMA query_only(0)` → 拒否**（関数構文の setter）
+  - **`SELECT * INTO backup FROM t` → 拒否**（PostgreSQL はテーブルを作る）/ **`SELECT ... INTO OUTFILE '/tmp/x'` → 拒否**（MySQL はファイルを書く）
+  - `SELECT 'INTO' FROM t` → 許可 / `SELECT * FROM into_log` → 許可（リテラルと識別子の中）
   - `PRAGMA journal_mode` → 拒否（許可リストに無い）
   - `ATTACH DATABASE ...` → 拒否
 - ラッパが `Tables`/`Columns`/`Schema` を素通しすることの確認

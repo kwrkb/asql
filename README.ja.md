@@ -102,6 +102,7 @@ readonly: DELETE is not allowed (asql --readonly)
 
 `INSERT` / `UPDATE` / `DELETE` / `DROP` 以外に拒否されるもの:
 
+- 結果を書き出す `SELECT` — PostgreSQL の `SELECT ... INTO backup`、MySQL の `SELECT ... INTO OUTFILE`
 - 1 回の実行に複数の文（`SELECT 1; DELETE FROM t`）
 - データ変更 CTE（`WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone`）
 - 書き込む文の `EXPLAIN ANALYZE` — PostgreSQL は対象を実際に実行する

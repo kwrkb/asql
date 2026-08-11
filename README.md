@@ -105,6 +105,7 @@ driver's read-only mode.
 What the guard refuses, beyond the obvious `INSERT` / `UPDATE` / `DELETE` /
 `DROP`:
 
+- `SELECT` forms that write their result somewhere — PostgreSQL's `SELECT ... INTO backup`, MySQL's `SELECT ... INTO OUTFILE`
 - multiple statements in one submission (`SELECT 1; DELETE FROM t`)
 - data-modifying CTEs (`WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone`)
 - `EXPLAIN ANALYZE` of a writing statement — PostgreSQL runs its target

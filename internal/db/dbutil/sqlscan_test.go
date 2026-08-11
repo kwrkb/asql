@@ -166,3 +166,33 @@ func TestDialectFor(t *testing.T) {
 		t.Errorf("unknown dialect = %+v, want the conservative default", d)
 	}
 }
+
+func TestContainsKeyword(t *testing.T) {
+	tests := []struct {
+		name    string
+		query   string
+		keyword string
+		dialect Dialect
+		want    bool
+	}{
+		{"present", "SELECT * INTO backup FROM t", "into", Dialect{}, true},
+		{"absent", "SELECT * FROM t", "into", Dialect{}, false},
+		{"case insensitive", "select * into backup from t", "into", Dialect{}, true},
+		{"inside string literal", "SELECT 'INTO' FROM t", "into", Dialect{}, false},
+		{"inside quoted identifier", `SELECT "into" FROM t`, "into", Dialect{}, false},
+		{"inside backtick identifier", "SELECT `into` FROM t", "into", Dialect{BacktickQuote: true}, false},
+		{"inside bracket identifier", "SELECT [into] FROM t", "into", Dialect{BracketQuote: true}, false},
+		{"inside dollar quote", "SELECT $$into$$", "into", Dialect{DollarQuote: true}, false},
+		{"inside line comment", "SELECT 1 -- into backup", "into", Dialect{}, false},
+		{"inside block comment", "SELECT 1 /* into backup */", "into", Dialect{}, false},
+		{"prefix of a longer identifier", "SELECT * FROM into_log", "into", Dialect{}, false},
+		{"suffix of a longer identifier", "SELECT * FROM log_into", "into", Dialect{}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ContainsKeyword(tt.query, tt.keyword, tt.dialect); got != tt.want {
+				t.Errorf("ContainsKeyword(%q, %q) = %v, want %v", tt.query, tt.keyword, got, tt.want)
+			}
+		})
+	}
+}

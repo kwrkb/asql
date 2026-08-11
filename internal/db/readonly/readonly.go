@@ -106,7 +106,7 @@ func classify(query string, d dbutil.Dialect, depth int) error {
 		return &Error{Subject: "this statement", Detail: "no SQL keyword found"}
 
 	case allowedLeading[keyword]:
-		return nil
+		return checkIntoTarget(query, d)
 
 	case keyword == "with":
 		return classifyWith(query, d)
@@ -172,6 +172,30 @@ func classifyWith(query string, d dbutil.Dialect) error {
 	}
 	if !allowedLeading[body] {
 		return &Error{Subject: strings.ToUpper(body), Detail: "as the body of WITH"}
+	}
+	return checkIntoTarget(query, d)
+}
+
+// checkIntoTarget refuses a statement that would send its result somewhere
+// instead of returning it.
+//
+// A read-only leading keyword is not enough: PostgreSQL's
+// `SELECT * INTO backup FROM t` creates and fills a table, and MySQL's
+// `SELECT ... INTO OUTFILE '/path'` writes a file on the server. Both start
+// with SELECT, and neither MySQL nor PostgreSQL has a verified connection-level
+// layer here, so the statement would reach the database and write for real.
+//
+// INTO is reserved in every dialect asql speaks, so a bare INTO outside string
+// literals and quoted identifiers is always the clause and never a column name.
+// MySQL's `SELECT a INTO @var` only assigns a session variable and is refused
+// along with the rest — separating it would mean parsing the target, which buys
+// nothing for an observation tool.
+func checkIntoTarget(query string, d dbutil.Dialect) error {
+	if dbutil.ContainsKeyword(query, "into", d) {
+		return &Error{
+			Subject: "SELECT ... INTO",
+			Detail:  "it writes its result to a table or a file",
+		}
 	}
 	return nil
 }
