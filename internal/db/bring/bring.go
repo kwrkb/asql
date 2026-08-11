@@ -49,8 +49,26 @@ func Open() (*sql.DB, *sqlite.Adapter, error) {
 	return conn, adapter, nil
 }
 
-// Materialize creates a new table named tableName in conn and copies result
-// into it.
+// ProvenanceTable is the name of the bookkeeping table Materialize maintains
+// inside the bring database. It records where each brought table came from so
+// a user who brought t1, t2 and t3 half an hour ago does not have to remember
+// which was which.
+//
+// It is a plain table, deliberately: it shows up in the sidebar, and it can be
+// SELECTed, sorted, exported and JOINed through the existing query pipeline
+// with no new UI. The leading underscore sorts it to the top of the table list.
+const ProvenanceTable = "_asql_bring"
+
+// Source describes where a brought result came from.
+type Source struct {
+	Seq   int    // creation order; also the number in Table (t1 -> 1)
+	Table string // local table name (t1, t2, ...)
+	Conn  string // source connection or profile name
+	Query string // the query whose result was brought
+}
+
+// Materialize creates a new table named src.Table in conn and copies result
+// into it, recording src in ProvenanceTable as part of the same transaction.
 //
 // Values keep their meaning across the copy when result carries kind
 // information (db.QueryResult.Kinds, recorded at scan time): each column is
@@ -64,10 +82,11 @@ func Open() (*sql.DB, *sqlite.Adapter, error) {
 // (see reverseSentinel), which is lossy for values that are literally "NULL"
 // or `""`.
 //
-// CREATE TABLE and all INSERTs run inside a single transaction so a failure
-// partway through (e.g. a bound-parameter overflow) leaves no orphaned empty
-// table behind — the caller can safely retry with the same tableName.
-func Materialize(ctx context.Context, conn *sql.DB, quote func(string) string, tableName string, result db.QueryResult) error {
+// CREATE TABLE, all INSERTs and the provenance record run inside a single
+// transaction so a failure partway through (e.g. a bound-parameter overflow)
+// leaves neither an orphaned empty table nor a provenance row pointing at a
+// table that does not exist — the caller can safely retry with the same name.
+func Materialize(ctx context.Context, conn *sql.DB, quote func(string) string, src Source, result db.QueryResult) error {
 	cols := disambiguateColumns(result.Columns)
 	if len(cols) == 0 {
 		return fmt.Errorf("cannot materialize a result with no columns")
@@ -81,15 +100,55 @@ func Materialize(ctx context.Context, conn *sql.DB, quote func(string) string, t
 	}
 	defer tx.Rollback()
 
-	if err := createTable(ctx, tx, quote, tableName, cols, affinities); err != nil {
+	if err := createTable(ctx, tx, quote, src.Table, cols, affinities); err != nil {
 		return err
 	}
 	if len(result.Rows) > 0 {
-		if err := insertRows(ctx, tx, quote, tableName, cols, result); err != nil {
+		if err := insertRows(ctx, tx, quote, src.Table, cols, result); err != nil {
 			return err
 		}
 	}
+	if err := recordProvenance(ctx, tx, quote, src, len(result.Rows), len(cols), result.Truncated); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+// recordProvenance creates ProvenanceTable if needed and adds one row for this
+// bring. truncated matters as much as the row count: a table brought from a
+// result that hit the scan limit is a partial view, and forgetting that is
+// exactly the kind of mistake this table exists to prevent.
+func recordProvenance(ctx context.Context, tx *sql.Tx, quote func(string) string, src Source, rowCount, colCount int, truncated bool) error {
+	name := quote(ProvenanceTable)
+	ddl := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+		n INTEGER PRIMARY KEY,
+		table_name TEXT,
+		source TEXT,
+		row_count INTEGER,
+		col_count INTEGER,
+		truncated INTEGER,
+		query TEXT
+	)`, name)
+	if _, err := tx.ExecContext(ctx, ddl); err != nil {
+		return fmt.Errorf("create %s: %w", ProvenanceTable, err)
+	}
+
+	stmt := fmt.Sprintf(
+		`INSERT OR REPLACE INTO %s (n, table_name, source, row_count, col_count, truncated, query)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`, name)
+	if _, err := tx.ExecContext(ctx, stmt,
+		src.Seq, src.Table, src.Conn, rowCount, colCount, boolToInt(truncated), src.Query,
+	); err != nil {
+		return fmt.Errorf("record provenance for %s: %w", src.Table, err)
+	}
+	return nil
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // columnAffinities picks a declared SQLite type per column from the kinds

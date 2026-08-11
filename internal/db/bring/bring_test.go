@@ -20,7 +20,7 @@ func TestMaterialize_NullSentinel(t *testing.T) {
 		Columns: []string{"id", "name"},
 		Rows:    [][]string{{"1", "NULL"}},
 	}
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 
@@ -44,7 +44,7 @@ func TestMaterialize_EmptyStringSentinel(t *testing.T) {
 		Columns: []string{"id", "name"},
 		Rows:    [][]string{{"1", `""`}},
 	}
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 
@@ -72,7 +72,7 @@ func TestMaterialize_DuplicateColumnNames(t *testing.T) {
 		Columns: []string{"id", "id", "id_2"},
 		Rows:    [][]string{{"a", "b", "c"}},
 	}
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 
@@ -107,7 +107,7 @@ func TestMaterialize_CaseInsensitiveDuplicateColumnNames(t *testing.T) {
 		Columns: []string{"ID", "id"},
 		Rows:    [][]string{{"1", "2"}},
 	}
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 
@@ -131,7 +131,7 @@ func TestMaterialize_ReservedWordNames(t *testing.T) {
 		Columns: []string{"select", "group"},
 		Rows:    [][]string{{"1", "2"}},
 	}
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "order", result); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "order"}, result); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 
@@ -159,10 +159,10 @@ func TestMaterialize_Join(t *testing.T) {
 		Columns: []string{"id", "score"},
 		Rows:    [][]string{{"1", "90"}, {"3", "70"}},
 	}
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", left); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, left); err != nil {
 		t.Fatalf("Materialize left: %v", err)
 	}
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t2", right); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 2, Table: "t2"}, right); err != nil {
 		t.Fatalf("Materialize right: %v", err)
 	}
 
@@ -186,7 +186,7 @@ func TestMaterialize_EmptyResult(t *testing.T) {
 		Columns: []string{"id", "name"},
 		Rows:    [][]string{},
 	}
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 
@@ -207,7 +207,7 @@ func TestMaterialize_NoColumnsErrors(t *testing.T) {
 	defer conn.Close()
 
 	result := db.QueryResult{Columns: nil, Rows: nil}
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err == nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err == nil {
 		t.Fatal("expected an error for a result with no columns, not a CREATE TABLE with an empty column list")
 	}
 }
@@ -224,7 +224,7 @@ func TestMaterialize_TruncatedResult(t *testing.T) {
 		Rows:      [][]string{{"1"}, {"2"}},
 		Truncated: true,
 	}
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 
@@ -249,7 +249,7 @@ func TestMaterialize_BatchedInserts(t *testing.T) {
 		rows = append(rows, []string{"x"})
 	}
 	result := db.QueryResult{Columns: []string{"id"}, Rows: rows}
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 
@@ -293,7 +293,7 @@ func TestMaterialize_WideResultStaysUnderBoundParamLimit(t *testing.T) {
 	}
 	result := db.QueryResult{Columns: cols, Rows: rows}
 
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "wide", result); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "wide"}, result); err != nil {
 		t.Fatalf("Materialize failed for a %d-col x %d-row result: %v", numCols, numRows, err)
 	}
 
@@ -328,14 +328,14 @@ func TestMaterialize_FailureLeavesNoOrphanedTable(t *testing.T) {
 		Columns: []string{"id"},
 		Rows:    [][]string{{"1"}},
 	}
-	if err := Materialize(ctx, conn, adapter.QuoteIdentifier, "t1", result); err == nil {
+	if err := Materialize(ctx, conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err == nil {
 		t.Fatal("expected Materialize to fail with an already-cancelled context")
 	}
 
 	// Retrying with the same table name and a valid context must succeed —
 	// the failed attempt must not have left behind a partially-created
 	// table that collides with the retry.
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err != nil {
 		t.Fatalf("expected retry with the same table name to succeed after a failed attempt, got: %v", err)
 	}
 }
@@ -352,7 +352,7 @@ func TestOpen_ConnectionSurvivesBeyondDefaultLifetime(t *testing.T) {
 	}
 	defer conn.Close()
 
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", db.QueryResult{
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, db.QueryResult{
 		Columns: []string{"id"},
 		Rows:    [][]string{{"1"}},
 	}); err != nil {
@@ -391,7 +391,7 @@ func TestMaterialize_DeclaredAffinityFromKinds(t *testing.T) {
 			{db.KindInt, db.KindFloat, db.KindText, db.KindBlob, db.KindText, db.KindNull},
 		},
 	)
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 
@@ -426,7 +426,7 @@ func TestMaterialize_MixedColumnKeepsPerValueStorageClass(t *testing.T) {
 		[][]string{{"5"}, {"abc"}, {"2.5"}},
 		[][]db.Kind{{db.KindInt}, {db.KindText}, {db.KindFloat}},
 	)
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 
@@ -458,7 +458,7 @@ func TestMaterialize_NumericOrderingNotLexicographic(t *testing.T) {
 		[][]string{{"9"}, {"10"}, {"100"}},
 		[][]db.Kind{{db.KindInt}, {db.KindInt}, {db.KindInt}},
 	)
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 
@@ -491,10 +491,10 @@ func TestMaterialize_NumericJoinAcrossBroughtTables(t *testing.T) {
 		[][]string{{"1", "10"}, {"2", "20"}},
 		[][]db.Kind{{db.KindInt, db.KindInt}, {db.KindInt, db.KindInt}},
 	)
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", left); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, left); err != nil {
 		t.Fatalf("Materialize t1: %v", err)
 	}
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t2", right); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 2, Table: "t2"}, right); err != nil {
 		t.Fatalf("Materialize t2: %v", err)
 	}
 
@@ -522,7 +522,7 @@ func TestMaterialize_LiteralNullTextIsNotSQLNull(t *testing.T) {
 		[][]string{{"1", "NULL"}, {"2", "NULL"}},
 		[][]db.Kind{{db.KindInt, db.KindNull}, {db.KindInt, db.KindText}},
 	)
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 
@@ -555,7 +555,7 @@ func TestMaterialize_LiteralQuotePairIsNotEmptyString(t *testing.T) {
 		[][]string{{"1", `""`}, {"2", `""`}},
 		[][]db.Kind{{db.KindInt, db.KindEmpty}, {db.KindInt, db.KindText}},
 	)
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 
@@ -581,7 +581,7 @@ func TestMaterialize_BlobRoundTrip(t *testing.T) {
 		[][]string{{"ff00fe"}},
 		[][]db.Kind{{db.KindBlob}},
 	)
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 
@@ -608,7 +608,7 @@ func TestMaterialize_UnparsableNumberFallsBackToText(t *testing.T) {
 		[][]string{{"18446744073709551615"}},
 		[][]db.Kind{{db.KindInt}},
 	)
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 
@@ -632,7 +632,7 @@ func TestMaterialize_NoKindsKeepsLegacyAllTextBehaviour(t *testing.T) {
 		Columns: []string{"n"},
 		Rows:    [][]string{{"1"}},
 	}
-	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, "t1", result); err != nil {
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 
@@ -676,7 +676,7 @@ func TestMaterialize_TypesSurviveAFullScanRoundTrip(t *testing.T) {
 	}
 	defer dst.Close()
 
-	if err := Materialize(context.Background(), dst, dstAdapter.QuoteIdentifier, "t1", result); err != nil {
+	if err := Materialize(context.Background(), dst, dstAdapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 
@@ -699,5 +699,88 @@ func TestMaterialize_TypesSurviveAFullScanRoundTrip(t *testing.T) {
 	}
 	if row[7] != `""` {
 		t.Errorf("empty string = %q, want the `\"\"` display sentinel", row[7])
+	}
+}
+
+// --- provenance (_asql_bring) ---
+
+func TestMaterialize_RecordsProvenance(t *testing.T) {
+	conn, adapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+
+	first := db.QueryResult{
+		Columns: []string{"id"},
+		Rows:    [][]string{{"1"}, {"2"}},
+	}
+	second := db.QueryResult{
+		Columns:   []string{"a", "b"},
+		Rows:      [][]string{{"x", "y"}},
+		Truncated: true,
+	}
+
+	err = Materialize(context.Background(), conn, adapter.QuoteIdentifier,
+		Source{Seq: 1, Table: "t1", Conn: "prod", Query: "SELECT id FROM users"}, first)
+	if err != nil {
+		t.Fatalf("Materialize t1: %v", err)
+	}
+	err = Materialize(context.Background(), conn, adapter.QuoteIdentifier,
+		Source{Seq: 2, Table: "t2", Conn: "staging", Query: "SELECT a, b FROM events"}, second)
+	if err != nil {
+		t.Fatalf("Materialize t2: %v", err)
+	}
+
+	got, err := adapter.Query(context.Background(),
+		`SELECT n, table_name, source, row_count, col_count, truncated, query
+		 FROM `+ProvenanceTable+` ORDER BY n`)
+	if err != nil {
+		t.Fatalf("Query provenance: %v", err)
+	}
+	want := [][]string{
+		{"1", "t1", "prod", "2", "1", "0", "SELECT id FROM users"},
+		{"2", "t2", "staging", "1", "2", "1", "SELECT a, b FROM events"},
+	}
+	if len(got.Rows) != len(want) {
+		t.Fatalf("provenance has %d rows, want %d: %+v", len(got.Rows), len(want), got.Rows)
+	}
+	for r := range want {
+		for c := range want[r] {
+			if got.Rows[r][c] != want[r][c] {
+				t.Errorf("row %d col %d = %q, want %q", r, c, got.Rows[r][c], want[r][c])
+			}
+		}
+	}
+}
+
+func TestMaterialize_ProvenanceRolledBackWithFailedBring(t *testing.T) {
+	conn, adapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+
+	// Seed the provenance table via one successful bring.
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier,
+		Source{Seq: 1, Table: "t1", Conn: "prod"},
+		db.QueryResult{Columns: []string{"id"}, Rows: [][]string{{"1"}}}); err != nil {
+		t.Fatalf("Materialize t1: %v", err)
+	}
+
+	// Re-using an existing table name fails at CREATE TABLE.
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier,
+		Source{Seq: 2, Table: "t1", Conn: "staging"},
+		db.QueryResult{Columns: []string{"id"}, Rows: [][]string{{"9"}}}); err == nil {
+		t.Fatal("expected an error when materializing over an existing table")
+	}
+
+	got, err := adapter.Query(context.Background(),
+		`SELECT count(*) FROM `+ProvenanceTable)
+	if err != nil {
+		t.Fatalf("Query provenance: %v", err)
+	}
+	if got.Rows[0][0] != "1" {
+		t.Errorf("provenance row count = %s, want 1 (the failed bring must leave no record)", got.Rows[0][0])
 	}
 }

@@ -17,6 +17,7 @@ import (
 
 	"github.com/kwrkb/asql/internal/ai"
 	"github.com/kwrkb/asql/internal/db"
+	"github.com/kwrkb/asql/internal/db/bring"
 	"github.com/kwrkb/asql/internal/profile"
 	"github.com/kwrkb/asql/internal/snippet"
 )
@@ -391,7 +392,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// sentinel, not a displayable DSN, so show a human-readable label
 		// instead of letting the raw control byte reach the status bar.
 		if m.connMgr.ActiveDSN() == bringDSN {
-			m.dbPath = "(local bring database)"
+			m.dbPath = m.bringLabel()
 		} else {
 			m.dbPath = db.MaskDSN(m.connMgr.ActiveDSN())
 		}
@@ -399,7 +400,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.completion.colCache = nil
 		m.completion.colOrder = nil
 		m.sidebar.tables = nil
-		m.setStatus(fmt.Sprintf("Connected to %s", sanitize(m.connMgr.ActiveName())), false)
+		if m.connMgr.ActiveDSN() == bringDSN {
+			// Name the provenance table on arrival: "which of these tables is
+			// which" is the question this connection provokes, and this is the
+			// moment it comes up.
+			m.setStatus(fmt.Sprintf("Connected to %s — sources in %s",
+				sanitize(m.connMgr.ActiveName()), bring.ProvenanceTable), false)
+		} else {
+			m.setStatus(fmt.Sprintf("Connected to %s", sanitize(m.connMgr.ActiveName())), false)
+		}
 		m.mode = normalMode
 		m.textarea.Blur()
 		if msg.reExecute {
@@ -421,7 +430,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setStatus(fmt.Sprintf("Bring failed: %v", msg.err), true)
 			return m, nil
 		}
+		m.bringSt.brought++
 		text := fmt.Sprintf("Brought as %s (%d cols, %d rows)", msg.name, msg.cols, msg.rows)
+		if msg.source != "" {
+			text = fmt.Sprintf("Brought %s as %s (%d cols, %d rows)",
+				sanitize(msg.source), msg.name, msg.cols, msg.rows)
+		}
 		if msg.truncated {
 			text += " [source truncated]"
 		}

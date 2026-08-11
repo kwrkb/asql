@@ -2,9 +2,11 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/kwrkb/asql/internal/db"
+	"github.com/kwrkb/asql/internal/db/bring"
 )
 
 func TestBring_NoResultIsNoOp(t *testing.T) {
@@ -207,4 +209,100 @@ func TestBring_OutOfOrderFailureDoesNotCollideWithLaterSuccess(t *testing.T) {
 		t.Fatalf("expected the next bring to use a fresh name t3, got %q", done3.name)
 	}
 	_ = rm3
+}
+
+func TestBring_ProvenanceUsesLastExecutedQuery(t *testing.T) {
+	m := newTestModel()
+	m.mode = normalMode
+	m.lastResult = db.QueryResult{
+		Columns: []string{"id"},
+		Rows:    [][]string{{"1"}},
+	}
+	m.queryHistory = []string{"SELECT 1", "SELECT id FROM users"}
+	// The editor has moved on since the result came back; provenance must
+	// describe the query that produced the data, not what is being typed now.
+	m.textarea.SetValue("SELECT * FROM something_else")
+
+	if got := m.lastExecutedQuery(); got != "SELECT id FROM users" {
+		t.Errorf("lastExecutedQuery = %q, want the tail of queryHistory", got)
+	}
+
+	result, cmd := m.updateNormal(runeMsg("b"))
+	rm := result.(model)
+	done, ok := cmd().(bringDoneMsg)
+	if !ok {
+		t.Fatalf("expected bringDoneMsg, got %T", done)
+	}
+	if done.err != nil {
+		t.Fatalf("bring failed: %v", done.err)
+	}
+
+	got, err := rm.bringSt.adapter.Query(t.Context(),
+		`SELECT table_name, source, query FROM `+bring.ProvenanceTable)
+	if err != nil {
+		t.Fatalf("query provenance: %v", err)
+	}
+	if len(got.Rows) != 1 {
+		t.Fatalf("expected 1 provenance row, got %+v", got.Rows)
+	}
+	if got.Rows[0][0] != "t1" {
+		t.Errorf("table_name = %q, want t1", got.Rows[0][0])
+	}
+	if got.Rows[0][2] != "SELECT id FROM users" {
+		t.Errorf("query = %q, want the last executed query", got.Rows[0][2])
+	}
+}
+
+func TestBring_LastExecutedQueryEmptyHistory(t *testing.T) {
+	m := newTestModel()
+	if got := m.lastExecutedQuery(); got != "" {
+		t.Errorf("lastExecutedQuery = %q, want empty for an empty history", got)
+	}
+}
+
+func TestBring_LabelCountsSuccessfulBrings(t *testing.T) {
+	m := newTestModel()
+	if got := m.bringLabel(); got != "(local bring: 0 tables)" {
+		t.Errorf("bringLabel = %q", got)
+	}
+	m.bringSt.brought = 1
+	if got := m.bringLabel(); got != "(local bring: 1 table)" {
+		t.Errorf("bringLabel = %q, want the singular form", got)
+	}
+	m.bringSt.brought = 3
+	if got := m.bringLabel(); got != "(local bring: 3 tables)" {
+		t.Errorf("bringLabel = %q", got)
+	}
+}
+
+func TestBring_DoneMsgNamesTheSourceConnection(t *testing.T) {
+	m := newTestModel()
+	m.mode = normalMode
+	m.lastResult = db.QueryResult{
+		Columns: []string{"id"},
+		Rows:    [][]string{{"1"}},
+	}
+
+	result, cmd := m.updateNormal(runeMsg("b"))
+	rm := result.(model)
+	done := cmd().(bringDoneMsg)
+	if done.source != rm.connMgr.ActiveName() {
+		t.Errorf("done.source = %q, want the active connection name %q", done.source, rm.connMgr.ActiveName())
+	}
+
+	updated, _ := rm.Update(done)
+	um := updated.(model)
+	if um.bringSt.brought != 1 {
+		t.Errorf("brought = %d, want 1 after a successful bring", um.bringSt.brought)
+	}
+	if !strings.Contains(um.statusText, done.name) {
+		t.Errorf("status %q should name the new table", um.statusText)
+	}
+
+	// A failed bring must not inflate the count shown in the status bar.
+	failed, _ := um.Update(bringDoneMsg{name: "t2", err: fmt.Errorf("boom")})
+	fm := failed.(model)
+	if fm.bringSt.brought != 1 {
+		t.Errorf("brought = %d after a failed bring, want it unchanged", fm.bringSt.brought)
+	}
 }
