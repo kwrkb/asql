@@ -70,6 +70,8 @@ asql --version
 - **Multi-connection** — connections stay open when switching profiles; no re-connect overhead
 - **Side-by-side compare mode** — press `c` to pin current result and split the screen into left (pinned) / right (active) panes; use `Tab` to switch focus. Row-count differences and mismatched cells are highlighted immediately
 - **Fast re-execution across connections** — press `R` to re-run the current query; in profile mode, `x` switches connection and immediately re-runs
+- **Column statistics** — press `d` for a per-column overlay: NULL rate, distinct count, min/max, plus a sparkline for date columns and a histogram for numeric ones
+- **Bring & Join** — press `b` to copy the current result into a local SQLite database, `J` to switch to it, then JOIN results that came from different databases
 - **Paging indicator** — status bar shows current position and column info (`col:name 1/100`)
 - **Table sidebar** — browse tables, insert SELECT with one key
 - **Export** — copy results as CSV / JSON / Markdown, or save to file
@@ -93,6 +95,7 @@ asql --version
 | `h` / `l` / `Left` / `Right` | Scroll columns horizontally |
 | `PgUp` / `PgDn` | Page through results |
 | `s` | Toggle sort on selected column (None → Asc → Desc) |
+| `d` | Open column statistics overlay |
 | `Enter` | Open Detail View for current row |
 | `R` | Re-execute current query |
 | `c` | Toggle compare mode (pin current result / close) |
@@ -136,6 +139,13 @@ asql --version
 | `N` / `h` | Previous row |
 | `q` / `Esc` / `Enter` | Close Detail View |
 
+### STATS mode
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` / `Down` / `Up` | Navigate columns |
+| `q` / `Esc` | Close statistics overlay |
+
 ### SIDEBAR mode
 
 | Key | Action |
@@ -162,6 +172,55 @@ asql --version
 | `j` / `k` / `Down` / `Up` | Navigate export options |
 | `Enter` | Execute selected export |
 | `Esc` | Close |
+
+## Column Statistics
+
+Press `d` in NORMAL mode to open the statistics overlay. It is computed in memory from the rows you already have — no extra query is sent.
+
+| Field | Meaning |
+|-------|---------|
+| `NULL%` | Share of rows where the column is SQL NULL |
+| `Distinct` | Number of distinct non-NULL values |
+| `Min → Max` | Smallest and largest value (numeric when the values are numeric) |
+
+The column under the cursor gets one extra line:
+
+- **Sparkline** for date/timestamp columns — row counts bucketed by year, month or day, e.g. `▁▂▃▅▇▅▂▁  by month`
+- **Histogram** for numeric columns — value distribution with the covered range, e.g. `▁▂▅█▇▃▁  0–100`
+
+Both are skipped above 10,000 rows to keep the overlay instant.
+
+## Bring & Join
+
+asql does not federate databases. It brings data to you instead: run a query anywhere, copy the result into a local SQLite database, and JOIN it there.
+
+1. Run a query on the first connection and press `b` — the result becomes local table `t1`.
+2. Switch connection (`P`), run another query, press `b` again — that becomes `t2`.
+3. Press `J` to switch to the local database, then query across them:
+
+```sql
+SELECT t1.name, t2.score
+FROM t1 JOIN t2 ON t1.id = t2.id;
+```
+
+Values keep their types across the copy: numbers stay numbers, so they sort and JOIN numerically rather than as strings, and SQL NULL stays distinguishable from the text `NULL`.
+
+Every bring is recorded in a `_asql_bring` table inside the local database, so you can always ask where a table came from:
+
+```sql
+SELECT * FROM _asql_bring;
+```
+
+| Column | Meaning |
+|--------|---------|
+| `n` | Creation order (matches the number in `t1`, `t2`, …) |
+| `table_name` | Local table name |
+| `source` | Connection the result came from |
+| `row_count` / `col_count` | Size of the brought result |
+| `truncated` | `1` when the source result hit the 10,000-row scan limit — the table is a partial view |
+| `query` | The query that produced the data |
+
+The local database lives in memory and is gone when asql exits. Export anything you want to keep with `e`.
 
 ## Export
 
@@ -199,14 +258,18 @@ Environment variables take precedence over the config file. Both `ai_endpoint` a
 
 ```yaml
 # OpenAI
-ai_endpoint: https://api.openai.com/v1
-ai_model: gpt-4o
-ai_api_key: sk-...
+ai:
+  ai_endpoint: https://api.openai.com/v1
+  ai_model: gpt-4o
+  ai_api_key: sk-...
+```
 
+```yaml
 # Ollama (local)
-ai_endpoint: http://localhost:11434/v1
-ai_model: llama3
-# ai_api_key not needed
+ai:
+  ai_endpoint: http://localhost:11434/v1
+  ai_model: llama3
+  # ai_api_key not needed
 ```
 
 Press `Ctrl+K` in NORMAL mode to open the AI prompt. The database schema is automatically included in the context for accurate table/column names.
