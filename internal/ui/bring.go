@@ -60,7 +60,7 @@ func (m model) bringCurrentResult() (tea.Model, tea.Cmd) {
 	src := bring.Source{
 		Seq:   m.bringSt.tableSeq,
 		Table: fmt.Sprintf("t%d", m.bringSt.tableSeq),
-		Conn:  m.connMgr.ActiveName(),
+		Conn:  m.lastConn,
 		Query: m.lastExecutedQuery(),
 	}
 	m.setStatus(fmt.Sprintf("Bringing as %s...", src.Table), false)
@@ -90,6 +90,11 @@ func (m model) bringCurrentResult() (tea.Model, tea.Cmd) {
 // been edited since the result came back, and queryHistory records every query
 // *attempted*, so a query that failed, was cancelled, or is still in flight
 // would be credited with the previous query's rows.
+//
+// m.lastConn, used just above for the source connection, is captured the same
+// way and for the same reason: switching connections leaves lastResult on
+// screen untouched, so the active connection is not necessarily the one those
+// rows came from.
 func (m model) lastExecutedQuery() string {
 	return m.lastQuery
 }

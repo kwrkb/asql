@@ -28,7 +28,7 @@ func StringifyValue(value any) string {
 func StringifyValueKind(value any) (string, db.Kind) {
 	switch v := value.(type) {
 	case nil:
-		return "NULL", db.KindNull
+		return db.NullSentinel, db.KindNull
 	case []byte:
 		// A []byte that is valid UTF-8 is treated as text here, because drivers
 		// return []byte for ordinary string columns too — the MySQL driver does
@@ -141,10 +141,15 @@ func ScanRowsLimit(rows *sql.Rows, limit int) (db.QueryResult, error) {
 				}
 			}
 			if s == "" {
-				// Empty strings are displayed as the `""` sentinel so they stay
-				// visually distinct from NULL. Record that the sentinel stands
-				// for an empty string rather than for those two characters.
-				s, k = `""`, db.KindEmpty
+				// Zero-length values are displayed as the `""` sentinel so they
+				// stay visually distinct from NULL and from a blank cell. Record
+				// what the sentinel stands for rather than for those two
+				// characters — but keep a zero-length blob a blob, or it comes
+				// back as an empty string and stops matching X''.
+				s = db.EmptySentinel
+				if k != db.KindBlob {
+					k = db.KindEmpty
+				}
 			}
 			record[i] = s
 			flatKinds = append(flatKinds, k)

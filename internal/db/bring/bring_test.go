@@ -922,3 +922,90 @@ func TestMaterialize_BinaryColumnWithUTF8ContentStaysABlob(t *testing.T) {
 		t.Errorf("b = X'616263' returned %q, want a match against the original bytes", got.Rows[0][1])
 	}
 }
+
+func TestMaterialize_ZeroLengthBlobStaysABlob(t *testing.T) {
+	// A zero-length blob stringifies to "", which then takes the empty-value
+	// display sentinel. The sentinel must not downgrade it to an empty string,
+	// or typeof and X'' comparisons change on the way across.
+	src, srcAdapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open source: %v", err)
+	}
+	defer src.Close()
+
+	if _, err := src.Exec(`CREATE TABLE s (b BLOB)`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := src.Exec(`INSERT INTO s VALUES (X''), (X'616263')`); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	result, err := srcAdapter.Query(context.Background(), `SELECT b FROM s ORDER BY rowid`)
+	if err != nil {
+		t.Fatalf("source Query: %v", err)
+	}
+	if got := result.KindAt(0, 0); got != db.KindBlob {
+		t.Fatalf("kind of the zero-length blob = %d, want KindBlob", got)
+	}
+	// The display contract is unchanged: it still shows the empty sentinel so
+	// the cell does not render blank.
+	if result.Rows[0][0] != db.EmptySentinel {
+		t.Errorf("display = %q, want the empty sentinel", result.Rows[0][0])
+	}
+
+	dst, dstAdapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open dest: %v", err)
+	}
+	defer dst.Close()
+	if err := Materialize(context.Background(), dst, dstAdapter.QuoteIdentifier,
+		Source{Seq: 1, Table: "t1"}, result); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+
+	got, err := dstAdapter.Query(context.Background(),
+		`SELECT typeof(b), length(b), b = X'' FROM t1 ORDER BY rowid`)
+	if err != nil {
+		t.Fatalf("dest Query: %v", err)
+	}
+	if got.Rows[0][0] != "blob" {
+		t.Errorf("typeof = %q, want blob for a zero-length blob", got.Rows[0][0])
+	}
+	if got.Rows[0][1] != "0" {
+		t.Errorf("length = %q, want 0", got.Rows[0][1])
+	}
+	if got.Rows[0][2] != "1" {
+		t.Errorf("b = X'' returned %q, want a match", got.Rows[0][2])
+	}
+	// The non-empty blob in the same column must be unaffected.
+	if got.Rows[1][0] != "blob" || got.Rows[1][1] != "3" {
+		t.Errorf("non-empty blob = typeof %q length %q, want blob/3", got.Rows[1][0], got.Rows[1][1])
+	}
+}
+
+func TestMaterialize_EmptyStringIsStillAnEmptyString(t *testing.T) {
+	// The blob carve-out must not leak into text columns.
+	conn, adapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+
+	result := typedResult(
+		[]string{"v"},
+		[][]string{{db.EmptySentinel}},
+		[][]db.Kind{{db.KindEmpty}},
+	)
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier,
+		Source{Seq: 1, Table: "t1"}, result); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+
+	got, err := adapter.Query(context.Background(), `SELECT typeof(v), length(v) FROM t1`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if got.Rows[0][0] != "text" || got.Rows[0][1] != "0" {
+		t.Errorf("got typeof %q length %q, want text/0", got.Rows[0][0], got.Rows[0][1])
+	}
+}

@@ -35,15 +35,18 @@ func (m *model) prepareAndExecuteQuery(query string) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.querySeq++
 	m.queryCancel = cancel
-	return executeQueryCmd(ctx, m.activeDB(), query, m.querySeq)
+	// Capture the connection name now rather than when the result arrives: a
+	// switch in between bumps querySeq, so this result would be discarded
+	// anyway, and the name here is always the one the query actually ran on.
+	return executeQueryCmd(ctx, m.activeDB(), m.connMgr.ActiveName(), query, m.querySeq)
 }
 
-func executeQueryCmd(parent context.Context, adapter db.DBAdapter, query string, seq uint64) tea.Cmd {
+func executeQueryCmd(parent context.Context, adapter db.DBAdapter, conn, query string, seq uint64) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(parent, queryTimeout)
 		defer cancel()
 
 		result, err := adapter.Query(ctx, query)
-		return queryExecutedMsg{seq: seq, query: query, result: result, err: err}
+		return queryExecutedMsg{seq: seq, query: query, conn: conn, result: result, err: err}
 	}
 }

@@ -314,6 +314,11 @@ func effectiveKind(cell string, kind db.Kind) db.Kind {
 			return db.KindText
 		}
 	case db.KindBlob:
+		// A zero-length blob is displayed as the empty sentinel, not as empty
+		// hex, so it never reaches hex.DecodeString.
+		if cell == db.EmptySentinel {
+			return kind
+		}
 		if _, err := hex.DecodeString(cell); err != nil {
 			return db.KindText
 		}
@@ -336,6 +341,9 @@ func bindValue(cell string, kind db.Kind) any {
 		f, _ := strconv.ParseFloat(cell, 64)
 		return f
 	case db.KindBlob:
+		if cell == db.EmptySentinel {
+			return []byte{}
+		}
 		b, _ := hex.DecodeString(cell)
 		return b
 	default:
@@ -352,9 +360,9 @@ func bindValue(cell string, kind db.Kind) any {
 // limitation of the all-TEXT bring design.
 func reverseSentinel(s string) any {
 	switch s {
-	case "NULL":
+	case db.NullSentinel:
 		return nil
-	case `""`:
+	case db.EmptySentinel:
 		return ""
 	default:
 		return s

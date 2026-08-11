@@ -58,11 +58,13 @@ var typeStyle = lipgloss.NewStyle().Foreground(mutedTextColor)
 
 type queryExecutedMsg struct {
 	seq uint64
-	// query is the statement that produced result. It travels with the message
-	// so the accepted result and the query that produced it stay together: the
-	// tail of queryHistory is the last query *attempted*, which is a different
-	// thing once a later query fails, is cancelled, or is still in flight.
+	// query and conn identify where result came from. They travel with the
+	// message so the accepted result and its origin stay together. Neither can
+	// be recovered later: the tail of queryHistory is the last query
+	// *attempted*, and the active connection can be switched without touching
+	// lastResult, so both would name something other than the rows on screen.
 	query  string
+	conn   string
 	result db.QueryResult
 	err    error
 }
@@ -122,6 +124,7 @@ type model struct {
 	querySeq     uint64
 	lastResult   db.QueryResult
 	lastQuery    string   // query that produced lastResult (see queryExecutedMsg)
+	lastConn     string   // connection lastResult came from (see queryExecutedMsg)
 	queryHistory []string // executed queries (newest at end)
 	historyIdx   int      // -1 = new input, 0..n = history position
 	historyDraft string   // input saved before navigating history
@@ -520,6 +523,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.lastResult = msg.result
 		m.lastQuery = msg.query
+		m.lastConn = msg.conn
 		m.sortDir = sortNone
 		m.sortCol = 0
 		m.colCursor = 0

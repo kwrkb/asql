@@ -332,17 +332,20 @@ func TestBring_LabelCountsSuccessfulBrings(t *testing.T) {
 
 func TestBring_DoneMsgNamesTheSourceConnection(t *testing.T) {
 	m := newTestModel()
-	m.mode = normalMode
-	m.lastResult = db.QueryResult{
-		Columns: []string{"id"},
-		Rows:    [][]string{{"1"}},
-	}
+	accepted, _ := m.Update(queryExecutedMsg{
+		seq:    m.querySeq,
+		query:  "SELECT id FROM users",
+		conn:   "prod",
+		result: db.QueryResult{Columns: []string{"id"}, Rows: [][]string{{"1"}}, Kinds: [][]db.Kind{{db.KindInt}}},
+	})
+	am := accepted.(model)
+	am.mode = normalMode
 
-	result, cmd := m.updateNormal(runeMsg("b"))
+	result, cmd := am.updateNormal(runeMsg("b"))
 	rm := result.(model)
 	done := cmd().(bringDoneMsg)
-	if done.source != rm.connMgr.ActiveName() {
-		t.Errorf("done.source = %q, want the active connection name %q", done.source, rm.connMgr.ActiveName())
+	if done.source != "prod" {
+		t.Errorf("done.source = %q, want the connection the result came from", done.source)
 	}
 
 	updated, _ := rm.Update(done)
@@ -359,6 +362,62 @@ func TestBring_DoneMsgNamesTheSourceConnection(t *testing.T) {
 	fm := failed.(model)
 	if fm.bringSt.brought != 1 {
 		t.Errorf("brought = %d after a failed bring, want it unchanged", fm.bringSt.brought)
+	}
+}
+
+func TestBring_ProvenanceKeepsTheSourceConnectionAfterASwitch(t *testing.T) {
+	// Switching connections leaves lastResult on screen, so the rows still
+	// belong to the connection they were fetched from. Pressing b afterwards
+	// must record that connection, not whichever one is now active.
+	adapter, err := sqlite.Open(":memory:")
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { adapter.Close() })
+
+	m := NewModel(adapter, "prod.db", "prod.db", "prod", nil, nil, nil)
+	accepted, _ := m.Update(queryExecutedMsg{
+		seq:    m.querySeq,
+		query:  "SELECT id FROM users",
+		conn:   "prod",
+		result: db.QueryResult{Columns: []string{"id"}, Rows: [][]string{{"1"}}, Kinds: [][]db.Kind{{db.KindInt}}},
+	})
+	am := accepted.(model)
+
+	// Switch to another connection without running a query there.
+	other, err := sqlite.Open(":memory:")
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { other.Close() })
+	am.connMgr.Register("staging", "staging.db", other)
+	if err := am.connMgr.Switch("staging", "staging.db"); err != nil {
+		t.Fatalf("Switch: %v", err)
+	}
+	switched, _ := am.Update(connSwitchedMsg{})
+	sm := switched.(model)
+	if sm.connMgr.ActiveName() != "staging" {
+		t.Fatalf("active connection = %q, want staging", sm.connMgr.ActiveName())
+	}
+	if len(sm.lastResult.Rows) != 1 {
+		t.Fatalf("test premise broken: the switch cleared lastResult")
+	}
+
+	sm.mode = normalMode
+	result, cmd := sm.updateNormal(runeMsg("b"))
+	rm := result.(model)
+	done := cmd().(bringDoneMsg)
+	if done.err != nil {
+		t.Fatalf("bring failed: %v", done.err)
+	}
+
+	got, err := rm.bringSt.adapter.Query(t.Context(),
+		`SELECT source FROM `+bring.ProvenanceTable)
+	if err != nil {
+		t.Fatalf("query provenance: %v", err)
+	}
+	if got.Rows[0][0] != "prod" {
+		t.Errorf("recorded source = %q, want prod — the rows never came from staging", got.Rows[0][0])
 	}
 }
 
@@ -389,6 +448,7 @@ func TestBring_ProvenanceForSidebarInsertedQuery(t *testing.T) {
 	next2, _ := sm.Update(queryExecutedMsg{
 		seq:    sm.querySeq,
 		query:  inserted,
+		conn:   sm.connMgr.ActiveName(),
 		result: db.QueryResult{Columns: []string{"id"}, Rows: [][]string{{"1"}}, Kinds: [][]db.Kind{{db.KindInt}}},
 	})
 	sm = next2.(model)

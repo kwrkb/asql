@@ -26,9 +26,24 @@ const (
 	// KindFloat means a floating-point number. The display string parses with
 	// strconv.ParseFloat and round-trips exactly.
 	KindFloat
-	// KindBlob means binary data that was not valid UTF-8. The display string
-	// is its lowercase hex encoding and decodes with hex.DecodeString.
+	// KindBlob means binary data — either a value that was not valid UTF-8, or
+	// any value from a column the driver declares as binary. The display string
+	// is its lowercase hex encoding and decodes with hex.DecodeString, except
+	// for a zero-length blob, which carries EmptySentinel like any other
+	// zero-length value.
 	KindBlob
+)
+
+// Display sentinels: the strings Rows carries in place of values that would
+// otherwise render as an empty cell. Producers write them (see
+// dbutil.ScanRowsLimit) and consumers that need the original value read them
+// back together with the cell's Kind (see internal/db/bring).
+const (
+	// NullSentinel stands for SQL NULL.
+	NullSentinel = "NULL"
+	// EmptySentinel stands for a zero-length value — an empty string, or a
+	// zero-length blob. Kind says which.
+	EmptySentinel = `""`
 )
 
 type QueryResult struct {
