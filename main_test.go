@@ -20,11 +20,11 @@ func TestResolveDSN(t *testing.T) {
 		wantErr  bool
 	}{
 		{
-			name: "CLI argument",
-			args: []string{"asql", "test.db"},
-			getenv: noenv,
+			name:     "CLI argument",
+			args:     []string{"asql", "test.db"},
+			getenv:   noenv,
 			profiles: noprofiles,
-			want:   "test.db",
+			want:     "test.db",
 		},
 		{
 			name: "CLI argument takes priority over env",
@@ -36,7 +36,7 @@ func TestResolveDSN(t *testing.T) {
 				return ""
 			},
 			profiles: noprofiles,
-			want: "cli.db",
+			want:     "cli.db",
 		},
 		{
 			name: "ASQL_DSN env var",
@@ -48,7 +48,7 @@ func TestResolveDSN(t *testing.T) {
 				return ""
 			},
 			profiles: noprofiles,
-			want: "mysql://user:pass@host/db",
+			want:     "mysql://user:pass@host/db",
 		},
 		{
 			name: "DATABASE_URL env var",
@@ -60,7 +60,7 @@ func TestResolveDSN(t *testing.T) {
 				return ""
 			},
 			profiles: noprofiles,
-			want: "postgres://user:pass@host/db",
+			want:     "postgres://user:pass@host/db",
 		},
 		{
 			name: "ASQL_DSN takes priority over DATABASE_URL",
@@ -75,7 +75,7 @@ func TestResolveDSN(t *testing.T) {
 				return ""
 			},
 			profiles: noprofiles,
-			want: "asql.db",
+			want:     "asql.db",
 		},
 		{
 			name:     "no argument and no env",
@@ -92,8 +92,8 @@ func TestResolveDSN(t *testing.T) {
 			wantErr:  true,
 		},
 		{
-			name: "@profile resolves to DSN",
-			args: []string{"asql", "@mydb"},
+			name:   "@profile resolves to DSN",
+			args:   []string{"asql", "@mydb"},
 			getenv: noenv,
 			profiles: []profile.Profile{
 				{Name: "mydb", DSN: "postgres://user:pass@host/db"},
@@ -185,13 +185,14 @@ func TestMaskDSN(t *testing.T) {
 	}
 }
 
-func TestParseSaveProfile(t *testing.T) {
+func TestParseFlags(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		wantName string
-		wantArgs []string
-		wantErr  bool
+		name         string
+		args         []string
+		wantName     string
+		wantReadonly bool
+		wantArgs     []string
+		wantErr      bool
 	}{
 		{
 			name:     "no flag",
@@ -210,11 +211,30 @@ func TestParseSaveProfile(t *testing.T) {
 			args:    []string{"asql", "--save-profile"},
 			wantErr: true,
 		},
+		{
+			name:         "readonly",
+			args:         []string{"asql", "--readonly", "test.db"},
+			wantReadonly: true,
+			wantArgs:     []string{"asql", "test.db"},
+		},
+		{
+			name:         "readonly before profile reference",
+			args:         []string{"asql", "--readonly", "@prod"},
+			wantReadonly: true,
+			wantArgs:     []string{"asql", "@prod"},
+		},
+		{
+			name:         "readonly combined with save-profile",
+			args:         []string{"asql", "--readonly", "--save-profile", "prod", "test.db"},
+			wantName:     "prod",
+			wantReadonly: true,
+			wantArgs:     []string{"asql", "test.db"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			name, args, err := parseSaveProfile(tt.args)
+			flags, args, err := parseFlags(tt.args)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
@@ -224,8 +244,11 @@ func TestParseSaveProfile(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if name != tt.wantName {
-				t.Errorf("name = %q, want %q", name, tt.wantName)
+			if flags.saveProfile != tt.wantName {
+				t.Errorf("saveProfile = %q, want %q", flags.saveProfile, tt.wantName)
+			}
+			if flags.readonly != tt.wantReadonly {
+				t.Errorf("readonly = %v, want %v", flags.readonly, tt.wantReadonly)
 			}
 			if len(args) != len(tt.wantArgs) {
 				t.Fatalf("args len = %d, want %d", len(args), len(tt.wantArgs))

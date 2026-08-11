@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -196,3 +197,45 @@ func containsReturning(query string) bool {
 	return dbutil.ContainsReturning(query, sqliteDialect)
 }
 
+// OpenReadonly opens the database at path with SQLite's read-only URI mode.
+//
+// This is the connection-level half of readonly and the only one asql has
+// verified: with mode=ro the driver refuses writes, and — unlike the
+// query_only pragma — the session cannot lift the restriction on itself
+// (`PRAGMA query_only(0)` succeeds but writes still fail). ATTACH does succeed
+// under mode=ro, so the statement guard has to refuse it separately.
+func OpenReadonly(path string) (*Adapter, error) {
+	return Open(readonlyURI(path))
+}
+
+// readonlyURI turns a SQLite path into a file: URI carrying mode=ro. A path
+// that is already a URI keeps its other parameters and has mode overridden;
+// anything else is escaped, since a bare path may contain the characters that
+// delimit a URI.
+func readonlyURI(path string) string {
+	if strings.HasPrefix(path, "file:") {
+		if u, err := url.Parse(path); err == nil {
+			q := u.Query()
+			q.Set("mode", "ro")
+			u.RawQuery = q.Encode()
+			return u.String()
+		}
+	}
+	return "file:" + escapeURIPath(path) + "?mode=ro"
+}
+
+// escapeURIPath percent-encodes the characters that would otherwise be read as
+// URI delimiters. Everything else is left alone so the path stays readable in
+// error messages.
+func escapeURIPath(path string) string {
+	var b strings.Builder
+	for i := 0; i < len(path); i++ {
+		switch c := path[i]; c {
+		case '?', '#', '%':
+			fmt.Fprintf(&b, "%%%02X", c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}

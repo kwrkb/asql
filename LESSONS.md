@@ -894,3 +894,53 @@ EXPLAIN ANALYZE DELETE FROM t
 
 **覆す条件**:
 - 実利用で「粒度を揃える SQL を毎回書き直している」ことが観察され、かつ丸め対象の列と粒度が明示的な操作なしに決まる（例: bring 時の `Kinds` に日時 kind が入り、単一の時刻列が自明に定まる）状況が揃ったとき
+
+## readonly mode の実装 (2026-08-11)
+
+### 層2（接続レベル）を MySQL / PostgreSQL に広げなかった
+
+**却下した案**: MySQL の DSN に `transaction_read_only=1`、PostgreSQL に `default_transaction_read_only=on` を付けて、SQLite と同じく接続レベルでも書き込みを拒否させる。
+
+**決め手**:
+- この環境に MySQL / PostgreSQL の実サーバがなく、`go test ./...` で通るのは「DSN 文字列が組み立てられた」ことだけで、サーバがそのパラメータを受理して効かせたかは何も確認できない
+- SQLite は実測で固定できた。`file:<path>?mode=ro` で開くと `INSERT` が失敗し、`PRAGMA query_only(0)` を実行しても `CREATE TABLE` は失敗したまま（`TestOpenReadonlyRefusesWrites`）。同じ強度の確認が他2つでは取れない
+- 未検証の層を入れると、接続時にパラメータが弾かれて `--readonly` が使えなくなる可能性と、効いていないのに効いているつもりになる可能性の両方を持ち込む
+
+**覆す条件**: MySQL / PostgreSQL の実サーバに繋げる環境ができ、DSN パラメータがプール内の全コネクションに効いていることを実測できたとき。
+
+**判断**: 層1（文ガード）だけで出荷するほうが、状態が正しく見えている分だけ安全。ただしこれは「PostgreSQL では層1が唯一の防御」を意味するので、データ変更CTEと `EXPLAIN ANALYZE` の検査は削れない。README には「readonly 接続だから安全」と書かない。
+
+### 許可リストの判定材料を「文の形」ではなく「実行経路」で選んだ
+
+**却下した案**: 先頭キーワードの許可リストだけで分類し、`WITH` は `CteBodyKeyword` の結果で判定する（既存の `returnsRows` と同じ作り）。
+
+**決め手**: 既存スキャナで実測すると、書き込みが 3 通り素通りした。
+- `WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone` → `LeadingKeyword="with"` / `CteBodyKeyword="select"`
+- `EXPLAIN ANALYZE DELETE FROM t` → `LeadingKeyword="explain"`（PostgreSQL は対象文を実際に実行する）
+- `SELECT 1; DELETE FROM t` → `LeadingKeyword="select"`
+
+いずれも「文の先頭が何か」は読み取り系に見えるのに、実行されるのは書き込みだった。3件とも回帰テストを書き、`CteTermKeywords` の検査と `HasMultipleStatements` の検査をそれぞれ無効化すると対応するサブテストが落ちることを確認済み。
+
+**覆す条件**: 実行経路が入れ子になる構文（CTE / `EXPLAIN` / 複文 / `DO` / `CALL`）を持たない方言だけを対象にするようになったとき。
+
+**判断**: 許可判定を書く前に「この方言に、別の文を内側に取って**実行する**構文はあるか」を列挙する。内側を取る構文は内側にも同じ判定を再帰適用する設計にすれば、`ANALYZE` のような個別キーワードを特別扱いせずに済む。
+
+### ローカル bring DB をガードの対象外にした
+
+**却下した案**: readonly セッションでは全接続をガードする（`connManager.Register` 経由のローカル bring DB も含む）。
+
+**決め手**: bring DB は `bring.Materialize` が `CREATE TABLE` と `INSERT` を実行して初めて機能する。ここをガードすると readonly セッションで `b`（持ち寄り）が全く動かなくなる。`Register` は `opener.Open` を通らないため、何もしなければ自動的に writable のまま残る。
+
+**覆す条件**: bring DB が「asql 自身の作業領域」ではなくユーザーのデータを置く場所に変わったとき。
+
+**判断**: readonly が守るのは**利用者が接続した DB** であって、asql が自分のために開いたローカルファイルではない。ステータスバーの `ro` はセッション単位ではなく接続単位で判定する（`readonly.IsWrapped(activeDB())`）ので、bring DB に切り替えると `ro` が消える。無い保護を表示しないことのほうが、表示が一貫していることより重要。
+
+### `AS (` の走査を CTE 定義部に絞らなかった
+
+**却下した案**: `CteTermKeywords` を WITH の定義部（本体の手前）だけに限定し、本体の `AS (` は無視する。
+
+**決め手**: PostgreSQL は本体側のサブクエリ内にも `WITH` を書ける（`SELECT * FROM (WITH x AS (DELETE ...) SELECT ...) s`）。定義部に絞ると、その経路が検査されないまま通る。一方で全体を走査すると、本体の列定義リスト `SELECT * FROM f() AS (x int)` が項として読まれて拒否される（実測: `readonly: X is not allowed`）。
+
+**覆す条件**: 本体側に文を入れ子にできない方言だけを対象にするか、列定義リストと CTE 項を構文的に区別できる走査を持ったとき。
+
+**判断**: 許可リストは閉じる方向に倒す。誤って拒否されるのは読み取りクエリ1形だけで、回避策（`AS r(x int)` と別名を付ける）が小さい。逆側の誤り（書き込みを通す）は回避策がない。この既知の拒否はテストに残して、驚きではなく決定として読めるようにした。

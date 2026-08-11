@@ -1,8 +1,11 @@
 package ui
 
 import (
+	"context"
 	"testing"
 
+	"github.com/kwrkb/asql/internal/db/opener"
+	"github.com/kwrkb/asql/internal/db/readonly"
 	"github.com/kwrkb/asql/internal/db/sqlite"
 )
 
@@ -14,7 +17,7 @@ func TestConnManager(t *testing.T) {
 	}
 	defer adapter.Close()
 
-	cm := newConnManager("test", ":memory:", adapter)
+	cm := newConnManager("test", ":memory:", adapter, false)
 
 	t.Run("Active returns initial adapter", func(t *testing.T) {
 		if cm.Active() != adapter {
@@ -103,7 +106,7 @@ func TestConnManagerRegister(t *testing.T) {
 		t.Fatalf("failed to open sqlite: %v", err)
 	}
 	defer base.Close()
-	cm := newConnManager("test", ":memory:", base)
+	cm := newConnManager("test", ":memory:", base, false)
 
 	bring, err := sqlite.Open(":memory:")
 	if err != nil {
@@ -130,4 +133,72 @@ func TestConnManagerRegister(t *testing.T) {
 			t.Error("expected the registered bring adapter to become active")
 		}
 	})
+}
+
+// A readonly session must guard the connections it opens later too — the
+// second database a user switches to is as much a production database as the
+// first.
+func TestConnManagerReadonlySession(t *testing.T) {
+	dir := t.TempDir()
+	firstPath := dir + "/first.db"
+	secondPath := dir + "/second.db"
+	for _, path := range []string{firstPath, secondPath} {
+		conn, err := sqlite.Open(path)
+		if err != nil {
+			t.Fatalf("failed to create %s: %v", path, err)
+		}
+		if _, err := conn.Query(context.Background(), "CREATE TABLE t (a TEXT)"); err != nil {
+			t.Fatalf("failed to seed %s: %v", path, err)
+		}
+		conn.Close()
+	}
+
+	first, err := opener.OpenReadonly(firstPath)
+	if err != nil {
+		t.Fatalf("OpenReadonly: %v", err)
+	}
+	cm := newConnManager("first", firstPath, first, true)
+	defer cm.CloseAll()
+
+	if err := cm.Switch("second", secondPath); err != nil {
+		t.Fatalf("Switch: %v", err)
+	}
+	if !readonly.IsWrapped(cm.Active()) {
+		t.Fatal("a connection opened during a readonly session is not guarded")
+	}
+
+	// The local bring database is asql's own scratch space and stays writable,
+	// otherwise a readonly session could not bring anything at all.
+	bring, err := sqlite.Open(":memory:")
+	if err != nil {
+		t.Fatalf("failed to open bring sqlite: %v", err)
+	}
+	cm.Register("local", "asql-bring", bring)
+	if err := cm.Switch("local", "asql-bring"); err != nil {
+		t.Fatalf("Switch to bring: %v", err)
+	}
+	if readonly.IsWrapped(cm.Active()) {
+		t.Fatal("the local bring database was guarded; Bring & Join would stop working")
+	}
+	if _, err := cm.Active().Query(context.Background(), "CREATE TABLE local_t (a TEXT)"); err != nil {
+		t.Fatalf("the bring database refused a write: %v", err)
+	}
+}
+
+// A writable session must not pick up the guard by accident.
+func TestConnManagerWritableSessionStaysUnguarded(t *testing.T) {
+	base, err := sqlite.Open(":memory:")
+	if err != nil {
+		t.Fatalf("failed to open sqlite: %v", err)
+	}
+	cm := newConnManager("test", ":memory:", base, false)
+	defer cm.CloseAll()
+
+	path := t.TempDir() + "/other.db"
+	if err := cm.Switch("other", path); err != nil {
+		t.Fatalf("Switch: %v", err)
+	}
+	if readonly.IsWrapped(cm.Active()) {
+		t.Fatal("a writable session opened a guarded connection")
+	}
 }

@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/kwrkb/asql/internal/db/readonly"
 )
 
 // statusHints returns the key-binding hint string for the current mode.
@@ -95,6 +97,13 @@ func (m model) statusPositionInfo() string {
 // statusConnectionLabel returns the DB type and connection name label.
 func (m model) statusConnectionLabel() string {
 	dbLabel := strings.ToUpper(sanitize(m.activeDB().Type()))
+	// Read-only has to be visible: half the point of the mode is knowing the
+	// connection cannot be written to. This is asked per connection rather than
+	// per session, so switching to the writable local bring database drops the
+	// marker instead of claiming a protection that is not there.
+	if readonly.IsWrapped(m.activeDB()) {
+		dbLabel += " ro"
+	}
 	connName := sanitize(m.connMgr.ActiveName())
 
 	if m.pinned != nil {

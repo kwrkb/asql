@@ -58,6 +58,7 @@ bash e2e/run.sh
 | `05_error.tape` | 不正 SQL のエラーメッセージ表示 |
 | `06_compare.tape` | compare モードで prod/staging を切り替えて差分確認 |
 | `07_stats.tape` | `d` キーで Column Statistics オーバーレイ表示 |
+| `08_readonly.tape` | `--readonly` 起動、`ro` マーカー表示、`DELETE` とデータ変更 CTE の拒否 |
 
 ## 録画について
 

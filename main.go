@@ -48,23 +48,33 @@ func connectionHint(dsn string, err error) string {
 	}
 }
 
-// parseSaveProfile extracts --save-profile <name> from args and returns
-// the profile name and the remaining args.
-func parseSaveProfile(args []string) (string, []string, error) {
+// cliFlags holds the options recognized before the DSN argument.
+type cliFlags struct {
+	saveProfile string
+	readonly    bool
+}
+
+// parseFlags extracts the option flags from args and returns them with the
+// remaining args. resolveDSN rejects anything it does not recognize, so flags
+// have to be removed here rather than passed through.
+func parseFlags(args []string) (cliFlags, []string, error) {
+	var flags cliFlags
 	var remaining []string
-	var profileName string
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--save-profile" {
+		switch args[i] {
+		case "--save-profile":
 			if i+1 >= len(args) {
-				return "", nil, fmt.Errorf("--save-profile requires a name argument")
+				return cliFlags{}, nil, fmt.Errorf("--save-profile requires a name argument")
 			}
-			profileName = args[i+1]
+			flags.saveProfile = args[i+1]
 			i++ // skip value
-		} else {
+		case "--readonly":
+			flags.readonly = true
+		default:
 			remaining = append(remaining, args[i])
 		}
 	}
-	return profileName, remaining, nil
+	return flags, remaining, nil
 }
 
 func resolveDSN(args []string, getenv func(string) string, profiles []profile.Profile) (string, error) {
@@ -119,6 +129,7 @@ Usage:
   asql <database-path-or-dsn>
   asql @<profile-name>
   asql --save-profile <name> <dsn>
+  asql --readonly <database-path-or-dsn>
   asql [--help | --version]
 
 Arguments:
@@ -127,6 +138,7 @@ Arguments:
 
 Options:
   --save-profile <name>     Save the DSN as a named profile and connect
+  --readonly                Refuse statements that would write
   --help, -h                Show this help message
   --version, -v             Show version information
 
@@ -142,7 +154,13 @@ Examples:
   asql "mysql://root:pass@localhost:3306/mydb"
   asql "postgres://user:pass@localhost:5432/mydb"
   asql --save-profile prod "postgres://user:pass@db.example.com:5432/app"
-  asql @prod`
+  asql @prod
+  asql --readonly @prod
+
+--readonly guards against the DELETE you did not mean to run: asql refuses any
+statement it does not recognize as read-only, and opens SQLite files in the
+driver's read-only mode. It is not a sandbox — do not rely on it to contain a
+statement someone means to run. The status bar shows "ro" while it is active.`
 
 func main() {
 	// Handle --help/-h and --version/-v before anything else
@@ -157,11 +175,12 @@ func main() {
 		}
 	}
 
-	saveProfileName, args, parseErr := parseSaveProfile(os.Args)
+	flags, args, parseErr := parseFlags(os.Args)
 	if parseErr != nil {
 		fmt.Fprintln(os.Stderr, parseErr)
 		os.Exit(1)
 	}
+	saveProfileName := flags.saveProfile
 
 	profiles, profileErr := profile.Load()
 	if profileErr != nil {
@@ -188,7 +207,11 @@ func main() {
 
 	displayDSN := dbpkg.MaskDSN(dbPath)
 
-	adapter, err := opener.Open(dbPath)
+	openDB := opener.Open
+	if flags.readonly {
+		openDB = opener.OpenReadonly
+	}
+	adapter, err := openDB(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to open database %q: %v\n", displayDSN, err)
 		fmt.Fprintln(os.Stderr, connectionHint(dbPath, err))
@@ -221,7 +244,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "warning: failed to load snippets: %v\n", snippetErr)
 	}
 
-	m := ui.NewModel(adapter, displayDSN, dbPath, connName, aiClient, snippets, profiles)
+	m := ui.NewModel(adapter, displayDSN, dbPath, connName, aiClient, snippets, profiles, flags.readonly)
 	defer m.CloseAll()
 
 	program := tea.NewProgram(m, tea.WithAltScreen())

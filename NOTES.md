@@ -8,13 +8,14 @@
 
 | 起点 | 場所 |
 |---|---|
-| CLI 引数・プロファイル解決・`--help`/`--version` | `main.go`（`resolveDSN` / `parseSaveProfile` / `selectProfile`） |
+| CLI 引数・プロファイル解決・`--help`/`--version`/`--readonly` | `main.go`（`parseFlags` / `resolveDSN` / `selectProfile`） |
 | DSN → アダプタ生成 | `internal/db/opener/opener.go` の `Open`（循環依存回避のための接着剤パッケージ） |
 | Bubble Tea の `Init`/`Update`/`View` | `internal/ui/model.go` |
 | クエリ実行の唯一の経路 | `internal/ui/query.go` の `prepareAndExecuteQuery` → `executeQueryCmd` → `adapter.Query` |
 
 `adapter.Query` が唯一の実行経路であることは設計上の要（AI 生成 SQL・スニペット・履歴・サイドバー挿入もすべてここを通る）。
-横断的な制約（readonly guard など）はここ 1 箇所に掛ければ全経路に効く。
+横断的な制約はここ 1 箇所に掛ければ全経路に効く — readonly guard は実際に `internal/db/readonly` の
+アダプタラッパ 1 箇所だけで全経路をカバーしている。
 
 ## internal/db — データベース抽象層
 
@@ -23,9 +24,10 @@
 | `adapter.go` | `DBAdapter` インターフェース（`Type` / `Query` / `Tables` / `Columns` / `Schema` / `QuoteIdentifier` / `Close`）と `QueryResult`・`Kind` |
 | `open.go` | DSN のユーティリティ（`MaskDSN` / `DetectType` / `DisplayName` / `Placeholder` / `InitialQuery`） |
 | `opener/` | DSN から各アダプタを生成する接着剤 |
-| `dbutil/` | 全アダプタ共通。値の文字列化と kind 判定（`classifyValue` / `StringifyValueKind`）、行スキャン（`ScanRowsOpts`、10,000 行上限）、SQL スキャナ（`LeadingKeyword` / `CteBodyKeyword` / `ContainsReturning`） |
+| `dbutil/` | 全アダプタ共通。値の文字列化と kind 判定（`classifyValue` / `StringifyValueKind`）、行スキャン（`ScanRowsOpts`、10,000 行上限）、SQL スキャナ（`LeadingKeyword` / `CteBodyKeyword` / `ContainsReturning`、`sqlscan.go` に `HasMultipleStatements` / `CteTermKeywords` / `StripExplain` / `PragmaName`） |
 | `sqlite/`, `mysql/`, `postgres/` | 各 DB のアダプタ実装 |
 | `bring/` | 持ち寄り先のローカル SQLite。`Open` / `Materialize`（affinity 決定 + 型付き bind）/ `recordProvenance`（`_asql_bring`） |
+| `readonly/` | `--readonly` の文ガード（`Check`）と `DBAdapter` ラッパ（`Wrap`）。許可リストは policy、文の形の判定は `dbutil/sqlscan.go` |
 
 `QueryResult.Rows [][]string` は不変で、`Kinds [][]db.Kind` が意味（NULL/空文字/整数/浮動小数/バイナリ/テキスト）を並走して運ぶ。
 `Kinds` が nil なら従来の全 TEXT 挙動にフォールバックする。
@@ -72,7 +74,7 @@ v2 移行は bubbletea/lipgloss v2 を巻き込むため見合わない。詳細
 
 | 文書 | 内容 |
 |---|---|
-| `docs/readonly-design.md` | readonly mode の設計（未実装）。二層構成、SQL guard の分類ルール、実測結果、未決定事項 |
+| `docs/readonly-design.md` | readonly mode の設計（実装済み）。二層構成、SQL guard の分類ルール、実測結果 |
 | `docs/*.tape`, `docs/setup-demo-db.py` | README 用の VHS デモ録画 |
-| `e2e/` | VHS による E2E テスト（`run.sh` / `*.tape` / `setup-profiles.py`）。**実行前に `e2e/README.md` を必ず読む** |
+| `e2e/` | VHS による E2E テスト（`run.sh` / `*.tape` / `setup-profiles.py`）。**実行前に `e2e/README.md` を必ず読む**。`vhs` / `ttyd` / `ffmpeg` が要る |
 | `status/` | 品質監査スキルの出力先（`review.md` 等） |

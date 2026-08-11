@@ -109,7 +109,7 @@ func TestSidebar_EnterInsertsQuery(t *testing.T) {
 	}
 	t.Cleanup(func() { adapter.Close() })
 
-	m := NewModel(adapter, "test.db", "test.db", "test", nil, nil, nil)
+	m := NewModel(adapter, "test.db", "test.db", "test", nil, nil, nil, false)
 	m.mode = sidebarMode
 	m.sidebar.open = true
 	m.sidebar.tables = []string{"users"}

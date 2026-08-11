@@ -131,7 +131,7 @@ func TestProfile_AddRejectsBringConnection(t *testing.T) {
 	defer adapter.Close()
 
 	m := newProfileModel(nil)
-	m.connMgr = newConnManager(bringConnName, bringDSN, adapter)
+	m.connMgr = newConnManager(bringConnName, bringDSN, adapter, false)
 	m.rawDSN = bringDSN
 
 	updated, _ := m.Update(runeMsg("a"))

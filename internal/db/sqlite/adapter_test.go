@@ -583,3 +583,74 @@ func TestQueryKinds_MessageOnlyResultHasNoKinds(t *testing.T) {
 		t.Errorf("zero-row result should carry no kinds, got %v", res.Kinds)
 	}
 }
+
+func TestReadonlyURI(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{"relative path", "chinook.db", "file:chinook.db?mode=ro"},
+		{"absolute path", "/data/chinook.db", "file:/data/chinook.db?mode=ro"},
+		{"path with question mark", "odd?name.db", "file:odd%3Fname.db?mode=ro"},
+		{"path with hash", "odd#name.db", "file:odd%23name.db?mode=ro"},
+		{"path with percent", "odd%name.db", "file:odd%25name.db?mode=ro"},
+		{"already a uri", "file:chinook.db", "file:chinook.db?mode=ro"},
+		{"uri with other params", "file:chinook.db?_pragma=busy_timeout(10)", "file:chinook.db?_pragma=busy_timeout%2810%29&mode=ro"},
+		{"uri already read-write", "file:chinook.db?mode=rw", "file:chinook.db?mode=ro"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := readonlyURI(tt.path); got != tt.want {
+				t.Errorf("readonlyURI(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+// The connection-level layer has to hold on its own, and it has to hold
+// against a session that tries to lift it: query_only can be switched off from
+// inside the session, mode=ro cannot.
+func TestOpenReadonlyRefusesWrites(t *testing.T) {
+	path := t.TempDir() + "/data.db"
+
+	writable, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	ctx := context.Background()
+	if _, err := writable.Query(ctx, "CREATE TABLE t (a TEXT)"); err != nil {
+		t.Fatalf("CREATE TABLE: %v", err)
+	}
+	if _, err := writable.Query(ctx, "INSERT INTO t VALUES ('x')"); err != nil {
+		t.Fatalf("INSERT: %v", err)
+	}
+	if err := writable.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	ro, err := OpenReadonly(path)
+	if err != nil {
+		t.Fatalf("OpenReadonly: %v", err)
+	}
+	defer ro.Close()
+
+	result, err := ro.Query(ctx, "SELECT a FROM t")
+	if err != nil {
+		t.Fatalf("SELECT on a read-only connection: %v", err)
+	}
+	if len(result.Rows) != 1 || result.Rows[0][0] != "x" {
+		t.Fatalf("SELECT returned %v, want one row holding x", result.Rows)
+	}
+
+	if _, err := ro.Query(ctx, "INSERT INTO t VALUES ('y')"); err == nil {
+		t.Fatal("INSERT succeeded on a read-only connection")
+	}
+
+	// PRAGMA query_only(0) is accepted by SQLite in its function form; what
+	// matters is that it does not hand the session write access back.
+	_, _ = ro.Query(ctx, "PRAGMA query_only(0)")
+	if _, err := ro.Query(ctx, "CREATE TABLE b (v TEXT)"); err == nil {
+		t.Fatal("CREATE TABLE succeeded after PRAGMA query_only(0) — mode=ro was lifted")
+	}
+}
