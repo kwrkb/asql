@@ -12,6 +12,8 @@
 
 **PR #52 レビュー対応**: Codex の指摘で `SELECT ... INTO` の穴を塞いだ。PostgreSQL の `SELECT * INTO backup FROM t` はテーブルを作って埋め、MySQL の `SELECT ... INTO OUTFILE` はサーバにファイルを書くが、どちらも先頭キーワードが `select` のため素通りしていた（実測で確認）。`ContainsReturning` を `dbutil.ContainsKeyword` に一般化し、許可対象の文でも裸の `INTO` を含むものは拒否する。`INTO` は全方言で予約語なので、リテラル・引用識別子・コメントの外に現れたら常に句である。
 
+指摘2巡目では**スキャナ自身の方言依存**を2件塞いだ。(1) `#` は MySQL では行コメントだが PostgreSQL ではビット XOR 演算子で、無条件にコメント扱いすると `SELECT 1 # 2; DELETE FROM t` の `;` 以降が消えて複文検査をすり抜ける。`Dialect.HashComment` で切り替える。(2) `'it\'s'` の終端位置は `NO_BACKSLASH_ESCAPES` / `standard_conforming_strings` 次第で変わり、外すとリテラルの範囲がずれて後続の `INTO` や `;` を飲み込む（`SELECT E'it\'s' INTO backup FROM t` が許可されていた）。推測せず、曖昧なら拒否する（`HasAmbiguousStringEscape`）。PostgreSQL の `E'...'` は設定に関わらずエスケープが効くと確定しているので正しく読んで通常どおり分類する。
+
 **層2（従）**は SQLite のみ。`file:<path>?mode=ro` で開き、`PRAGMA query_only(0)` を実行しても書き込みが戻らないことをテストで固定した。MySQL / PostgreSQL は実サーバで検証できないため層1のみで出荷。したがってこの2つでは層1が唯一の防御であり、上記 (a)(b) は「あれば良い」ではなく必須。
 
 **配線**: スコープはセッション全体 `--readonly` のみ（`profiles.yaml` のキーと `ASQL_READONLY` は用意しない）。`connManager` がフラグを持ち、セッション中に開く接続も `opener.OpenReadonly` を通す。`Register` 経由のローカル bring DB は writable のまま残し、readonly セッションでも Bring & Join が使える。ステータスバーは接続ごとに `prod:SQLITE ro` と表示する（bring DB に切り替えると `ro` は消える＝無い保護を主張しない）。拒否メッセージは何が拒否されたかを名指しする（`readonly: DELETE is not allowed (asql --readonly)`）。

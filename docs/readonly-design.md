@@ -72,6 +72,23 @@ ui.executeQueryCmd → adapter.Query(ctx, query)
 （`dbutil.ContainsKeyword`）。MySQL の `SELECT a INTO @var` はセッション変数への代入だけだが、
 これも一緒に拒否する。区別するには代入先の解析が必要で、観察ツールには見合わない。
 
+#### スキャナは方言を見る — `#` と `\'` は方言で意味が変わる
+
+分類の前に「文が正しく読めているか」を確かめる必要がある。読み違えたスキャナは、
+その後ろのキーワードを全部取り逃がす。
+
+**`#` はコメントとは限らない。** MySQL では行コメントだが、PostgreSQL では**ビット XOR 演算子**。
+無条件にコメント扱いすると `SELECT 1 # 2; DELETE FROM t` の `;` 以降が丸ごと消え、複文検査をすり抜ける
+（実測で確認）。`Dialect.HashComment` で方言ごとに切り替える。
+
+**`\'` の解釈はサーバ設定で変わる。** MySQL は `NO_BACKSLASH_ESCAPES`、PostgreSQL は
+`standard_conforming_strings` 次第で、`'it\'s'` の終端位置が変わる。どちらに倒しても外したときは
+リテラルの範囲がずれ、後続の `INTO` や `;` を飲み込む（実測: `SELECT E'it\'s' INTO backup FROM t` が許可されていた）。
+
+したがって**推測せず、曖昧なら拒否する**（`HasAmbiguousStringEscape`）。例外は PostgreSQL の `E'...'` で、
+ここは設定に関わらずエスケープが効くと確定しているので正しく読んで通常どおり分類する。
+利用者側の回避策は `''`（引用符の二重化）で、これは全方言で曖昧さがない。
+
 #### WITH: 本体キーワードだけを見るのは不十分
 
 PostgreSQL は **データ変更 CTE** を持つ。`CteBodyKeyword` は本体の文だけを返すため、CTE 側の DML を見逃す。既存スキャナで実測:
@@ -194,6 +211,8 @@ guard 本体は小さい。コストはこちらにある。
   - `PRAGMA table_info(x)` → 許可 / `PRAGMA query_only=0` → 拒否 / **`PRAGMA query_only(0)` → 拒否**（関数構文の setter）
   - **`SELECT * INTO backup FROM t` → 拒否**（PostgreSQL はテーブルを作る）/ **`SELECT ... INTO OUTFILE '/tmp/x'` → 拒否**（MySQL はファイルを書く）
   - `SELECT 'INTO' FROM t` → 許可 / `SELECT * FROM into_log` → 許可（リテラルと識別子の中）
+  - **`SELECT 1 # 2; DELETE FROM t`（PostgreSQL）→ 拒否**（`#` は演算子なので複文）/ `SELECT 1 # comment`（MySQL）→ 許可
+  - **`SELECT 'it\'s' FROM t`（MySQL/PostgreSQL）→ 拒否**（リテラルの範囲がサーバ設定依存）/ `SELECT E'it\'s' FROM t` → 許可 / `SELECT 'it''s'` → 許可
   - `PRAGMA journal_mode` → 拒否（許可リストに無い）
   - `ATTACH DATABASE ...` → 拒否
 - ラッパが `Tables`/`Columns`/`Schema` を素通しすることの確認

@@ -8,11 +8,16 @@ import "strings"
 func DialectFor(dbType string) Dialect {
 	switch strings.ToLower(dbType) {
 	case "sqlite":
+		// SQLite has no # comment and no backslash escapes: a backslash inside
+		// a string literal is just a backslash.
 		return Dialect{BracketQuote: true, BacktickQuote: true}
 	case "mysql":
-		return Dialect{BacktickQuote: true}
+		return Dialect{BacktickQuote: true, HashComment: true, BackslashEscape: true}
 	case "postgres", "postgresql":
-		return Dialect{DollarQuote: true}
+		// # is the bitwise-XOR operator here, not a comment. Backslash escapes
+		// apply inside E'...' always, and inside plain literals when
+		// standard_conforming_strings is off.
+		return Dialect{DollarQuote: true, BackslashEscape: true}
 	default:
 		return Dialect{}
 	}
@@ -31,8 +36,43 @@ type sqlScanner struct {
 
 func (s *sqlScanner) eof() bool { return s.i >= len(s.q) }
 
-// skipSpace advances past whitespace and comments.
-func (s *sqlScanner) skipSpace() { s.i = skipWhitespaceAndComments(s.q, s.i) }
+// skipSpace advances past whitespace and comments, recognizing # as a comment
+// only where the dialect says it is one.
+func (s *sqlScanner) skipSpace() { s.i = skipSpaceDialect(s.q, s.i, s.d) }
+
+// skipSpaceDialect is skipWhitespaceAndComments with the # rule made
+// dialect-dependent. Treating # as a comment on PostgreSQL hides everything
+// after the bitwise-XOR operator — `SELECT 1 # 2; DELETE FROM t` would look
+// like a single statement.
+func skipSpaceDialect(query string, i int, d Dialect) int {
+	n := len(query)
+	for i < n {
+		switch {
+		case query[i] == ' ' || query[i] == '\t' || query[i] == '\n' || query[i] == '\r':
+			i++
+		case i+1 < n && query[i] == '-' && query[i+1] == '-':
+			for i < n && query[i] != '\n' {
+				i++
+			}
+		case d.HashComment && query[i] == '#':
+			for i < n && query[i] != '\n' {
+				i++
+			}
+		case i+1 < n && query[i] == '/' && query[i+1] == '*':
+			i += 2
+			for i < n {
+				if i+1 < n && query[i] == '*' && query[i+1] == '/' {
+					i += 2
+					break
+				}
+				i++
+			}
+		default:
+			return i
+		}
+	}
+	return i
+}
 
 // skipLeadingSemicolons mirrors LeadingKeyword, which treats a statement that
 // begins with separators as starting at the first real token.
@@ -52,7 +92,7 @@ func (s *sqlScanner) skipQuoted() bool {
 	}
 	switch c := s.q[s.i]; {
 	case c == '\'':
-		s.i = skipSingleQuoted(s.q, s.i)
+		s.i, _ = skipSingleQuotedDialect(s.q, s.i, s.d)
 		return true
 	case c == '"':
 		s.i = skipDoubleQuoted(s.q, s.i)
@@ -287,4 +327,99 @@ func PragmaName(query string, d Dialect) (string, bool) {
 		}
 	}
 	return name, true
+}
+
+// skipSingleQuotedDialect advances past a single-quoted literal starting at i
+// and reports whether the literal's extent is ambiguous.
+//
+// A literal ends at an unescaped quote, but which quotes count as escaped
+// depends on the server, not on the SQL text: MySQL honors `\'` unless
+// NO_BACKSLASH_ESCAPES is set, and PostgreSQL honors it inside E'...' always
+// but inside a plain literal only when standard_conforming_strings is off.
+// Guessing is not safe in either direction — read `\'` as an escape when the
+// server does not and the scan runs past the real terminator, swallowing
+// whatever follows; read it as a terminator when the server does not and the
+// scan desynchronizes the same way. So the ambiguous case is reported, and
+// callers that need a trustworthy scan refuse the statement instead.
+func skipSingleQuotedDialect(query string, i int, d Dialect) (int, bool) {
+	n := len(query)
+	escaped := d.BackslashEscape && hasEscapeStringPrefix(query, i)
+	ambiguous := false
+	i++ // opening quote
+	for i < n {
+		switch query[i] {
+		case '\\':
+			if i+1 >= n {
+				return n, ambiguous
+			}
+			if escaped {
+				i += 2
+				continue
+			}
+			if d.BackslashEscape && (query[i+1] == '\'' || query[i+1] == '\\') {
+				// The extent depends on a server setting this scanner cannot see.
+				ambiguous = true
+				i += 2
+				continue
+			}
+			i++
+		case '\'':
+			i++
+			if i < n && query[i] == '\'' {
+				i++ // doubled quote — the portable escape, never ambiguous
+				continue
+			}
+			return i, ambiguous
+		default:
+			i++
+		}
+	}
+	return i, ambiguous
+}
+
+// hasEscapeStringPrefix reports whether the quote at i opens a PostgreSQL
+// escape string, E'...', where backslash escapes always apply regardless of
+// standard_conforming_strings.
+func hasEscapeStringPrefix(query string, i int) bool {
+	if i == 0 {
+		return false
+	}
+	if query[i-1] != 'E' && query[i-1] != 'e' {
+		return false
+	}
+	return i < 2 || !isIdentCharByte(query[i-2])
+}
+
+// HasAmbiguousStringEscape reports whether query contains a single-quoted
+// literal holding a backslash-escaped quote whose meaning depends on a server
+// setting (MySQL's NO_BACKSLASH_ESCAPES, PostgreSQL's
+// standard_conforming_strings). When it does, no scan of that query can be
+// trusted: the literal's end — and therefore everything after it — is read
+// differently depending on the setting.
+func HasAmbiguousStringEscape(query string, d Dialect) bool {
+	if !d.BackslashEscape {
+		return false
+	}
+	s := &sqlScanner{q: query, d: d}
+	for {
+		s.skipSpace()
+		if s.eof() {
+			return false
+		}
+		if s.q[s.i] == '\'' {
+			next, ambiguous := skipSingleQuotedDialect(s.q, s.i, s.d)
+			if ambiguous {
+				return true
+			}
+			s.i = next
+			continue
+		}
+		if s.skipQuoted() {
+			continue
+		}
+		if w := s.word(); w != "" {
+			continue
+		}
+		s.i++
+	}
 }

@@ -196,3 +196,48 @@ func TestContainsKeyword(t *testing.T) {
 		})
 	}
 }
+
+func TestHasAmbiguousStringEscape(t *testing.T) {
+	mysql := DialectFor("mysql")
+	postgres := DialectFor("postgres")
+	sqlite := DialectFor("sqlite")
+
+	tests := []struct {
+		name    string
+		query   string
+		dialect Dialect
+		want    bool
+	}{
+		{"plain literal", `SELECT 'abc' FROM t`, mysql, false},
+		{"doubled quote", `SELECT 'it''s' FROM t`, mysql, false},
+		{"escaped quote on mysql", `SELECT 'it\'s' FROM t`, mysql, true},
+		{"escaped backslash on mysql", `SELECT 'a\\' FROM t`, mysql, true},
+		{"escaped quote on postgres", `SELECT 'it\'s' FROM t`, postgres, true},
+		{"escape string on postgres", `SELECT E'it\'s' FROM t`, postgres, false},
+		{"escape string lowercase", `SELECT e'it\'s' FROM t`, postgres, false},
+		{"e is part of an identifier", `SELECT tale'it\'s' FROM t`, postgres, true},
+		{"backslash without a quote", `SELECT 'a\nb' FROM t`, mysql, false},
+		{"sqlite has no escapes", `SELECT 'it\'s' FROM t`, sqlite, false},
+		{"backslash inside a quoted identifier", "SELECT `a\\'b` FROM t", mysql, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := HasAmbiguousStringEscape(tt.query, tt.dialect); got != tt.want {
+				t.Errorf("HasAmbiguousStringEscape(%q) = %v, want %v", tt.query, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHasMultipleStatementsHashRule(t *testing.T) {
+	const query = "SELECT 1 # 2; DELETE FROM t"
+	if !HasMultipleStatements(query, DialectFor("postgres")) {
+		t.Error("PostgreSQL: # is the bitwise-XOR operator, so the ; still separates statements")
+	}
+	if HasMultipleStatements("SELECT 1 # 2; DELETE FROM t", DialectFor("mysql")) {
+		t.Error("MySQL: # starts a comment, so there is only one statement")
+	}
+	if !HasMultipleStatements("SELECT 1 # c\n; DELETE FROM t", DialectFor("mysql")) {
+		t.Error("MySQL: a # comment ends at the newline and must not hide the separator")
+	}
+}

@@ -575,11 +575,25 @@ func ShortenTypeName(typeName string) string {
 	return lower
 }
 
-// Dialect controls which quoting styles the SQL scanner recognizes.
+// Dialect controls which quoting and comment styles the SQL scanner
+// recognizes. The zero value is the conservative reading: standard quoting
+// only, no dialect extensions.
 type Dialect struct {
 	BracketQuote  bool // SQLite/MSSQL [identifier] style
 	DollarQuote   bool // PostgreSQL $$string$$ style
 	BacktickQuote bool // SQLite/MySQL `identifier` style
+	// HashComment means # starts a line comment (MySQL). It must stay false
+	// for PostgreSQL, where # is the bitwise-XOR operator: reading `SELECT 1 # 2`
+	// as a comment swallows the rest of the line, including a `;` that starts
+	// another statement.
+	HashComment bool
+	// BackslashEscape means a backslash can escape a quote inside a
+	// single-quoted string. Whether it actually does is a server setting on
+	// both MySQL (NO_BACKSLASH_ESCAPES) and PostgreSQL
+	// (standard_conforming_strings), which is why scanners report the
+	// construct as ambiguous rather than pick a reading — see
+	// HasAmbiguousStringEscape.
+	BackslashEscape bool
 }
 
 // ContainsReturning scans query for the RETURNING keyword, correctly skipping
@@ -611,9 +625,13 @@ func ContainsKeyword(query string, keyword string, dialect Dialect) bool {
 				i++
 			}
 		case query[i] == '\'':
-			i = skipSingleQuoted(query, i)
+			i, _ = skipSingleQuotedDialect(query, i, dialect)
 		case query[i] == '"':
 			i = skipDoubleQuoted(query, i)
+		case dialect.HashComment && query[i] == '#':
+			for i < n && query[i] != '\n' {
+				i++
+			}
 		case dialect.BacktickQuote && query[i] == '`':
 			i = skipBacktickQuoted(query, i)
 		case dialect.BracketQuote && query[i] == '[':

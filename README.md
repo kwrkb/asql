@@ -111,6 +111,10 @@ What the guard refuses, beyond the obvious `INSERT` / `UPDATE` / `DELETE` /
 - `EXPLAIN ANALYZE` of a writing statement — PostgreSQL runs its target
 - pragmas outside schema inspection, including the function form `PRAGMA query_only(0)`
 - any keyword it does not recognize
+- statements it cannot read with confidence — a backslash-escaped quote
+  (`'it\'s'`) is read differently depending on the server's
+  `NO_BACKSLASH_ESCAPES` / `standard_conforming_strings` setting, so it is
+  refused rather than guessed at; write it as `'it''s'` instead
 
 **This is not a sandbox.** It is there for the `DELETE` you did not mean to
 run, not for a user who means to write. asql does not promise that a determined

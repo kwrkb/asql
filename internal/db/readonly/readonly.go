@@ -86,6 +86,15 @@ func IsRefused(err error) bool {
 // styles the scanner recognizes.
 func Check(query string, dbType string) error {
 	d := dbutil.DialectFor(dbType)
+	// Before classifying anything, make sure the statement can be read at all.
+	// A backslash-escaped quote means the literal's extent — and so where every
+	// later keyword falls — depends on a server setting the guard cannot see.
+	if dbutil.HasAmbiguousStringEscape(query, d) {
+		return &Error{
+			Subject: "a backslash-escaped quote in a string literal",
+			Detail:  "its extent depends on a server setting; write it as '' instead",
+		}
+	}
 	if dbutil.HasMultipleStatements(query, d) {
 		return &Error{
 			Subject: "multiple statements",

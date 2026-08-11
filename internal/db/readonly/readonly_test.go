@@ -40,6 +40,27 @@ func TestCheck(t *testing.T) {
 		{"into as quoted identifier", "postgres", `SELECT "into" FROM t`, false},
 		{"into inside comment", "postgres", "SELECT 1 -- INTO backup", false},
 
+		// # is MySQL's line comment but PostgreSQL's bitwise-XOR operator.
+		// Reading it as a comment on PostgreSQL swallows the rest of the line,
+		// including the separator that starts a second statement.
+		{"hash operator hides a second statement", "postgres", "SELECT 1 # 2; DELETE FROM t", true},
+		{"hash comment on mysql", "mysql", "SELECT 1 # comment", false},
+		{"hash comment does not hide a separator", "mysql", "SELECT 1 # comment\n; DELETE FROM t", true},
+
+		// A backslash-escaped quote is read differently depending on
+		// NO_BACKSLASH_ESCAPES / standard_conforming_strings, so the literal's
+		// extent — and every keyword after it — cannot be trusted.
+		{"ambiguous escape on mysql", "mysql", `SELECT 'it\'s' FROM t`, true},
+		{"ambiguous escape hiding into", "mysql", `SELECT 'it\'s' FROM t INTO OUTFILE '/tmp/x'`, true},
+		{"ambiguous escape on postgres", "postgres", `SELECT 'it\'s' FROM t`, true},
+		// E'...' is unambiguous — escapes always apply there — so the scan is
+		// trustworthy and the statement is judged on its own merits.
+		{"escape string is read correctly", "postgres", `SELECT E'it\'s' FROM t`, false},
+		{"escape string hiding into", "postgres", `SELECT E'it\'s' INTO backup FROM t`, true},
+		// SQLite has no backslash escapes: the quote terminates the literal.
+		{"backslash is literal on sqlite", "sqlite", `SELECT 'a\' FROM t`, false},
+		{"doubled quote is never ambiguous", "postgres", `SELECT 'it''s' FROM t`, false},
+
 		// Writing statements.
 		{"insert", "sqlite", "INSERT INTO t VALUES (1)", true},
 		{"update", "sqlite", "UPDATE t SET a = 1", true},
