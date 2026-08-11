@@ -587,6 +587,19 @@ type Dialect struct {
 	// as a comment swallows the rest of the line, including a `;` that starts
 	// another statement.
 	HashComment bool
+	// DoubleDashNeedsSpace means -- opens a comment only when the second dash
+	// is followed by whitespace or a control character (MySQL). Without the
+	// rule, `SELECT 1--1; DELETE FROM t` looks like a commented-out tail while
+	// MySQL reads 1--1 as arithmetic and runs the DELETE.
+	DoubleDashNeedsSpace bool
+	// ExecutableComment means /*! ... */ is executed rather than ignored
+	// (MySQL and MariaDB, which also spells it /*M! ... */).
+	ExecutableComment bool
+	// DoubleQuoteMayBeString means " delimits a string rather than an
+	// identifier unless ANSI_QUOTES is set (MySQL). Combined with
+	// BackslashEscape it makes the extent of a double-quoted run
+	// setting-dependent in the same way single quotes are.
+	DoubleQuoteMayBeString bool
 	// BackslashEscape means a backslash can escape a quote inside a
 	// single-quoted string. Whether it actually does is a server setting on
 	// both MySQL (NO_BACKSLASH_ESCAPES) and PostgreSQL
@@ -611,7 +624,7 @@ func ContainsKeyword(query string, keyword string, dialect Dialect) bool {
 	n := len(query)
 	for i < n {
 		switch {
-		case query[i] == '-' && i+1 < n && query[i+1] == '-':
+		case query[i] == '-' && i+1 < n && query[i+1] == '-' && lineCommentOpens(query, i, dialect):
 			for i < n && query[i] != '\n' {
 				i++
 			}
@@ -627,7 +640,7 @@ func ContainsKeyword(query string, keyword string, dialect Dialect) bool {
 		case query[i] == '\'':
 			i, _ = skipSingleQuotedDialect(query, i, dialect)
 		case query[i] == '"':
-			i = skipDoubleQuoted(query, i)
+			i, _ = skipDoubleQuotedDialect(query, i, dialect)
 		case dialect.HashComment && query[i] == '#':
 			for i < n && query[i] != '\n' {
 				i++

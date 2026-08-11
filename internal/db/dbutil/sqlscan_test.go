@@ -241,3 +241,67 @@ func TestHasMultipleStatementsHashRule(t *testing.T) {
 		t.Error("MySQL: a # comment ends at the newline and must not hide the separator")
 	}
 }
+
+func TestLineCommentRules(t *testing.T) {
+	mysql := DialectFor("mysql")
+	postgres := DialectFor("postgres")
+
+	// MySQL reads 1--1 as arithmetic, so the separator is still a separator.
+	if !HasMultipleStatements("SELECT 1--1; DELETE FROM t", mysql) {
+		t.Error("MySQL: -- without following whitespace is not a comment")
+	}
+	if HasMultipleStatements("SELECT 1-- 1; DELETE FROM t", mysql) {
+		t.Error("MySQL: -- followed by a space is a comment and hides the rest of the line")
+	}
+	// PostgreSQL needs no whitespace after the dashes.
+	if HasMultipleStatements("SELECT 1--1; DELETE FROM t", postgres) {
+		t.Error("PostgreSQL: --1; DELETE is a comment")
+	}
+}
+
+func TestHasExecutableComment(t *testing.T) {
+	mysql := DialectFor("mysql")
+	postgres := DialectFor("postgres")
+
+	tests := []struct {
+		name    string
+		query   string
+		dialect Dialect
+		want    bool
+	}{
+		{"executable", "SELECT 1; /*! DELETE FROM t */", mysql, true},
+		{"versioned", "SELECT 1; /*!50110 DELETE FROM t */", mysql, true},
+		{"mariadb", "SELECT 1; /*M! DELETE FROM t */", mysql, true},
+		{"plain block comment", "SELECT 1 /* plain */ FROM t", mysql, false},
+		{"optimizer hint", "SELECT /*+ NO_ICP(t) */ * FROM t", mysql, false},
+		{"inside a string literal", "SELECT '/*! DELETE */' FROM t", mysql, false},
+		{"inside a backtick identifier", "SELECT `/*! x */` FROM t", mysql, false},
+		{"not a mysql dialect", "SELECT 1; /*! DELETE FROM t */", postgres, false},
+		{"no comment at all", "SELECT 1 FROM t", mysql, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := HasExecutableComment(tt.query, tt.dialect); got != tt.want {
+				t.Errorf("HasExecutableComment(%q) = %v, want %v", tt.query, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHasAmbiguousStringEscapeDoubleQuoted(t *testing.T) {
+	mysql := DialectFor("mysql")
+	postgres := DialectFor("postgres")
+
+	if !HasAmbiguousStringEscape(`SELECT "a\"b" FROM t`, mysql) {
+		t.Error("MySQL: a double-quoted run is a string unless ANSI_QUOTES is set")
+	}
+	if HasAmbiguousStringEscape(`SELECT "plain" FROM t`, mysql) {
+		t.Error("MySQL: a double-quoted run without escapes is unambiguous")
+	}
+	if HasAmbiguousStringEscape(`SELECT "a""b" FROM t`, mysql) {
+		t.Error("MySQL: a doubled quote is portable and unambiguous")
+	}
+	if HasAmbiguousStringEscape(`SELECT "a\"b" FROM t`, postgres) {
+		t.Error("PostgreSQL: double quotes always delimit an identifier, no escapes apply")
+	}
+}

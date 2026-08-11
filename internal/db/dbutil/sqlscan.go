@@ -12,7 +12,14 @@ func DialectFor(dbType string) Dialect {
 		// a string literal is just a backslash.
 		return Dialect{BracketQuote: true, BacktickQuote: true}
 	case "mysql":
-		return Dialect{BacktickQuote: true, HashComment: true, BackslashEscape: true}
+		return Dialect{
+			BacktickQuote:          true,
+			HashComment:            true,
+			DoubleDashNeedsSpace:   true,
+			ExecutableComment:      true,
+			DoubleQuoteMayBeString: true,
+			BackslashEscape:        true,
+		}
 	case "postgres", "postgresql":
 		// # is the bitwise-XOR operator here, not a comment. Backslash escapes
 		// apply inside E'...' always, and inside plain literals when
@@ -50,7 +57,7 @@ func skipSpaceDialect(query string, i int, d Dialect) int {
 		switch {
 		case query[i] == ' ' || query[i] == '\t' || query[i] == '\n' || query[i] == '\r':
 			i++
-		case i+1 < n && query[i] == '-' && query[i+1] == '-':
+		case i+1 < n && query[i] == '-' && query[i+1] == '-' && lineCommentOpens(query, i, d):
 			for i < n && query[i] != '\n' {
 				i++
 			}
@@ -95,7 +102,7 @@ func (s *sqlScanner) skipQuoted() bool {
 		s.i, _ = skipSingleQuotedDialect(s.q, s.i, s.d)
 		return true
 	case c == '"':
-		s.i = skipDoubleQuoted(s.q, s.i)
+		s.i, _ = skipDoubleQuotedDialect(s.q, s.i, s.d)
 		return true
 	case s.d.BacktickQuote && c == '`':
 		s.i = skipBacktickQuoted(s.q, s.i)
@@ -414,6 +421,14 @@ func HasAmbiguousStringEscape(query string, d Dialect) bool {
 			s.i = next
 			continue
 		}
+		if s.q[s.i] == '"' {
+			next, ambiguous := skipDoubleQuotedDialect(s.q, s.i, s.d)
+			if ambiguous {
+				return true
+			}
+			s.i = next
+			continue
+		}
 		if s.skipQuoted() {
 			continue
 		}
@@ -422,4 +437,95 @@ func HasAmbiguousStringEscape(query string, d Dialect) bool {
 		}
 		s.i++
 	}
+}
+
+// lineCommentOpens reports whether the -- at i opens a comment. MySQL requires
+// the second dash to be followed by whitespace or a control character, so
+// `1--1` is arithmetic there and only `1-- 1` is a comment. Reading it as a
+// comment either way hides everything after it, including a statement
+// separator.
+func lineCommentOpens(query string, i int, d Dialect) bool {
+	if !d.DoubleDashNeedsSpace {
+		return true
+	}
+	if i+2 >= len(query) {
+		return false
+	}
+	c := query[i+2]
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c < 0x20
+}
+
+// skipDoubleQuotedDialect advances past a double-quoted run starting at i and
+// reports whether its extent is ambiguous.
+//
+// On MySQL a double-quoted run is a string, not an identifier, unless
+// ANSI_QUOTES is set — and in string mode a backslash escapes the closing
+// quote unless NO_BACKSLASH_ESCAPES is set. Neither setting is visible from
+// the SQL text, so `"a\"b"` can end at either quote depending on the server.
+// As with single quotes, the ambiguity is reported instead of guessed at.
+func skipDoubleQuotedDialect(query string, i int, d Dialect) (int, bool) {
+	if !d.DoubleQuoteMayBeString || !d.BackslashEscape {
+		return skipDoubleQuoted(query, i), false
+	}
+	n := len(query)
+	ambiguous := false
+	i++ // opening quote
+	for i < n {
+		switch query[i] {
+		case '\\':
+			if i+1 >= n {
+				return n, ambiguous
+			}
+			if query[i+1] == '"' || query[i+1] == '\\' {
+				ambiguous = true
+				i += 2
+				continue
+			}
+			i++
+		case '"':
+			i++
+			if i < n && query[i] == '"' {
+				i++ // doubled quote — portable, never ambiguous
+				continue
+			}
+			return i, ambiguous
+		default:
+			i++
+		}
+	}
+	return i, ambiguous
+}
+
+// HasExecutableComment reports whether query contains a MySQL executable
+// comment, /*! ... */ (or MariaDB's /*M! ... */).
+//
+// Every other comment form can be skipped because the server ignores it. This
+// one the server runs: `SELECT 1; /*! DELETE FROM t */` is two statements to
+// MySQL and one statement plus a comment to every scanner that does not know
+// the form. Callers refuse rather than parse the contents — the payload can be
+// anything, and an observation tool has no use for the construct.
+func HasExecutableComment(query string, d Dialect) bool {
+	if !d.ExecutableComment {
+		return false
+	}
+	n := len(query)
+	s := &sqlScanner{q: query, d: d}
+	for s.i < n {
+		if s.i+2 < n && s.q[s.i] == '/' && s.q[s.i+1] == '*' {
+			rest := s.q[s.i+2:]
+			if rest[0] == '!' || (len(rest) > 1 && (rest[0] == 'M' || rest[0] == 'm') && rest[1] == '!') {
+				return true
+			}
+			s.skipSpace() // skips the ordinary block comment
+			continue
+		}
+		if s.skipQuoted() {
+			continue
+		}
+		if w := s.word(); w != "" {
+			continue
+		}
+		s.i++
+	}
+	return false
 }

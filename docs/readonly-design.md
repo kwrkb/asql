@@ -89,6 +89,17 @@ ui.executeQueryCmd → adapter.Query(ctx, query)
 ここは設定に関わらずエスケープが効くと確定しているので正しく読んで通常どおり分類する。
 利用者側の回避策は `''`（引用符の二重化）で、これは全方言で曖昧さがない。
 
+MySQL にはさらに 3 つ、スキャナが知らないと素通りする形がある（いずれも実測で確認）:
+
+| 入力 | 誤読 | 規則 |
+|---|---|---|
+| `SELECT 1--1; DELETE FROM t` | `--` を常にコメント扱いして `;` 以降を落とす | MySQL は `--` の後に空白/制御文字が要る（`Dialect.DoubleDashNeedsSpace`）。`1--1` は算術式 |
+| `SELECT 1; /*! DELETE FROM t */` | ブロックコメントとして捨てる | MySQL/MariaDB は `/*! ... */` の中身を**実行する**。中身を解析せず一律に拒否（`HasExecutableComment`） |
+| `SELECT "a\"b"; DELETE FROM t` | `a\"` で終わったと誤読し `;` 以降を飲み込む | MySQL の `"` は ANSI_QUOTES 未設定なら文字列。単引用符と同じく曖昧なら拒否 |
+
+`/*! ... */` だけは「正しく読む」のではなく**拒否**を選んだ。中身は任意の SQL であり、
+観察ツールにこの構文の用途がないため、解析する価値がない。
+
 #### WITH: 本体キーワードだけを見るのは不十分
 
 PostgreSQL は **データ変更 CTE** を持つ。`CteBodyKeyword` は本体の文だけを返すため、CTE 側の DML を見逃す。既存スキャナで実測:
@@ -212,6 +223,9 @@ guard 本体は小さい。コストはこちらにある。
   - **`SELECT * INTO backup FROM t` → 拒否**（PostgreSQL はテーブルを作る）/ **`SELECT ... INTO OUTFILE '/tmp/x'` → 拒否**（MySQL はファイルを書く）
   - `SELECT 'INTO' FROM t` → 許可 / `SELECT * FROM into_log` → 許可（リテラルと識別子の中）
   - **`SELECT 1 # 2; DELETE FROM t`（PostgreSQL）→ 拒否**（`#` は演算子なので複文）/ `SELECT 1 # comment`（MySQL）→ 許可
+  - **`SELECT 1--1; DELETE FROM t`（MySQL）→ 拒否**（`--` の後に空白がないのでコメントではない）/ `SELECT 1--1 FROM t`（PostgreSQL）→ 許可
+  - **`SELECT 1; /*! DELETE FROM t */`（MySQL）→ 拒否** / 同じ文が PostgreSQL では許可（ただのコメント）
+  - **`SELECT "a\"b"; DELETE FROM t`（MySQL）→ 拒否** / `SELECT "plain" FROM t` → 許可
   - **`SELECT 'it\'s' FROM t`（MySQL/PostgreSQL）→ 拒否**（リテラルの範囲がサーバ設定依存）/ `SELECT E'it\'s' FROM t` → 許可 / `SELECT 'it''s'` → 許可
   - `PRAGMA journal_mode` → 拒否（許可リストに無い）
   - `ATTACH DATABASE ...` → 拒否

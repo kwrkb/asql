@@ -108,9 +108,10 @@ readonly: DELETE is not allowed (asql --readonly)
 - 書き込む文の `EXPLAIN ANALYZE` — PostgreSQL は対象を実際に実行する
 - スキーマ参照以外の PRAGMA。関数構文の `PRAGMA query_only(0)` を含む
 - 認識できないキーワードすべて
-- 確信を持って読めない文 — `'it\'s'` のようなバックスラッシュエスケープはサーバの
-  `NO_BACKSLASH_ESCAPES` / `standard_conforming_strings` 設定で解釈が変わるため、
-  推測せず拒否する（`'it''s'` と書けば通る）
+- MySQL の実行コメント（`/*! ... */`）— サーバが中身を実行するため
+- 確信を持って読めない文 — `'it\'s'`（MySQL では `"a\"b"` も）のようなバックスラッシュ
+  エスケープはサーバの `NO_BACKSLASH_ESCAPES` / `standard_conforming_strings` /
+  `ANSI_QUOTES` 設定で解釈が変わるため、推測せず拒否する（`'it''s'` と二重化すれば通る）
 
 **これはサンドボックスではない。** 守るのは「意図しない書き込み」であって
 「意図的な書き込み」ではない。回避不能であることは保証しないし、DB 側の権限設定の

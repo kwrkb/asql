@@ -87,12 +87,23 @@ func IsRefused(err error) bool {
 func Check(query string, dbType string) error {
 	d := dbutil.DialectFor(dbType)
 	// Before classifying anything, make sure the statement can be read at all.
-	// A backslash-escaped quote means the literal's extent — and so where every
-	// later keyword falls — depends on a server setting the guard cannot see.
+	// A backslash-escaped quote means the quoted run's extent — and so where
+	// every later keyword falls — depends on a server setting the guard cannot
+	// see (NO_BACKSLASH_ESCAPES, standard_conforming_strings, ANSI_QUOTES).
 	if dbutil.HasAmbiguousStringEscape(query, d) {
 		return &Error{
-			Subject: "a backslash-escaped quote in a string literal",
-			Detail:  "its extent depends on a server setting; write it as '' instead",
+			Subject: "a backslash-escaped quote in a quoted string",
+			Detail:  "its extent depends on a server setting; double the quote instead of escaping it",
+		}
+	}
+	// A MySQL executable comment is SQL the server runs, not text it ignores,
+	// so a scanner that skips it as a comment misses whatever it carries. This
+	// check has to come before the ones below, which all skip comments —
+	// including this one — as insignificant.
+	if dbutil.HasExecutableComment(query, d) {
+		return &Error{
+			Subject: "a MySQL executable comment (/*! ... */)",
+			Detail:  "the server runs its contents as SQL",
 		}
 	}
 	if dbutil.HasMultipleStatements(query, d) {
@@ -109,6 +120,12 @@ func Check(query string, dbType string) error {
 const maxExplainDepth = 1
 
 func classify(query string, d dbutil.Dialect, depth int) error {
+	// LeadingKeyword and CteBodyKeyword skip comments without consulting the
+	// dialect, so they treat `#` and a bare `--` as comments everywhere. That
+	// errs toward reading past text the server would not have skipped, which
+	// can only move the keyword this function sees further along — and the
+	// statements that exploits (`--DELETE FROM t` on MySQL, `#` at the start on
+	// PostgreSQL) are syntax errors on the server rather than writes.
 	keyword := dbutil.LeadingKeyword(query)
 	switch {
 	case keyword == "":

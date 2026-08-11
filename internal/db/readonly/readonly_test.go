@@ -61,6 +61,28 @@ func TestCheck(t *testing.T) {
 		{"backslash is literal on sqlite", "sqlite", `SELECT 'a\' FROM t`, false},
 		{"doubled quote is never ambiguous", "postgres", `SELECT 'it''s' FROM t`, false},
 
+		// MySQL needs whitespace after -- for it to be a comment; without the
+		// rule the separator in `1--1;` disappears while the server reads
+		// 1--1 as arithmetic and runs the tail.
+		{"mysql double dash without space", "mysql", "SELECT 1--1; DELETE FROM t", true},
+		{"mysql double dash with space", "mysql", "SELECT 1 -- comment\n", false},
+		{"postgres double dash without space", "postgres", "SELECT 1--1 FROM t", false},
+
+		// MySQL runs the contents of /*! ... */ instead of ignoring them.
+		{"mysql executable comment", "mysql", "SELECT 1; /*! DELETE FROM t */", true},
+		{"mysql versioned executable comment", "mysql", "SELECT 1; /*!50110 DELETE FROM t */", true},
+		{"mariadb executable comment", "mysql", "SELECT 1; /*M! DELETE FROM t */", true},
+		{"mysql plain block comment", "mysql", "SELECT 1 /* plain comment */", false},
+		{"executable comment inside a literal", "mysql", "SELECT '/*! x */' FROM t", false},
+		{"executable comment form on postgres", "postgres", "SELECT 1; /*! DELETE FROM t */", false},
+
+		// On MySQL a double-quoted run is a string unless ANSI_QUOTES is set,
+		// so an escaped quote inside it has the same setting-dependent extent
+		// as a single-quoted one.
+		{"mysql escaped double quote", "mysql", `SELECT "a\"b"; DELETE FROM t`, true},
+		{"mysql plain double quote", "mysql", `SELECT "plain" FROM t`, false},
+		{"postgres quoted identifier with backslash", "postgres", `SELECT "a\"b" FROM t`, false},
+
 		// Writing statements.
 		{"insert", "sqlite", "INSERT INTO t VALUES (1)", true},
 		{"update", "sqlite", "UPDATE t SET a = 1", true},

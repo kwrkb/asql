@@ -14,6 +14,8 @@
 
 指摘2巡目では**スキャナ自身の方言依存**を2件塞いだ。(1) `#` は MySQL では行コメントだが PostgreSQL ではビット XOR 演算子で、無条件にコメント扱いすると `SELECT 1 # 2; DELETE FROM t` の `;` 以降が消えて複文検査をすり抜ける。`Dialect.HashComment` で切り替える。(2) `'it\'s'` の終端位置は `NO_BACKSLASH_ESCAPES` / `standard_conforming_strings` 次第で変わり、外すとリテラルの範囲がずれて後続の `INTO` や `;` を飲み込む（`SELECT E'it\'s' INTO backup FROM t` が許可されていた）。推測せず、曖昧なら拒否する（`HasAmbiguousStringEscape`）。PostgreSQL の `E'...'` は設定に関わらずエスケープが効くと確定しているので正しく読んで通常どおり分類する。
 
+3巡目は MySQL 固有の字句規則を3件。(1) MySQL は `--` の後に空白/制御文字がないとコメントにならないため `SELECT 1--1; DELETE FROM t` の `;` が見えていなかった（`1--1` は算術式）。(2) `/*! ... */` は MySQL/MariaDB が**中身を実行する**コメントで、捨ててはいけない。中身を解析せず一律に拒否する。(3) MySQL の `"` は ANSI_QUOTES 未設定なら文字列なので、`"a\"b"` の終端も設定依存になる。単引用符と同じく曖昧なら拒否する。
+
 **層2（従）**は SQLite のみ。`file:<path>?mode=ro` で開き、`PRAGMA query_only(0)` を実行しても書き込みが戻らないことをテストで固定した。MySQL / PostgreSQL は実サーバで検証できないため層1のみで出荷。したがってこの2つでは層1が唯一の防御であり、上記 (a)(b) は「あれば良い」ではなく必須。
 
 **配線**: スコープはセッション全体 `--readonly` のみ（`profiles.yaml` のキーと `ASQL_READONLY` は用意しない）。`connManager` がフラグを持ち、セッション中に開く接続も `opener.OpenReadonly` を通す。`Register` 経由のローカル bring DB は writable のまま残し、readonly セッションでも Bring & Join が使える。ステータスバーは接続ごとに `prod:SQLITE ro` と表示する（bring DB に切り替えると `ro` は消える＝無い保護を主張しない）。拒否メッセージは何が拒否されたかを名指しする（`readonly: DELETE is not allowed (asql --readonly)`）。
