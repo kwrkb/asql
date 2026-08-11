@@ -58,13 +58,33 @@ ui.executeQueryCmd → adapter.Query(ctx, query)
 
 ### PRAGMA の扱い
 
-要件は「PRAGMA等、読み取り系は許可」だが、SQLite の `PRAGMA` は読み書き両用である。**引数なしの PRAGMA だけを許可する。**
+要件は「PRAGMA等、読み取り系は許可」だが、SQLite の `PRAGMA` は読み書き両用である。
 
-- `PRAGMA table_info(users)` — 引数はあるが読み取り専用。許可したい
-- `PRAGMA query_only=0` — 層2のガードを自分で解除できる。**必ず拒否**
-- `PRAGMA journal_mode=DELETE` — 書き込み
+**引数の有無や `=` の有無で判定してはならない。** SQLite は関数構文の setter を受け付けるため、`=` を含まない書き込み PRAGMA が存在する。実測（modernc.org/sqlite v1.53.0）:
 
-したがって判定は「`=` を含まない PRAGMA のみ許可」。関数形式 `PRAGMA foo(bar)` の中に `=` は通常入らないので、この単純な規則で `table_info` / `foreign_key_list` / `index_list` 系は通り、設定変更形式は落ちる。厳密ではないが、非目的の線引き（サンドボックスを目指さない）と整合する。
+```
+file::memory:?_pragma=query_only(1) で接続
+  PRAGMA query_only            -> 1
+  CREATE TABLE a (v TEXT)      -> attempt to write a readonly database (8)
+  PRAGMA query_only(0)         -> エラーなし
+  PRAGMA query_only            -> 0        ← 関数構文で解除できてしまう
+  CREATE TABLE b (v TEXT)      -> 成功
+```
+
+つまり「`=` を含まない PRAGMA は読み取り系」という規則は、層2のガードを利用者自身に解除させる穴になる。
+
+**したがって PRAGMA は明示的な許可リストで判定する。** 許可するのはスキーマ参照系のみ:
+
+| 許可する PRAGMA | 用途 |
+|---|---|
+| `table_info` / `table_xinfo` | 列一覧 |
+| `index_list` / `index_info` / `index_xinfo` | インデックス |
+| `foreign_key_list` | 外部キー |
+| `table_list` | テーブル一覧 |
+| `database_list` | アタッチ済みDB一覧 |
+| `collation_list` / `function_list` / `module_list` / `pragma_list` | 機能一覧 |
+
+リストに無い PRAGMA は、引数の有無にかかわらず拒否する。`journal_mode` や `synchronous` のように「引数なしなら getter」の PRAGMA も、getter として通す価値が観察用途では乏しいため一律に拒否してよい。許可リストを増やすときは、その PRAGMA が関数構文・`=` 構文の**いずれでも**副作用を持たないことを確認すること。
 
 ### 層2: 接続レベル（従）
 
@@ -76,7 +96,7 @@ ui.executeQueryCmd → adapter.Query(ctx, query)
 | `file::memory:?_pragma=query_only(1)` | `INSERT` は拒否されるが、**`PRAGMA query_only=0` で解除できてしまう** |
 | `mode=ro` + `ATTACH DATABASE '...' AS side` | **ATTACH は成功する**（別DBは書き込み可能になる） |
 
-→ SQLite は `mode=ro` を使う。`_pragma=query_only` は単独では信頼できない。`ATTACH` が通る以上、層1で `attach` を拒否することは必須。
+→ SQLite は `mode=ro` を使う。`_pragma=query_only` は単独では信頼できない（上の PRAGMA 節のとおり、`PRAGMA query_only(0)` でも `PRAGMA query_only=0` でも解除できる）。`ATTACH` が通る以上、層1で `attach` を拒否することは必須。
 
 `mode=ro` は `file:` URI 形式を要求するため、現在の `sqlite.Open(path)` が受ける素のパスを URI へ変換する必要がある。パスに `?` や `#` を含むケースのエスケープに注意（`file:` + `url.PathEscape` 相当）。
 
@@ -112,7 +132,8 @@ guard 本体は小さい。コストはこちらにある。
   - `SELECT 1; DELETE FROM t` → 拒否
   - `/* comment */ -- x\n SELECT 1` → 許可
   - `SELECT 'DELETE FROM t'` → 許可（文字列リテラル内）
-  - `PRAGMA table_info(x)` → 許可 / `PRAGMA query_only=0` → 拒否
+  - `PRAGMA table_info(x)` → 許可 / `PRAGMA query_only=0` → 拒否 / **`PRAGMA query_only(0)` → 拒否**（関数構文の setter）
+  - `PRAGMA journal_mode` → 拒否（許可リストに無い）
   - `ATTACH DATABASE ...` → 拒否
 - ラッパが `Tables`/`Columns`/`Schema` を素通しすることの確認
 - SQLite の `mode=ro` 実接続で `INSERT` が層2でも落ちることの確認

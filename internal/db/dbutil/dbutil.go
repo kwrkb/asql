@@ -3,6 +3,8 @@ package dbutil
 import (
 	"database/sql"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -73,6 +75,73 @@ func BinaryColumnType(name string) bool {
 	return binaryColumnTypes[strings.ToUpper(strings.TrimSpace(name))]
 }
 
+// numericColumnTypes are the column type names whose values some drivers hand
+// back as text rather than as a Go number. MySQL does this for DECIMAL: the
+// driver leaves the digits alone rather than routing them through a float64 and
+// losing precision, so they arrive here as a []byte that happens to be valid
+// UTF-8 and would otherwise be classified as text.
+//
+// Both MySQL and PostgreSQL report the SQL standard names for these.
+var numericColumnTypes = map[string]bool{
+	"DECIMAL": true, "NUMERIC": true,
+}
+
+// NumericColumnType reports whether a driver-reported column type name denotes
+// a number that the driver may return as text.
+func NumericColumnType(name string) bool {
+	return numericColumnTypes[strings.ToUpper(strings.TrimSpace(name))]
+}
+
+// maxExactFloatDigits is how many significant decimal digits a float64 always
+// represents exactly. Beyond it, a decimal cannot survive the trip through a
+// float64 and is better left as text than silently rounded.
+const maxExactFloatDigits = 15
+
+// numericKindOf classifies a decimal written out as text. It reports false when
+// the value is not a number, or has more precision than a float64 can hold —
+// SQLite has no decimal type, so such a value stays text rather than being
+// quietly rounded on the way into a brought table.
+func numericKindOf(s string) (db.Kind, bool) {
+	if s == "" {
+		return db.KindText, false
+	}
+	if _, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return db.KindInt, true
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+		return db.KindText, false
+	}
+	if significantDigits(s) > maxExactFloatDigits {
+		return db.KindText, false
+	}
+	return db.KindFloat, true
+}
+
+// significantDigits counts the decimal digits in s, ignoring a sign, the
+// decimal point and leading zeros. Trailing zeros are counted, which overstates
+// the precision of a value like "2.50" — an overstatement is the safe
+// direction, since it can only keep a value as text that would have converted
+// cleanly.
+func significantDigits(s string) int {
+	n := 0
+	seenNonZero := false
+	for _, r := range s {
+		switch {
+		case r == 'e' || r == 'E':
+			return n
+		case r >= '1' && r <= '9':
+			seenNonZero = true
+			n++
+		case r == '0':
+			if seenNonZero {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 // DefaultRowLimit is the maximum number of rows ScanRows will read.
 // Use ScanRowsOpts to override this default.
 const DefaultRowLimit = 10_000
@@ -97,6 +166,57 @@ type ScanOptions struct {
 	// driver returns []byte for every VARCHAR — and the scanner falls back to the
 	// driver-reported column type instead.
 	BytesAreBinary bool
+}
+
+// columnHints carries what the driver said about a column, for classifyValue.
+type columnHints struct {
+	binary         bool // the column type names a binary type
+	numeric        bool // the column type names a number the driver may return as text
+	bytesAreBinary bool // this driver uses []byte for binary values only
+}
+
+// classifyValue turns a scanned driver value into the string Rows will carry
+// and the Kind that says what that string stands for.
+//
+// The order of the steps is load-bearing and has been wrong twice: the
+// column-type overrides must run before the empty-value sentinel, and the
+// sentinel must not undo them. Keep the steps here, in one place, rather than
+// spreading them back through the scan loop.
+func classifyValue(value any, hints columnHints) (string, db.Kind) {
+	s, k := StringifyValueKind(value)
+
+	// A number the driver handed back as text — MySQL does this for DECIMAL —
+	// would otherwise sort and join as a string.
+	if k == db.KindText && hints.numeric {
+		if nk, ok := numericKindOf(s); ok {
+			k = nk
+		}
+	}
+
+	// Binary data that happens to be valid UTF-8 is indistinguishable from text
+	// by value alone, so trust what the driver says about the column (or, where
+	// the driver only uses []byte for binary, about the Go type). Show the hex
+	// form for every binary value, not just the ones that failed the UTF-8
+	// check, so a binary column reads consistently and round-trips as a blob.
+	if k == db.KindText && (hints.bytesAreBinary || hints.binary) {
+		if b, ok := value.([]byte); ok {
+			s, k = fmt.Sprintf("%x", b), db.KindBlob
+		}
+	}
+
+	// Zero-length values are displayed as the `""` sentinel so they stay
+	// visually distinct from NULL and from a blank cell. Record what the
+	// sentinel stands for rather than for those two characters — but keep a
+	// zero-length blob a blob, or it comes back as an empty string and stops
+	// matching an empty blob literal.
+	if s == "" {
+		s = db.EmptySentinel
+		if k != db.KindBlob {
+			k = db.KindEmpty
+		}
+	}
+
+	return s, k
 }
 
 // ScanRows reads rows from *sql.Rows up to DefaultRowLimit and returns a QueryResult.
@@ -141,6 +261,13 @@ func ScanRowsOpts(rows *sql.Rows, opts ScanOptions) (db.QueryResult, error) {
 		}
 	}
 
+	// Columns the driver declares as numeric but may hand back as text, so their
+	// values are not left to sort and join as strings.
+	numericCols := make([]bool, len(columns))
+	for i, name := range colTypes {
+		numericCols[i] = NumericColumnType(name)
+	}
+
 	values := make([]any, len(columns))
 	ptrs := make([]any, len(columns))
 	for i := range values {
@@ -163,26 +290,11 @@ func ScanRowsOpts(rows *sql.Rows, opts ScanOptions) (db.QueryResult, error) {
 		}
 		record := make([]string, len(columns))
 		for i, value := range values {
-			s, k := StringifyValueKind(value)
-			if k == db.KindText && (opts.BytesAreBinary || binaryCols[i]) {
-				if b, ok := value.([]byte); ok {
-					// Show the hex form for every binary value, not just the ones
-					// that failed the UTF-8 check, so a binary column reads
-					// consistently and round-trips as a blob.
-					s, k = fmt.Sprintf("%x", b), db.KindBlob
-				}
-			}
-			if s == "" {
-				// Zero-length values are displayed as the `""` sentinel so they
-				// stay visually distinct from NULL and from a blank cell. Record
-				// what the sentinel stands for rather than for those two
-				// characters — but keep a zero-length blob a blob, or it comes
-				// back as an empty string and stops matching X''.
-				s = db.EmptySentinel
-				if k != db.KindBlob {
-					k = db.KindEmpty
-				}
-			}
+			s, k := classifyValue(value, columnHints{
+				binary:         binaryCols != nil && binaryCols[i],
+				numeric:        numericCols[i],
+				bytesAreBinary: opts.BytesAreBinary,
+			})
 			record[i] = s
 			flatKinds = append(flatKinds, k)
 		}

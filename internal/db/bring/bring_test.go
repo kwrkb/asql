@@ -1160,3 +1160,64 @@ func TestMaterialize_SqliteDynamicTypingBeatsTheDeclaredType(t *testing.T) {
 		t.Errorf("text in a TEXT column: kind = %d, want KindText", got)
 	}
 }
+
+func TestMaterialize_DecimalColumnSortsNumerically(t *testing.T) {
+	// Stands in for a MySQL DECIMAL column: the driver hands the digits back as
+	// text, and dbutil classifies them by the column type (see numericKindOf),
+	// so they reach Materialize already carrying numeric kinds. Without that,
+	// the column would be TEXT and 10 would sort before 2.
+	conn, adapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+
+	result := typedResult(
+		[]string{"price"},
+		[][]string{{"10"}, {"2"}, {"2.50"}},
+		[][]db.Kind{{db.KindInt}, {db.KindInt}, {db.KindFloat}},
+	)
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier,
+		Source{Seq: 1, Table: "t1"}, result); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+
+	got, err := adapter.Query(context.Background(), `SELECT price FROM t1 ORDER BY price`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	want := []string{"2", "2.5", "10"}
+	for i, w := range want {
+		if got.Rows[i][0] != w {
+			t.Fatalf("ORDER BY price = %+v, want %v (string sort would give 10, 2, 2.50)", got.Rows, want)
+		}
+	}
+}
+
+func TestMaterialize_HighPrecisionDecimalStaysText(t *testing.T) {
+	// A decimal beyond float64's exact range keeps its digits rather than being
+	// silently rounded — dbutil leaves it KindText, and it must survive as such.
+	conn, adapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+
+	result := typedResult(
+		[]string{"price"},
+		[][]string{{"12345678901234567.89"}},
+		[][]db.Kind{{db.KindText}},
+	)
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier,
+		Source{Seq: 1, Table: "t1"}, result); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+
+	got, err := adapter.Query(context.Background(), `SELECT price, typeof(price) FROM t1`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if got.Rows[0][0] != "12345678901234567.89" || got.Rows[0][1] != "text" {
+		t.Errorf("got %q (%s), want the digits preserved as text", got.Rows[0][0], got.Rows[0][1])
+	}
+}
