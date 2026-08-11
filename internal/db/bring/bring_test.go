@@ -1053,3 +1053,110 @@ func TestMaterialize_NaNStaysTextRatherThanBecomingNull(t *testing.T) {
 		t.Errorf("IS NULL matched %s rows, want 0", nulls.Rows[0][0])
 	}
 }
+
+func TestMaterialize_BlobFromAnExpressionStaysABlob(t *testing.T) {
+	// A blob produced by an expression has no declared column type, so the
+	// column-type heuristic cannot see it. modernc.org/sqlite returns []byte
+	// only for the BLOB storage class, which identifies it exactly.
+	src, srcAdapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open source: %v", err)
+	}
+	defer src.Close()
+
+	cases := []struct {
+		name string
+		expr string
+		hex  string
+	}{
+		{"blob literal", `SELECT X'616263' AS v`, "616263"},
+		{"cast to blob", `SELECT CAST('abc' AS BLOB) AS v`, "616263"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := srcAdapter.Query(context.Background(), tc.expr)
+			if err != nil {
+				t.Fatalf("source Query: %v", err)
+			}
+			if got := result.KindAt(0, 0); got != db.KindBlob {
+				t.Fatalf("kind = %d, want KindBlob (display %q)", got, result.Rows[0][0])
+			}
+			if result.Rows[0][0] != tc.hex {
+				t.Errorf("display = %q, want the hex form %q", result.Rows[0][0], tc.hex)
+			}
+
+			dst, dstAdapter, err := Open()
+			if err != nil {
+				t.Fatalf("Open dest: %v", err)
+			}
+			defer dst.Close()
+			if err := Materialize(context.Background(), dst, dstAdapter.QuoteIdentifier,
+				Source{Seq: 1, Table: "t1"}, result); err != nil {
+				t.Fatalf("Materialize: %v", err)
+			}
+
+			got, err := dstAdapter.Query(context.Background(),
+				`SELECT typeof(v), v = X'616263' FROM t1`)
+			if err != nil {
+				t.Fatalf("dest Query: %v", err)
+			}
+			if got.Rows[0][0] != "blob" || got.Rows[0][1] != "1" {
+				t.Errorf("typeof = %q, match = %q; want blob and a match", got.Rows[0][0], got.Rows[0][1])
+			}
+		})
+	}
+}
+
+func TestMaterialize_TextFromAnExpressionStaysText(t *testing.T) {
+	// The mirror case: text-producing expressions must not be swept up.
+	src, srcAdapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open source: %v", err)
+	}
+	defer src.Close()
+
+	for _, expr := range []string{
+		`SELECT 'abc' AS v`,
+		`SELECT CAST(X'616263' AS TEXT) AS v`,
+		`SELECT upper('abc') AS v`,
+	} {
+		result, err := srcAdapter.Query(context.Background(), expr)
+		if err != nil {
+			t.Fatalf("%s: %v", expr, err)
+		}
+		if got := result.KindAt(0, 0); got != db.KindText {
+			t.Errorf("%s: kind = %d, want KindText (display %q)", expr, got, result.Rows[0][0])
+		}
+		if result.Rows[0][0] != "ABC" && result.Rows[0][0] != "abc" {
+			t.Errorf("%s: display = %q, want readable text", expr, result.Rows[0][0])
+		}
+	}
+}
+
+func TestMaterialize_SqliteDynamicTypingBeatsTheDeclaredType(t *testing.T) {
+	// SQLite lets a TEXT column hold a blob. The Go type follows the value, so
+	// the blob survives even though the column says TEXT.
+	src, srcAdapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open source: %v", err)
+	}
+	defer src.Close()
+
+	if _, err := src.Exec(`CREATE TABLE s (v TEXT)`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := src.Exec(`INSERT INTO s VALUES (X'616263'), ('plain')`); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	result, err := srcAdapter.Query(context.Background(), `SELECT v FROM s ORDER BY rowid`)
+	if err != nil {
+		t.Fatalf("source Query: %v", err)
+	}
+	if got := result.KindAt(0, 0); got != db.KindBlob {
+		t.Errorf("blob in a TEXT column: kind = %d, want KindBlob", got)
+	}
+	if got := result.KindAt(1, 0); got != db.KindText {
+		t.Errorf("text in a TEXT column: kind = %d, want KindText", got)
+	}
+}

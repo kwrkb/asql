@@ -74,18 +74,46 @@ func BinaryColumnType(name string) bool {
 }
 
 // DefaultRowLimit is the maximum number of rows ScanRows will read.
-// Use ScanRowsLimit to override this default.
+// Use ScanRowsOpts to override this default.
 const DefaultRowLimit = 10_000
+
+// ScanOptions describes how the calling driver represents values, so the
+// scanner can classify them correctly (see db.Kind).
+type ScanOptions struct {
+	// Limit caps how many rows are read. 0 means no limit.
+	Limit int
+
+	// BytesAreBinary says this driver returns []byte only for binary values and
+	// never for text, so the Go type alone identifies a blob.
+	//
+	// modernc.org/sqlite behaves this way: it returns a Go string for every TEXT
+	// storage class and []byte for every BLOB one, whatever the column was
+	// declared as. That is strictly better information than the declared type,
+	// because SQLite is dynamically typed — a TEXT column can hold a blob, a BLOB
+	// column can hold a string, and an expression such as a blob literal or
+	// randomblob(4) carries no declared type at all.
+	//
+	// Leave it false for drivers that also use []byte for strings — the MySQL
+	// driver returns []byte for every VARCHAR — and the scanner falls back to the
+	// driver-reported column type instead.
+	BytesAreBinary bool
+}
 
 // ScanRows reads rows from *sql.Rows up to DefaultRowLimit and returns a QueryResult.
 // The caller is responsible for closing rows.
 func ScanRows(rows *sql.Rows) (db.QueryResult, error) {
-	return ScanRowsLimit(rows, DefaultRowLimit)
+	return ScanRowsOpts(rows, ScanOptions{Limit: DefaultRowLimit})
 }
 
 // ScanRowsLimit reads rows from *sql.Rows up to the given limit.
 // A limit of 0 means no limit.
 func ScanRowsLimit(rows *sql.Rows, limit int) (db.QueryResult, error) {
+	return ScanRowsOpts(rows, ScanOptions{Limit: limit})
+}
+
+// ScanRowsOpts reads rows from *sql.Rows under the given options.
+func ScanRowsOpts(rows *sql.Rows, opts ScanOptions) (db.QueryResult, error) {
+	limit := opts.Limit
 	columns, err := rows.Columns()
 	if err != nil {
 		return db.QueryResult{}, err
@@ -101,12 +129,16 @@ func ScanRowsLimit(rows *sql.Rows, limit int) (db.QueryResult, error) {
 	}
 
 	// Columns the driver declares as binary. StringifyValueKind cannot tell a
-	// binary value from a string one — both arrive as []byte — so a BLOB that
+	// binary value from a string one when both arrive as []byte, so a blob that
 	// happens to hold valid UTF-8 would otherwise be brought over as TEXT and
-	// stop matching an X'..' comparison against the original bytes.
-	binaryCols := make([]bool, len(columns))
-	for i, name := range colTypes {
-		binaryCols[i] = BinaryColumnType(name)
+	// stop matching a comparison against the original bytes. Skipped entirely
+	// when the driver already distinguishes them by Go type.
+	var binaryCols []bool
+	if !opts.BytesAreBinary {
+		binaryCols = make([]bool, len(columns))
+		for i, name := range colTypes {
+			binaryCols[i] = BinaryColumnType(name)
+		}
 	}
 
 	values := make([]any, len(columns))
@@ -132,11 +164,11 @@ func ScanRowsLimit(rows *sql.Rows, limit int) (db.QueryResult, error) {
 		record := make([]string, len(columns))
 		for i, value := range values {
 			s, k := StringifyValueKind(value)
-			if k == db.KindText && binaryCols[i] {
+			if k == db.KindText && (opts.BytesAreBinary || binaryCols[i]) {
 				if b, ok := value.([]byte); ok {
-					// Show the hex form for every value in a binary column, not
-					// just the ones that failed the UTF-8 check, so the column
-					// reads consistently and round-trips as a blob.
+					// Show the hex form for every binary value, not just the ones
+					// that failed the UTF-8 check, so a binary column reads
+					// consistently and round-trips as a blob.
 					s, k = fmt.Sprintf("%x", b), db.KindBlob
 				}
 			}
