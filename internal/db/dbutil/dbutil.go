@@ -30,10 +30,12 @@ func StringifyValueKind(value any) (string, db.Kind) {
 	case nil:
 		return "NULL", db.KindNull
 	case []byte:
-		// A []byte that is valid UTF-8 is text, not binary: the MySQL driver
-		// returns []byte for every VARCHAR/TEXT column, so classifying those as
-		// blobs would mistype most MySQL string data. Only the hex-escaped
-		// branch — where the display string is no longer the value — is a blob.
+		// A []byte that is valid UTF-8 is treated as text here, because drivers
+		// return []byte for ordinary string columns too — the MySQL driver does
+		// it for every VARCHAR/TEXT — and classifying those as blobs would
+		// mistype most MySQL string data. Callers that know the column is
+		// declared binary should use BinaryColumnType to override this; see
+		// ScanRowsLimit.
 		if utf8.Valid(v) {
 			return string(v), db.KindText
 		}
@@ -49,6 +51,26 @@ func StringifyValueKind(value any) (string, db.Kind) {
 		// and is treated as text — that is exactly what is displayed.
 		return fmt.Sprint(v), db.KindText
 	}
+}
+
+// binaryColumnTypes are the column type names, as drivers report them through
+// ColumnType.DatabaseTypeName, whose values are binary rather than text.
+//
+// The list is an exact-match set on purpose: substring matching on "BINARY"
+// or "BLOB" is the kind of rule that quietly catches an unrelated type later.
+// It covers the three databases asql supports. Both MySQL cases are safe —
+// go-sql-driver reports a BLOB-family column as "TEXT" when its charset is not
+// binary, so ordinary MySQL text never lands here.
+var binaryColumnTypes = map[string]bool{
+	"BLOB": true, "TINYBLOB": true, "MEDIUMBLOB": true, "LONGBLOB": true, // SQLite, MySQL
+	"BINARY": true, "VARBINARY": true, // MySQL
+	"BYTEA": true, // PostgreSQL
+}
+
+// BinaryColumnType reports whether a driver-reported column type name denotes
+// binary data.
+func BinaryColumnType(name string) bool {
+	return binaryColumnTypes[strings.ToUpper(strings.TrimSpace(name))]
 }
 
 // DefaultRowLimit is the maximum number of rows ScanRows will read.
@@ -78,6 +100,15 @@ func ScanRowsLimit(rows *sql.Rows, limit int) (db.QueryResult, error) {
 		}
 	}
 
+	// Columns the driver declares as binary. StringifyValueKind cannot tell a
+	// binary value from a string one — both arrive as []byte — so a BLOB that
+	// happens to hold valid UTF-8 would otherwise be brought over as TEXT and
+	// stop matching an X'..' comparison against the original bytes.
+	binaryCols := make([]bool, len(columns))
+	for i, name := range colTypes {
+		binaryCols[i] = BinaryColumnType(name)
+	}
+
 	values := make([]any, len(columns))
 	ptrs := make([]any, len(columns))
 	for i := range values {
@@ -101,6 +132,14 @@ func ScanRowsLimit(rows *sql.Rows, limit int) (db.QueryResult, error) {
 		record := make([]string, len(columns))
 		for i, value := range values {
 			s, k := StringifyValueKind(value)
+			if k == db.KindText && binaryCols[i] {
+				if b, ok := value.([]byte); ok {
+					// Show the hex form for every value in a binary column, not
+					// just the ones that failed the UTF-8 check, so the column
+					// reads consistently and round-trips as a blob.
+					s, k = fmt.Sprintf("%x", b), db.KindBlob
+				}
+			}
 			if s == "" {
 				// Empty strings are displayed as the `""` sentinel so they stay
 				// visually distinct from NULL. Record that the sentinel stands

@@ -200,13 +200,18 @@ func columnAffinities(result db.QueryResult, colCount int) []string {
 			out[c] = ""
 		case seenInt:
 			out[c] = "INTEGER"
-		case seenFloat, seenInt | seenFloat:
+		case seenFloat:
 			out[c] = "REAL"
 		case seenText:
 			out[c] = "TEXT"
 		case seenBlob:
 			out[c] = "BLOB"
-		default: // mixed storage classes
+		default:
+			// Mixed storage classes, including int+float: REAL affinity would
+			// be tempting here but it coerces every bound integer to a float,
+			// so 9007199254740993 comes back as 9007199254740992. Declaring
+			// nothing costs nothing — SQLite still compares integers and reals
+			// numerically, so ORDER BY and JOIN behave the same either way.
 			out[c] = ""
 		}
 	}

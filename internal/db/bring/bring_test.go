@@ -784,3 +784,141 @@ func TestMaterialize_ProvenanceRolledBackWithFailedBring(t *testing.T) {
 		t.Errorf("provenance row count = %s, want 1 (the failed bring must leave no record)", got.Rows[0][0])
 	}
 }
+
+func TestMaterialize_MixedIntFloatKeepsIntegerPrecision(t *testing.T) {
+	conn, adapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+
+	// 2^53+1 is not representable as a float64. A REAL-affinity column would
+	// coerce it on the way in and return 9007199254740992.
+	result := typedResult(
+		[]string{"v"},
+		[][]string{{"9007199254740993"}, {"1.5"}},
+		[][]db.Kind{{db.KindInt}, {db.KindFloat}},
+	)
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier,
+		Source{Seq: 1, Table: "t1"}, result); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+
+	got, err := adapter.Query(context.Background(), `SELECT v, typeof(v) FROM t1 ORDER BY rowid`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if got.Rows[0][0] != "9007199254740993" || got.Rows[0][1] != "integer" {
+		t.Errorf("large integer = %q (%s), want it preserved exactly as an integer",
+			got.Rows[0][0], got.Rows[0][1])
+	}
+	if got.Rows[1][1] != "real" {
+		t.Errorf("float typeof = %q, want real", got.Rows[1][1])
+	}
+
+	// The column carries no declared type, so nothing coerces the values.
+	schema, err := adapter.Query(context.Background(), `SELECT * FROM t1 LIMIT 0`)
+	if err != nil {
+		t.Fatalf("Query schema: %v", err)
+	}
+	if schema.ColumnTypes[0] != "" {
+		t.Errorf("declared type = %q, want none for a mixed int/float column", schema.ColumnTypes[0])
+	}
+}
+
+func TestMaterialize_MixedIntFloatStillOrdersAndJoinsNumerically(t *testing.T) {
+	// Dropping the REAL affinity must not cost the numeric behaviour it was
+	// there for: SQLite compares integer and real storage classes numerically.
+	conn, adapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+
+	left := typedResult(
+		[]string{"v"},
+		[][]string{{"10"}, {"2.5"}, {"3"}, {"1.25"}},
+		[][]db.Kind{{db.KindInt}, {db.KindFloat}, {db.KindInt}, {db.KindFloat}},
+	)
+	right := typedResult(
+		[]string{"v", "tag"},
+		[][]string{{"3.0", "three"}},
+		[][]db.Kind{{db.KindFloat, db.KindText}},
+	)
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier,
+		Source{Seq: 1, Table: "t1"}, left); err != nil {
+		t.Fatalf("Materialize t1: %v", err)
+	}
+	if err := Materialize(context.Background(), conn, adapter.QuoteIdentifier,
+		Source{Seq: 2, Table: "t2"}, right); err != nil {
+		t.Fatalf("Materialize t2: %v", err)
+	}
+
+	got, err := adapter.Query(context.Background(), `SELECT v FROM t1 ORDER BY v`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	want := []string{"1.25", "2.5", "3", "10"}
+	for i, w := range want {
+		if got.Rows[i][0] != w {
+			t.Fatalf("ORDER BY v = %+v, want %v", got.Rows, want)
+		}
+	}
+
+	got, err = adapter.Query(context.Background(),
+		`SELECT t2.tag FROM t1 JOIN t2 ON t1.v = t2.v`)
+	if err != nil {
+		t.Fatalf("Query join: %v", err)
+	}
+	if len(got.Rows) != 1 || got.Rows[0][0] != "three" {
+		t.Errorf("integer 3 JOIN real 3.0 = %+v, want one match", got.Rows)
+	}
+}
+
+func TestMaterialize_BinaryColumnWithUTF8ContentStaysABlob(t *testing.T) {
+	// A BLOB column whose bytes happen to be valid UTF-8 must still come across
+	// as a blob, or an X'..' comparison against the original bytes stops
+	// matching. The kind comes from the column type, not from UTF-8 validity.
+	src, srcAdapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open source: %v", err)
+	}
+	defer src.Close()
+
+	if _, err := src.Exec(`CREATE TABLE s (b BLOB)`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := src.Exec(`INSERT INTO s VALUES (?)`, []byte("abc")); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	result, err := srcAdapter.Query(context.Background(), `SELECT b FROM s`)
+	if err != nil {
+		t.Fatalf("source Query: %v", err)
+	}
+	if got := result.KindAt(0, 0); got != db.KindBlob {
+		t.Fatalf("kind = %d, want KindBlob for a declared BLOB column", got)
+	}
+
+	dst, dstAdapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open dest: %v", err)
+	}
+	defer dst.Close()
+	if err := Materialize(context.Background(), dst, dstAdapter.QuoteIdentifier,
+		Source{Seq: 1, Table: "t1"}, result); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+
+	got, err := dstAdapter.Query(context.Background(),
+		`SELECT typeof(b), b = X'616263' FROM t1`)
+	if err != nil {
+		t.Fatalf("dest Query: %v", err)
+	}
+	if got.Rows[0][0] != "blob" {
+		t.Errorf("typeof = %q, want blob", got.Rows[0][0])
+	}
+	if got.Rows[0][1] != "1" {
+		t.Errorf("b = X'616263' returned %q, want a match against the original bytes", got.Rows[0][1])
+	}
+}

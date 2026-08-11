@@ -254,3 +254,20 @@ func TestStringifyValueKind_NumericStringsRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestBinaryColumnType(t *testing.T) {
+	binary := []string{"BLOB", "blob", "TINYBLOB", "MEDIUMBLOB", "LONGBLOB", "BINARY", "VARBINARY", "BYTEA", " bytea "}
+	for _, name := range binary {
+		if !BinaryColumnType(name) {
+			t.Errorf("BinaryColumnType(%q) = false, want true", name)
+		}
+	}
+	// TEXT is what go-sql-driver reports for a MySQL BLOB-family column with a
+	// non-binary charset, so it must not be treated as binary.
+	text := []string{"TEXT", "VARCHAR", "CHAR", "TINYTEXT", "LONGTEXT", "INTEGER", "JSON", "", "BINARY_FLOAT"}
+	for _, name := range text {
+		if BinaryColumnType(name) {
+			t.Errorf("BinaryColumnType(%q) = true, want false", name)
+		}
+	}
+}

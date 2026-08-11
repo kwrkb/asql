@@ -57,7 +57,12 @@ const (
 var typeStyle = lipgloss.NewStyle().Foreground(mutedTextColor)
 
 type queryExecutedMsg struct {
-	seq    uint64
+	seq uint64
+	// query is the statement that produced result. It travels with the message
+	// so the accepted result and the query that produced it stay together: the
+	// tail of queryHistory is the last query *attempted*, which is a different
+	// thing once a later query fails, is cancelled, or is still in flight.
+	query  string
 	result db.QueryResult
 	err    error
 }
@@ -116,6 +121,7 @@ type model struct {
 	queryCancel  context.CancelFunc
 	querySeq     uint64
 	lastResult   db.QueryResult
+	lastQuery    string   // query that produced lastResult (see queryExecutedMsg)
 	queryHistory []string // executed queries (newest at end)
 	historyIdx   int      // -1 = new input, 0..n = history position
 	historyDraft string   // input saved before navigating history
@@ -431,6 +437,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.bringSt.brought++
+		// The label is otherwise only recomputed on a connection switch, and J
+		// refuses to switch when the bring DB is already active. Without this,
+		// bringing a JOIN result back into the bring DB leaves the status bar
+		// claiming the old table count until the user leaves and returns.
+		if m.connMgr.ActiveDSN() == bringDSN {
+			m.dbPath = m.bringLabel()
+		}
 		text := fmt.Sprintf("Brought as %s (%d cols, %d rows)", msg.name, msg.cols, msg.rows)
 		if msg.source != "" {
 			text = fmt.Sprintf("Brought %s as %s (%d cols, %d rows)",
@@ -506,6 +519,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.lastResult = msg.result
+		m.lastQuery = msg.query
 		m.sortDir = sortNone
 		m.sortCol = 0
 		m.colCursor = 0

@@ -44,6 +44,6 @@ func executeQueryCmd(parent context.Context, adapter db.DBAdapter, query string,
 		defer cancel()
 
 		result, err := adapter.Query(ctx, query)
-		return queryExecutedMsg{seq: seq, result: result, err: err}
+		return queryExecutedMsg{seq: seq, query: query, result: result, err: err}
 	}
 }

@@ -83,15 +83,15 @@ func (m model) bringCurrentResult() (tea.Model, tea.Cmd) {
 	}
 }
 
-// lastExecutedQuery returns the query that produced lastResult. It reads the
-// tail of queryHistory rather than the editor, because the editor may have been
-// edited since the result came back — the provenance record must describe the
-// data that was actually brought.
+// lastExecutedQuery returns the query that produced lastResult.
+//
+// It reads m.lastQuery, which is set only when a queryExecutedMsg is accepted.
+// Neither the editor nor the tail of queryHistory would do: the editor may have
+// been edited since the result came back, and queryHistory records every query
+// *attempted*, so a query that failed, was cancelled, or is still in flight
+// would be credited with the previous query's rows.
 func (m model) lastExecutedQuery() string {
-	if len(m.queryHistory) == 0 {
-		return ""
-	}
-	return m.queryHistory[len(m.queryHistory)-1]
+	return m.lastQuery
 }
 
 // bringLabel is what the status bar shows in place of a DSN while the local
