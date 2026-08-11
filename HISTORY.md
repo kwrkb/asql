@@ -21,6 +21,29 @@ Stats overlay の NULL 率も表示文字列一致ではなく kind で判定す
 
 ---
 
+## 定期メンテナンス — 依存更新と到達脆弱性の解消
+**PR**: #48, #49
+**実装**: 直接依存を更新（`jackc/pgx/v5 v5.10.0`、`go-sql-driver/mysql v1.10.0`、`modernc.org/sqlite v1.53.0`）し、`govulncheck ./...` が検出した到達可能な脆弱性 GO-2026-5004（pgx のプレースホルダ混同による SQL インジェクション）を解消。`go vet` / `go test` が全パスでも `govulncheck` は独立に回す必要があることを確認した（LESSONS.md「定期メンテナンス」）。依存更新時は `go.mod` の `go`/`toolchain` ディレクティブが意図せず引き上げられていないか diff で確認する。
+
+---
+
+## TUI レイアウト・モード遷移の堅牢化
+**PR**: #43, #44
+**実装**: 極端に狭い端末での描画崩れとモード遷移の不整合を修正。`overlay.go` の `calcModalWidth` の下限を実画面幅でクランプし、モーダルが画面外へはみ出さないようにした。AI / Snippet / Profile / SearchHistory の各 overlay で `textinput.Width` が固定値のまま `modalWidth` の縮小に追従していなかった問題は、`View()` 内での状態変異ではなく `resize()` への集約で解決した（「`View()` は純粋関数として保つ」ルール。PR #44 のレビューで 4 箇所の違反を指摘され追加コミットで是正）。
+
+---
+
+## Go toolchain の pin
+**PR**: #42（closes #41）
+**実装**: `go.mod` の toolchain を `go1.26.2` に pin。以降の依存更新でこのディレクティブが意図せず引き上げられていないことを毎回確認する。
+
+---
+
+## CLI インターフェース整備 (v0.6.0)
+**実装**: `--help` / `--version` を追加し、README.md / README.ja.md を整備。引数解析は `main.go` の `resolveDSN` / `parseSaveProfile`（手書きパーサ）。
+
+---
+
 ## Phase 4: Histogram (4-5)
 **PR**: #40
 **実装**: Stats overlay (`d` キー) で数値列に Unicode ブロック文字のヒストグラム (▁▂▅█▇▃▁) を表示。等幅 binning（最大 20 bin）、`renderSparklineBars` を再利用。BIGINT UNSIGNED ラベルのオーバーフロー、混合型列（>50% パース失敗で抑制）、NaN/Inf 除外、10,000 行上限のガードを実装。`detectNumericColumn` は word-boundary マッチで INTERVAL/POINT 等の誤検出を回避。

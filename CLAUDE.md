@@ -42,6 +42,8 @@ GITHUB_TOKEN=$(gh auth token) goreleaser release --clean
 
 ## Architecture
 
+ファイル単位の詳しい索引（どのモードがどのファイルにあるか、主要関数の場所）は **`NOTES.md`** を参照。
+
 - **internal/db/** — データベース抽象層。
   - `adapter.go` — `DBAdapter` インターフェース（`Type`, `Query`, `Tables`, `Columns`, `Schema`, `QuoteIdentifier`, `Close`）。
   - `dbutil/` — 全アダプタ共通のユーティリティ（`returnsRows` 判定、値の文字列化など）。
@@ -53,6 +55,7 @@ GITHUB_TOKEN=$(gh auth token) goreleaser release --clean
 - **internal/config/** — `~/.config/asql/config.yaml` の管理。
 - **internal/profile/**, **internal/snippet/** — 接続プロファイルとクエリスニペットの永続化。
 - **internal/fsutil/** — `atomicWrite` 等のファイル操作共通ヘルパー。
+- **internal/ui/table/** — `bubbles/table` v1.0.0 の vendor fork（ANSI 幅バグの 2 行パッチ）。上流 v1 に修正が来ないため恒久。
 
 ## Design Principles (from VISION.md)
 
@@ -64,21 +67,20 @@ GITHUB_TOKEN=$(gh auth token) goreleaser release --clean
 
 ## Workflow Files
 
-### VISION.md
-- プロジェクトの理念、原則、非目標（Non-Goals）を定義する最上位文書。
-- 機能追加の要否は `VISION.md` の決定ルール（Decision Rule）に従う。
+**優先順位（矛盾したとき、上が勝つ）: `VISION.md` > `PLAN.md` > コード > `NOTES.md`**
+`HISTORY.md` / `LESSONS.md` は**序列外**（仕様ではなく記録）。
 
-### PLAN.md
-- **未完了のタスクのみ**を管理するアクティブなロードマップ。
-- フェーズごとに P0 (Must) / P1 (Should) 等の優先順位を付ける。
+**コードが `VISION.md` と矛盾していたら、勝手にコードへ寄せず作業を止めて確認する。**
 
-### HISTORY.md
-- 完了したタスクの永続的な記録。
-- **PLAN.md で完了したタスクは、随時こちらに移動して記録すること。**
+| ファイル | 役割 | 更新のルール |
+|---|---|---|
+| `VISION.md` | **正典**。目的・スコープ・非スコープ・Decision Rule・現在のフェーズ | **更新はユーザー承認必須** |
+| `PLAN.md` | フェーズ境界と現在地**だけ** | 手順分解は書かない（TodoWrite を使う）。個別の機能要望・バグは **GitHub Issue** |
+| `HISTORY.md` | 完了したタスクの永続記録 | PLAN.md から落ちた完了項目はここへ移す |
+| `LESSONS.md` | 判断の記録 | **追記専用**。過去を書き換えない。1 エントリ = 却下した案 / 決め手（観測事実のみ）/ 覆す条件。冒頭の「書き方」を参照 |
+| `NOTES.md` | 内部構造の索引 | **揮発・鮮度非保証**。コードが常に正しい。気づいた時点で直してよい（承認不要） |
+| `docs/` | 設計文書（例: `readonly-design.md`） | 実装前のレビュー対象 |
+| `status/` | 品質監査スキルの出力先（`review.md` 等） | — |
 
-### LESSONS.md
-- 開発中に得た知見や回避した問題、ユーザーからの指摘事項を記録する。
-- 同じミスを繰り返さないための「プロジェクトの知恵袋」として活用する。
-
-### status/
-- 品質監査スキルの出力先。`review.md`, `quality-report.md` などのレポートを格納。
+現在のフェーズは **メンテナンス期**（VISION.md の `Phase`）。
+新機能は Decision Rule を満たすだけでは足りず、「実利用で不足が観察された」ことを条件とする。
