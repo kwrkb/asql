@@ -46,6 +46,8 @@ Bring & Join (Phase 3) はまだ先。比較体験が磨き込まれてから。
   > 新しいモードもオーバーレイも追加せず、既存のクエリ経路で観察できる普通のテーブルにした。先頭アンダースコアでサイドバー先頭に並ぶ
 - [x] Stats overlay の NULL 率を kind ベースに変更
 - [x] README.md / README.ja.md を実装に同期（AI 設定の階層混在バグ、Stats overlay、Bring & Join、`d` キー）
+- [x] PR #50 の Codex レビュー指摘4件に対応（混在 int/float の REAL affinity による精度欠落、UTF-8 妥当なバイナリ列の誤判定、provenance が履歴末尾を参照、bring ラベルの更新漏れ）
+  > 詳細は LESSONS.md「PR #50 レビュー対応」。4件とも現在のソースと実測で検証してから採用し、各回帰テストが対応する修正を戻すと落ちることを確認済み
 - [x] `bubbles/table` の ANSI 幅バグを修正（作業中の TUI smoke test で発見した既存バグ）
   > `runewidth.StringWidth` が ANSI エスケープのバイトを表示幅として数えるため、列幅が約27セル未満だとスタイル付き文字列がエスケープの途中で切断され、端末が残りを飲み込んでいた。**カラム型注釈が不可視**、**比較モードの差分セルは内容ごと消失**。変更前のコミット `0d3b668` で再現を確認済み
   > 上流の修正 (charmbracelet/bubbles#884) は `ansi.Truncate` への2行変更だが、マージ先は v2 系のみ。v1 向けの同一 PR (#883) は未マージのまま閉じられており v1.0.0 には来ない。bubbles v2 への移行は bubbletea v2 / lipgloss v2 を巻き込むため2行の修正には見合わない

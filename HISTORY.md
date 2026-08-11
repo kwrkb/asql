@@ -6,6 +6,7 @@
 **実装**: `QueryResult` に `Kinds [][]db.Kind`（NULL/Empty/Int/Float/Blob/Text）を追加し、スキャン時点でセルごとの意味を記録。`bring.Materialize` はこれを使って (a) 列ごとに SQLite affinity を宣言（INTEGER/REAL/TEXT/BLOB、混在列は型無し宣言＝BLOB affinity で各値の storage class を保持）、(b) 各セルを int64/float64/[]byte/string/NULL として bind する。数値ソート・JOINが文字列比較にならず、SQL NULL と文字列 `"NULL"`、空文字と `""` が区別可能になった。`Rows [][]string` は不変なので描画・ソート・エクスポート・比較の各経路は無改修、NULL/空文字の表示仕様も維持。`Kinds` が nil の `QueryResult` は従来の全TEXT挙動にフォールバックする。
 併せて `bring.Source`（持ち寄り順・ローカル表名・取得元接続・元クエリ）を導入し、bring DB 内の `_asql_bring` テーブルへデータと同一トランザクションで記録。行数・列数・truncated フラグも保持する。専用モードやオーバーレイは追加せず、既存のクエリ経路で `SELECT * FROM _asql_bring` として観察できる。ステータスバーは `(local bring: N tables)` を表示。
 Stats overlay の NULL 率も表示文字列一致ではなく kind で判定するようになり、値が文字列 `"NULL"` の列でも正確になった。
+**PR #50 レビュー対応**: (1) 整数と浮動小数が混在する列の `REAL` 宣言を撤回。SQLite の REAL affinity は bind した整数を浮動小数へ強制変換するため `9007199254740993` が `9007199254740992` に壊れていた。型無し宣言なら各値の storage class が保たれ、`ORDER BY` の数値順と `integer 3 = real 3.0` の JOIN も成立する。(2) `[]byte` の UTF-8 妥当性ではなく driver 報告の列型でバイナリ判定するよう変更。中身がたまたま UTF-8 妥当な BLOB 列が TEXT として持ち寄られ `X'"'"'616263'"'"'` との比較が外れていた。go-sql-driver は charset で `TEXT`/`BLOB` を分けるため MySQL の文字列データには影響しない。(3) provenance のクエリを `queryHistory` 末尾ではなく `queryExecutedMsg.query` 経由で受理された結果に紐付け（履歴は実行前に追記される「試行の記録」のため、後続クエリの失敗時に誤ったクエリが記録されていた）。(4) bring DB に接続中の持ち寄りでステータスバーの件数が更新されない問題を修正。
 
 ---
 
