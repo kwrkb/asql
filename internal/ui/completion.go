@@ -391,12 +391,7 @@ func (m model) renderCompletionPopup() string {
 
 	var lines []string
 	for i := scrollOffset; i < end; i++ {
-		label := sanitize(m.completion.items[i])
-		runes := []rune(label)
-		maxLen := popupWidth - 6
-		if maxLen > 0 && len(runes) > maxLen {
-			label = string(runes[:maxLen]) + "…"
-		}
+		label := truncateCells(sanitize(m.completion.items[i]), popupWidth-6)
 		if i == m.completion.cursor {
 			lines = append(lines, selectedStyle.Render(label))
 		} else {

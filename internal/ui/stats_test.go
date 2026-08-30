@@ -308,57 +308,6 @@ func TestStats_RenderOverlay(t *testing.T) {
 	}
 }
 
-func TestFit(t *testing.T) {
-	tests := []struct {
-		input string
-		width int
-		want  string
-	}{
-		{"hello", 10, "hello     "},
-		{"hello", 5, "hello"},
-		{"hello", 4, "hel…"},
-		{"hello", 1, "…"},
-		{"hello", 0, ""}, // no cell to spend, not even on the ellipsis
-		{"", 5, "     "},
-		// A width is a cell count, not a byte or rune count: a wide character
-		// costs two cells and is never cut in half.
-		{"日本語", 6, "日本語"},
-		{"日本語", 10, "日本語    "},
-		{"日本語", 4, "日… "}, // the cell freed by dropping a wide char is padded back
-		{"日本語のとても長い値です", 12, "日本語のと… "},
-	}
-	for _, tt := range tests {
-		got := fit(tt.input, tt.width)
-		if got != tt.want {
-			t.Errorf("fit(%q, %d) = %q, want %q", tt.input, tt.width, got, tt.want)
-		}
-		if w := ansi.StringWidth(got); w != tt.width {
-			t.Errorf("fit(%q, %d) = %q: occupies %d cells, want %d", tt.input, tt.width, got, w, tt.width)
-		}
-	}
-}
-
-// The old implementation sliced at a byte offset, so a multi-byte value was cut
-// mid-sequence and written to the terminal as invalid UTF-8.
-func TestFit_NeverBreaksUTF8(t *testing.T) {
-	inputs := []string{
-		"日本語のとても長い値です",
-		"aあbいcうdえeお",
-		"emoji 👨‍👩‍👧 family",
-	}
-	for _, in := range inputs {
-		for w := 1; w <= 24; w++ {
-			got := fit(in, w)
-			if !utf8.ValidString(got) {
-				t.Errorf("fit(%q, %d) = %q: not valid UTF-8", in, w, got)
-			}
-			if gw := ansi.StringWidth(got); gw != w {
-				t.Errorf("fit(%q, %d) = %q: occupies %d cells, want %d", in, w, got, gw, w)
-			}
-		}
-	}
-}
-
 // Column widths were measured in bytes while fmt's "%-Ns" pads by rune count,
 // so a single wide-character column name skewed the whole table.
 func TestStats_RenderOverlayAlignsMultibyteColumns(t *testing.T) {

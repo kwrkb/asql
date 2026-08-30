@@ -178,12 +178,16 @@ copy a result into it and `J` to join there.
 | Key | Action |
 |-----|--------|
 | `Esc` | Return to NORMAL mode |
-| `Ctrl+Enter` / `Ctrl+J` | Execute query |
+| `Ctrl+J` / `Ctrl+Enter` | Execute query (see note) |
 | `Tab` | Autocomplete table/column name |
 | `Ctrl+P` / `Ctrl+N` | Previous / next query history |
 | `Ctrl+R` | Search query history |
 | `Ctrl+S` | Save current query as snippet |
 | `Ctrl+L` | Clear editor |
+
+> **Note on `Ctrl+Enter`:** most Unix terminals send `Ctrl+Enter` as `Ctrl+J`, which is why
+> both work there. The Windows console (Windows Terminal, PowerShell) reports `Ctrl+Enter`
+> as a plain `Enter` and cannot distinguish the two, so use `Ctrl+J` on Windows.
 
 **Completion popup (when active):**
 
