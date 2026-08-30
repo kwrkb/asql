@@ -8,12 +8,16 @@ import (
 	"github.com/kwrkb/asql/internal/db"
 )
 
-func loadTablesCmd(adapter db.DBAdapter) tea.Cmd {
+// loadTablesCmd fetches the table list for adapter. gen is the connection
+// generation at the time the load starts; it travels with the result so a load
+// that finishes after a connection switch can be discarded instead of
+// overwriting the new connection's sidebar and completion candidates.
+func loadTablesCmd(adapter db.DBAdapter, gen uint64) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 		defer cancel()
 		tables, err := adapter.Tables(ctx)
-		return tablesLoadedMsg{tables: tables, err: err}
+		return tablesLoadedMsg{tables: tables, err: err, connGen: gen}
 	}
 }
 

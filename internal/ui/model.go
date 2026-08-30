@@ -70,8 +70,9 @@ type queryExecutedMsg struct {
 }
 
 type tablesLoadedMsg struct {
-	tables []string
-	err    error
+	tables  []string
+	err     error
+	connGen uint64 // connection generation when the load was initiated
 }
 
 type aiResponseMsg struct {
@@ -293,7 +294,7 @@ func (m *model) activeDB() db.DBAdapter {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(textarea.Blink, loadTablesCmd(m.connMgr.Active()))
+	return tea.Batch(textarea.Blink, loadTablesCmd(m.connMgr.Active(), m.connGen))
 }
 
 func (m *model) blurActiveInput() {
@@ -426,10 +427,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.reExecute {
 			query := strings.TrimSpace(m.textarea.Value())
 			if query != "" {
-				return m, tea.Batch(loadTablesCmd(m.connMgr.Active()), m.prepareAndExecuteQuery(query))
+				return m, tea.Batch(loadTablesCmd(m.connMgr.Active(), m.connGen), m.prepareAndExecuteQuery(query))
 			}
 		}
-		return m, loadTablesCmd(m.connMgr.Active())
+		return m, loadTablesCmd(m.connMgr.Active(), m.connGen)
 	case bringDoneMsg:
 		if msg.err != nil {
 			// Table names are never reused, even on failure: tableSeq is a
@@ -461,6 +462,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setStatus(text, false)
 		return m, nil
 	case tablesLoadedMsg:
+		if msg.connGen != m.connGen {
+			return m, nil // stale load from a previous connection
+		}
 		if msg.err != nil {
 			m.setStatus("Failed to load tables: "+msg.err.Error(), true)
 			return m, nil
@@ -536,7 +540,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.pinned != nil {
 			m.setStatus(m.compareStatusSummary(), false)
 		}
-		return m, loadTablesCmd(m.activeDB())
+		return m, loadTablesCmd(m.activeDB(), m.connGen)
 	}
 
 	var cmd tea.Cmd
