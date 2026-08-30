@@ -426,3 +426,53 @@ func TestCompareValues_IgnoresTheNullSentinelRule(t *testing.T) {
 		t.Error("9 should compare below 10 numerically")
 	}
 }
+
+// The header line and the data rows built their column offsets independently,
+// so every column from Column onward sat one cell left of the values beneath
+// it: a data row spends cursor(2) + space(1) before the name, the header spent
+// only two spaces.
+func TestStats_RenderOverlayAlignsHeaderWithRows(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 100, 30
+	m.lastResult = db.QueryResult{
+		Columns:     []string{"name", "id"},
+		ColumnTypes: []string{"TEXT", "INTEGER"},
+		Rows:        [][]string{{"alice", "1"}, {"bob", "2"}},
+	}
+	m.mode = statsMode
+	m.statsSt.stats = computeColumnStats(m.lastResult)
+
+	lines := strings.Split(m.renderWithStatsOverlay("background"), "\n")
+	// line returns the sole rendered row containing marker, stripped of styling.
+	// "Distinct" only appears in the header and "TEXT" only in the row for the
+	// name column, so each picks out one line.
+	line := func(marker string) string {
+		for _, ln := range lines {
+			if plain := ansi.Strip(ln); strings.Contains(plain, marker) {
+				return plain
+			}
+		}
+		t.Fatalf("no rendered line contains %q", marker)
+		return ""
+	}
+	startOf := func(text, needle string) int {
+		idx := strings.Index(text, needle)
+		if idx < 0 {
+			t.Fatalf("%q not found in %q", needle, text)
+		}
+		return ansi.StringWidth(text[:idx])
+	}
+
+	header, row := line("Distinct"), line("TEXT")
+	if got, want := startOf(header, "Column"), startOf(row, "name"); got != want {
+		t.Errorf("header Column starts at cell %d, the column name at %d", got, want)
+	}
+	if got, want := startOf(header, "Type"), startOf(row, "TEXT"); got != want {
+		t.Errorf("header Type starts at cell %d, the type value at %d", got, want)
+	}
+	// NULL% and its values are right-aligned in the same 6-cell field, so their
+	// ends are what must line up.
+	if got, want := startOf(header, "NULL%")+len("NULL%"), startOf(row, "0.0%")+len("0.0%"); got != want {
+		t.Errorf("header NULL%% ends at cell %d, the value at %d", got, want)
+	}
+}
