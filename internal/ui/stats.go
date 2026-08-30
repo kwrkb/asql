@@ -177,7 +177,11 @@ func (m model) renderWithStatsOverlay(background string) string {
 		typeW = 12
 	}
 
-	header := fmt.Sprintf("  %s  %s  %6s  %8s  %s",
+	// Three leading spaces, not two: a data row spends cursor(2) + space(1)
+	// before its name, so a two-space header put every column one cell left of
+	// the values under it. Matching the rows also keeps the nameW+typeW+7
+	// sparkline indent below correct.
+	header := fmt.Sprintf("   %s  %s  %6s  %8s  %s",
 		fit("Column", nameW), fit("Type", typeW), "NULL%", "Distinct", "Min → Max")
 	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(mutedTextColor)).Render(header))
 	b.WriteByte('\n')
