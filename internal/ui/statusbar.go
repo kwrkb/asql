@@ -30,7 +30,7 @@ func (m model) statusHints() string {
 		if m.completion.active {
 			return "Tab/C-n:next C-p:prev Enter:accept Esc:cancel"
 		}
-		return "Tab:complete C-Enter/C-j:exec C-r:search C-l:clear C-p/C-n:hist C-s:save Esc:normal"
+		return "Tab:complete C-j/C-Enter:exec C-r:search C-l:clear C-p/C-n:hist C-s:save Esc:normal"
 	case sidebarMode:
 		return "j/k:nav Enter:select Esc:close"
 	case aiMode:
