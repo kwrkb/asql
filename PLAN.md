@@ -20,7 +20,8 @@ VISION.md の `Phase` を参照。
 
 - Phase 0〜4 完了。readonly mode (`--readonly`) 実装済み。最新リリース **v0.11.0**
 - **未着手の機能タスクなし。** 新しい作業は GitHub Issue から
-- 定常作業: 依存更新と `govulncheck ./...` の到達脆弱性 0 件確認
+- 定常作業: 依存更新と `govulncheck ./...` の到達脆弱性 0 件確認。
+  CI が PR・main への push・毎週のスケジュール実行で `govulncheck` を回すので、検知は自動。リリース前のローカル確認は継続
 
 ## 持ち越しの負債
 
