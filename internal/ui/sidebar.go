@@ -91,7 +91,7 @@ func (m model) renderSidebar() string {
 		if lines >= height-1 {
 			break
 		}
-		name := m.sidebar.tables[i]
+		name := sanitize(m.sidebar.tables[i])
 		if i == m.sidebar.cursor {
 			b.WriteString(selectedStyle.Render(name))
 		} else {
