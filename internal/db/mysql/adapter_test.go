@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	gomysql "github.com/go-sql-driver/mysql"
 )
 
 func TestReturnsRows(t *testing.T) {
@@ -79,6 +81,21 @@ func TestConvertDSN(t *testing.T) {
 			"root:pass@tcp(127.0.0.1:3306)/testdb",
 			"root:pass@tcp(127.0.0.1:3306)/testdb",
 		},
+		{
+			"percent-encoded password is decoded",
+			"mysql://root:p%40ss@127.0.0.1:3306/testdb",
+			"root:p@ss@tcp(127.0.0.1:3306)/testdb?parseTime=true",
+		},
+		{
+			"percent-encoded user is decoded",
+			"mysql://ad%40min:pass@127.0.0.1:3306/testdb",
+			"ad@min:pass@tcp(127.0.0.1:3306)/testdb?parseTime=true",
+		},
+		{
+			"dbname keeps its escaped form",
+			"mysql://root:pass@127.0.0.1:3306/test%25db",
+			"root:pass@tcp(127.0.0.1:3306)/test%25db?parseTime=true",
+		},
 	}
 
 	for _, tt := range tests {
@@ -86,6 +103,50 @@ func TestConvertDSN(t *testing.T) {
 			got := convertDSN(tt.input)
 			if got != tt.want {
 				t.Errorf("convertDSN(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestConvertDSNParsesBackToCredentials checks the converted DSN against the
+// driver's own parser: it is the parser that decides what the credentials and
+// dbname actually end up being, so asserting on the string alone can pass while
+// the connection still authenticates with the wrong password.
+func TestConvertDSNParsesBackToCredentials(t *testing.T) {
+	tests := []struct {
+		name       string
+		url        string
+		wantUser   string
+		wantPass   string
+		wantDBName string
+	}{
+		{"plain", "mysql://root:pass@127.0.0.1:3306/testdb", "root", "pass", "testdb"},
+		{"at sign in password", "mysql://root:p%40ss@127.0.0.1:3306/testdb", "root", "p@ss", "testdb"},
+		{"colon in password", "mysql://root:p%3Ass@127.0.0.1:3306/testdb", "root", "p:ss", "testdb"},
+		{"percent in password", "mysql://root:p%25ss@127.0.0.1:3306/testdb", "root", "p%ss", "testdb"},
+		{"slash in password", "mysql://root:p%2Fss@127.0.0.1:3306/testdb", "root", "p/ss", "testdb"},
+		{"at sign in user", "mysql://ad%40min:pass@127.0.0.1:3306/testdb", "ad@min", "pass", "testdb"},
+		{"percent in dbname", "mysql://root:pass@127.0.0.1:3306/test%25db", "root", "pass", "test%db"},
+		{"no password", "mysql://root@127.0.0.1:3306/testdb", "root", "", "testdb"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := gomysql.ParseDSN(convertDSN(tt.url))
+			if err != nil {
+				t.Fatalf("ParseDSN(%q) failed: %v", convertDSN(tt.url), err)
+			}
+			if cfg.User != tt.wantUser {
+				t.Errorf("User = %q, want %q", cfg.User, tt.wantUser)
+			}
+			if cfg.Passwd != tt.wantPass {
+				t.Errorf("Passwd = %q, want %q", cfg.Passwd, tt.wantPass)
+			}
+			if cfg.DBName != tt.wantDBName {
+				t.Errorf("DBName = %q, want %q", cfg.DBName, tt.wantDBName)
+			}
+			if cfg.Addr != "127.0.0.1:3306" {
+				t.Errorf("Addr = %q, want %q", cfg.Addr, "127.0.0.1:3306")
 			}
 		})
 	}

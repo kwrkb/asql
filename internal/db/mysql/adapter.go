@@ -173,9 +173,21 @@ func convertDSN(dsn string) string {
 		return dsn
 	}
 
+	// The two DSN formats disagree on escaping, so decode on the way in and
+	// hand the driver what its own parser expects:
+	//
+	//   - credentials: url.Userinfo.String re-encodes for URL use, but
+	//     go-sql-driver takes the bytes between the first ':' and the last '@'
+	//     verbatim. A URL-encoded "p%40ss" would arrive as the literal password
+	//     "p%40ss" instead of "p@ss", so use the decoded pair.
+	//   - dbname: go-sql-driver runs url.PathUnescape on it, so keep the
+	//     escaped form or a name containing '%' is decoded twice (or rejected).
 	var userInfo string
 	if u.User != nil {
-		userInfo = u.User.String()
+		userInfo = u.User.Username()
+		if pass, ok := u.User.Password(); ok {
+			userInfo += ":" + pass
+		}
 	}
 
 	host := u.Host
@@ -183,7 +195,7 @@ func convertDSN(dsn string) string {
 		host = "127.0.0.1:3306"
 	}
 
-	path := strings.TrimPrefix(u.Path, "/")
+	path := strings.TrimPrefix(u.EscapedPath(), "/")
 
 	params := u.Query()
 	if params.Get("parseTime") == "" {
