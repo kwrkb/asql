@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -559,5 +560,61 @@ func TestBring_LabelRefreshesWhileTheBringDBIsActive(t *testing.T) {
 
 	if um.dbPath != "(local bring: 2 tables)" {
 		t.Errorf("dbPath = %q, want it refreshed to two tables", um.dbPath)
+	}
+}
+
+func TestBring_ReloadsTablesWhileTheBringDBIsActive(t *testing.T) {
+	// Same trap as the label above: tablesLoadedMsg is otherwise only issued on
+	// a switch or a successful query, and J refuses to switch when the bring DB
+	// is already active. Without a reload here the new table is absent from the
+	// sidebar and from completion while the user writes the very query that
+	// would refresh them.
+	m := newTestModel()
+	m.mode = normalMode
+	m.lastResult = db.QueryResult{
+		Columns: []string{"id"},
+		Rows:    [][]string{{"1"}},
+		Kinds:   [][]db.Kind{{db.KindInt}},
+	}
+
+	first, cmd := m.updateNormal(runeMsg("b"))
+	fm := first.(model)
+	done := cmd().(bringDoneMsg)
+	if done.err != nil {
+		t.Fatalf("first bring failed: %v", done.err)
+	}
+	// The bring DB is not active yet, so a later J will load the list anyway.
+	next, reload := fm.Update(done)
+	fm = next.(model)
+	if reload != nil {
+		t.Error("expected no table reload while the bring DB is inactive")
+	}
+
+	if err := fm.connMgr.Switch(bringConnName, bringDSN); err != nil {
+		t.Fatalf("Switch: %v", err)
+	}
+	switched, _ := fm.Update(connSwitchedMsg{})
+	sm := switched.(model)
+
+	sm.mode = normalMode
+	second, cmd2 := sm.updateNormal(runeMsg("b"))
+	rm := second.(model)
+	done2 := cmd2().(bringDoneMsg)
+	if done2.err != nil {
+		t.Fatalf("second bring failed: %v", done2.err)
+	}
+	_, reload2 := rm.Update(done2)
+	if reload2 == nil {
+		t.Fatal("expected a table reload while the bring DB is active")
+	}
+	loaded, ok := reload2().(tablesLoadedMsg)
+	if !ok {
+		t.Fatalf("expected tablesLoadedMsg, got %T", reload2())
+	}
+	if loaded.err != nil {
+		t.Fatalf("table load failed: %v", loaded.err)
+	}
+	if !slices.Contains(loaded.tables, done2.name) {
+		t.Errorf("tables = %v, want the freshly brought %q", loaded.tables, done2.name)
 	}
 }
