@@ -309,57 +309,6 @@ func TestStats_RenderOverlay(t *testing.T) {
 	}
 }
 
-func TestFit(t *testing.T) {
-	tests := []struct {
-		input string
-		width int
-		want  string
-	}{
-		{"hello", 10, "hello     "},
-		{"hello", 5, "hello"},
-		{"hello", 4, "hel…"},
-		{"hello", 1, "…"},
-		{"hello", 0, ""}, // no cell to spend, not even on the ellipsis
-		{"", 5, "     "},
-		// A width is a cell count, not a byte or rune count: a wide character
-		// costs two cells and is never cut in half.
-		{"日本語", 6, "日本語"},
-		{"日本語", 10, "日本語    "},
-		{"日本語", 4, "日… "}, // the cell freed by dropping a wide char is padded back
-		{"日本語のとても長い値です", 12, "日本語のと… "},
-	}
-	for _, tt := range tests {
-		got := fit(tt.input, tt.width)
-		if got != tt.want {
-			t.Errorf("fit(%q, %d) = %q, want %q", tt.input, tt.width, got, tt.want)
-		}
-		if w := ansi.StringWidth(got); w != tt.width {
-			t.Errorf("fit(%q, %d) = %q: occupies %d cells, want %d", tt.input, tt.width, got, w, tt.width)
-		}
-	}
-}
-
-// The old implementation sliced at a byte offset, so a multi-byte value was cut
-// mid-sequence and written to the terminal as invalid UTF-8.
-func TestFit_NeverBreaksUTF8(t *testing.T) {
-	inputs := []string{
-		"日本語のとても長い値です",
-		"aあbいcうdえeお",
-		"emoji 👨‍👩‍👧 family",
-	}
-	for _, in := range inputs {
-		for w := 1; w <= 24; w++ {
-			got := fit(in, w)
-			if !utf8.ValidString(got) {
-				t.Errorf("fit(%q, %d) = %q: not valid UTF-8", in, w, got)
-			}
-			if gw := ansi.StringWidth(got); gw != w {
-				t.Errorf("fit(%q, %d) = %q: occupies %d cells, want %d", in, w, got, gw, w)
-			}
-		}
-	}
-}
-
 // Column widths were measured in bytes while fmt's "%-Ns" pads by rune count,
 // so a single wide-character column name skewed the whole table.
 func TestStats_RenderOverlayAlignsMultibyteColumns(t *testing.T) {
@@ -497,5 +446,55 @@ func TestStats_RenderOverlayNarrowTerminal(t *testing.T) {
 			m.statsSt.loading = false
 			_ = m.renderWithStatsOverlay("background")
 		})
+	}
+}
+
+// The header line and the data rows built their column offsets independently,
+// so every column from Column onward sat one cell left of the values beneath
+// it: a data row spends cursor(2) + space(1) before the name, the header spent
+// only two spaces.
+func TestStats_RenderOverlayAlignsHeaderWithRows(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 100, 30
+	m.lastResult = db.QueryResult{
+		Columns:     []string{"name", "id"},
+		ColumnTypes: []string{"TEXT", "INTEGER"},
+		Rows:        [][]string{{"alice", "1"}, {"bob", "2"}},
+	}
+	m.mode = statsMode
+	m.statsSt.stats = computeColumnStats(m.lastResult)
+
+	lines := strings.Split(m.renderWithStatsOverlay("background"), "\n")
+	// line returns the sole rendered row containing marker, stripped of styling.
+	// "Distinct" only appears in the header and "TEXT" only in the row for the
+	// name column, so each picks out one line.
+	line := func(marker string) string {
+		for _, ln := range lines {
+			if plain := ansi.Strip(ln); strings.Contains(plain, marker) {
+				return plain
+			}
+		}
+		t.Fatalf("no rendered line contains %q", marker)
+		return ""
+	}
+	startOf := func(text, needle string) int {
+		idx := strings.Index(text, needle)
+		if idx < 0 {
+			t.Fatalf("%q not found in %q", needle, text)
+		}
+		return ansi.StringWidth(text[:idx])
+	}
+
+	header, row := line("Distinct"), line("TEXT")
+	if got, want := startOf(header, "Column"), startOf(row, "name"); got != want {
+		t.Errorf("header Column starts at cell %d, the column name at %d", got, want)
+	}
+	if got, want := startOf(header, "Type"), startOf(row, "TEXT"); got != want {
+		t.Errorf("header Type starts at cell %d, the type value at %d", got, want)
+	}
+	// NULL% and its values are right-aligned in the same 6-cell field, so their
+	// ends are what must line up.
+	if got, want := startOf(header, "NULL%")+len("NULL%"), startOf(row, "0.0%")+len("0.0%"); got != want {
+		t.Errorf("header NULL%% ends at cell %d, the value at %d", got, want)
 	}
 }

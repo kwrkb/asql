@@ -123,13 +123,8 @@ func (m model) renderWithHistorySearchOverlay(background string) string {
 
 		for i := start; i < end; i++ {
 			histIdx := m.histSearch.results[i]
-			// Flatten newlines, sanitize, then truncate
-			preview := strings.Join(strings.Fields(sanitize(m.queryHistory[histIdx])), " ")
-			maxLen := modalWidth - 10
-			runes := []rune(preview)
-			if maxLen > 0 && len(runes) > maxLen {
-				preview = string(runes[:maxLen]) + "..."
-			}
+			// Flatten newlines, sanitize, then truncate to cells
+			preview := truncateCells(strings.Join(strings.Fields(sanitize(m.queryHistory[histIdx])), " "), modalWidth-10)
 			if i == m.histSearch.cursor {
 				items.WriteString(selectedStyle.Render(preview))
 			} else {

@@ -179,7 +179,11 @@ func (m model) renderWithStatsOverlay(background string) string {
 		typeW = 12
 	}
 
-	header := fmt.Sprintf("  %s  %s  %6s  %8s  %s",
+	// Three leading spaces, not two: a data row spends cursor(2) + space(1)
+	// before its name, so a two-space header put every column one cell left of
+	// the values under it. Matching the rows also keeps the nameW+typeW+7
+	// sparkline indent below correct.
+	header := fmt.Sprintf("   %s  %s  %6s  %8s  %s",
 		fit("Column", nameW), fit("Type", typeW), "NULL%", "Distinct", "Min → Max")
 	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(mutedTextColor)).Render(header))
 	b.WriteByte('\n')
@@ -260,14 +264,4 @@ func (m model) renderWithStatsOverlay(background string) string {
 		Render(b.String())
 
 	return overlayModal(m.width, background, modal)
-}
-
-// fit renders s in exactly w terminal cells: truncated with "…" when it is too
-// wide, padded with spaces when it is too narrow. Width is counted in cells
-// rather than bytes or runes, so a wide character is never cut in half and a
-// column of them still lines up. fmt's "%-Ns" cannot stand in here: it pads by
-// rune count, which is two cells short per wide character.
-func fit(s string, w int) string {
-	s = ansi.Truncate(s, w, "…")
-	return s + strings.Repeat(" ", max(w-ansi.StringWidth(s), 0))
 }

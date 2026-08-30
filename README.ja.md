@@ -146,7 +146,7 @@ asql 自身の作業領域なので書き込み可能なまま残る（`b` で�
 |------|--------|------|
 | `i` | NORMAL | INSERT モードに入る |
 | `Esc` | INSERT | NORMAL モードに戻る |
-| `Ctrl+Enter` / `Ctrl+J` | INSERT | クエリを実行 |
+| `Ctrl+J` / `Ctrl+Enter` | INSERT | クエリを実行（下の注記を参照） |
 | `Tab` | INSERT | テーブル名・カラム名を補完 |
 | `Ctrl+P` / `Ctrl+N` | INSERT | クエリ履歴の前 / 次 |
 | `Ctrl+R` | INSERT | クエリ履歴を検索 |
@@ -173,6 +173,10 @@ asql 自身の作業領域なので書き込み可能なまま残る（`b` で�
 | `J` | NORMAL | ローカルの Bring & Join DB に接続を切替 |
 | `Ctrl+C` | *全モード* | 実行中のクエリ/AI をキャンセル、または終了 |
 | `q` | NORMAL | 終了 |
+
+> **`Ctrl+Enter` についての注記:** 多くの Unix 端末は `Ctrl+Enter` を `Ctrl+J` として送るため、
+> どちらでも実行できます。一方 Windows コンソール（Windows Terminal / PowerShell）は
+> `Ctrl+Enter` を素の `Enter` として報告し、両者を区別できません。Windows では `Ctrl+J` を使ってください。
 
 ## カラム統計
 
