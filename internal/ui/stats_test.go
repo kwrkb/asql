@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -424,6 +425,27 @@ func TestCompareValues_IgnoresTheNullSentinelRule(t *testing.T) {
 	// Numeric comparison is unchanged in both.
 	if compareValues("9", "10") >= 0 || smartCompare("9", "10") >= 0 {
 		t.Error("9 should compare below 10 numerically")
+	}
+}
+
+// A modal is clamped to the real screen width, so on a terminal narrower than
+// the border-plus-padding overhead the derived content width went negative and
+// strings.Repeat panicked.
+func TestStats_RenderOverlayNarrowTerminal(t *testing.T) {
+	for w := 1; w <= 10; w++ {
+		t.Run(fmt.Sprintf("width%d", w), func(t *testing.T) {
+			m := newStatsModel()
+			m.width, m.height = w, 24
+			m.mode = statsMode
+			m.statsSt.stats = computeColumnStats(m.lastResult)
+
+			// The loading branch renders its own modal from calcModalWidth too.
+			m.statsSt.loading = true
+			_ = m.renderWithStatsOverlay("background")
+
+			m.statsSt.loading = false
+			_ = m.renderWithStatsOverlay("background")
+		})
 	}
 }
 
