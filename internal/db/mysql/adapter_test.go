@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	gomysql "github.com/go-sql-driver/mysql"
 )
 
 func TestReturnsRows(t *testing.T) {
@@ -43,51 +45,157 @@ func TestReturnsRows(t *testing.T) {
 	}
 }
 
-func TestConvertDSN(t *testing.T) {
+// TestBuildConfig asserts on the driver Config, not on a DSN string: the
+// Config is what the connection is actually made from, so a string-level
+// assertion can pass while the connection still authenticates as someone else.
+func TestBuildConfig(t *testing.T) {
 	tests := []struct {
-		name  string
-		input string
-		want  string
+		name          string
+		input         string
+		wantUser      string
+		wantPass      string
+		wantDBName    string
+		wantAddr      string
+		wantParseTime bool
+		// Substrings the driver's own rendering of the config must contain.
+		// Some params (charset, loc, tls) land in dedicated Config fields
+		// rather than in Params, so FormatDSN is the one place all of them are
+		// observable.
+		wantDSNContains []string
 	}{
 		{
-			"full URL",
-			"mysql://root:pass@127.0.0.1:3306/testdb",
-			"root:pass@tcp(127.0.0.1:3306)/testdb?parseTime=true",
+			name: "full URL", input: "mysql://root:pass@127.0.0.1:3306/testdb",
+			wantUser: "root", wantPass: "pass", wantDBName: "testdb",
+			wantAddr: "127.0.0.1:3306", wantParseTime: true,
 		},
 		{
-			"with existing params",
-			"mysql://root:pass@127.0.0.1:3306/testdb?charset=utf8mb4",
-			"root:pass@tcp(127.0.0.1:3306)/testdb?charset=utf8mb4&parseTime=true",
+			name:     "with existing params",
+			input:    "mysql://root:pass@127.0.0.1:3306/testdb?charset=utf8mb4&readTimeout=5s",
+			wantUser: "root", wantPass: "pass", wantDBName: "testdb",
+			wantAddr: "127.0.0.1:3306", wantParseTime: true,
+			wantDSNContains: []string{"charset=utf8mb4", "readTimeout=5s", "parseTime=true"},
 		},
 		{
-			"parseTime already set",
-			"mysql://root@localhost:3306/db?parseTime=false",
-			"root@tcp(localhost:3306)/db?parseTime=false",
+			name: "parseTime already set", input: "mysql://root@localhost:3306/db?parseTime=false",
+			wantUser: "root", wantDBName: "db", wantAddr: "localhost:3306", wantParseTime: false,
 		},
 		{
-			"no port",
-			"mysql://root@localhost/db",
-			"root@tcp(localhost)/db?parseTime=true",
+			name: "no port", input: "mysql://root@localhost/db",
+			wantUser: "root", wantDBName: "db", wantAddr: "localhost:3306", wantParseTime: true,
 		},
 		{
-			"no user",
-			"mysql://localhost:3306/db",
-			"@tcp(localhost:3306)/db?parseTime=true",
+			name: "no user", input: "mysql://localhost:3306/db",
+			wantDBName: "db", wantAddr: "localhost:3306", wantParseTime: true,
 		},
 		{
-			"already go-sql-driver format",
-			"root:pass@tcp(127.0.0.1:3306)/testdb",
-			"root:pass@tcp(127.0.0.1:3306)/testdb",
+			name: "no host", input: "mysql://root@/db",
+			wantUser: "root", wantDBName: "db", wantAddr: "127.0.0.1:3306", wantParseTime: true,
+		},
+		{
+			name: "already go-sql-driver format", input: "root:pass@tcp(127.0.0.1:3306)/testdb",
+			wantUser: "root", wantPass: "pass", wantDBName: "testdb",
+			wantAddr: "127.0.0.1:3306", wantParseTime: false,
+		},
+
+		// Credentials the URL form escapes but the driver DSN form does not.
+		{
+			name: "at sign in password", input: "mysql://root:p%40ss@127.0.0.1:3306/testdb",
+			wantUser: "root", wantPass: "p@ss", wantDBName: "testdb",
+			wantAddr: "127.0.0.1:3306", wantParseTime: true,
+		},
+		{
+			name: "colon in password", input: "mysql://root:p%3Ass@127.0.0.1:3306/testdb",
+			wantUser: "root", wantPass: "p:ss", wantDBName: "testdb",
+			wantAddr: "127.0.0.1:3306", wantParseTime: true,
+		},
+		{
+			name: "percent in password", input: "mysql://root:p%25ss@127.0.0.1:3306/testdb",
+			wantUser: "root", wantPass: "p%ss", wantDBName: "testdb",
+			wantAddr: "127.0.0.1:3306", wantParseTime: true,
+		},
+		{
+			name: "slash in password", input: "mysql://root:p%2Fss@127.0.0.1:3306/testdb",
+			wantUser: "root", wantPass: "p/ss", wantDBName: "testdb",
+			wantAddr: "127.0.0.1:3306", wantParseTime: true,
+		},
+		{
+			name: "at sign in user", input: "mysql://ad%40min:pass@127.0.0.1:3306/testdb",
+			wantUser: "ad@min", wantPass: "pass", wantDBName: "testdb",
+			wantAddr: "127.0.0.1:3306", wantParseTime: true,
+		},
+		// The case the DSN string form cannot express at all: the driver would
+		// split on the first colon and authenticate as "first"/"last:secret".
+		{
+			name: "colon in user", input: "mysql://first%3Alast:secret@127.0.0.1:3306/testdb",
+			wantUser: "first:last", wantPass: "secret", wantDBName: "testdb",
+			wantAddr: "127.0.0.1:3306", wantParseTime: true,
+		},
+		{
+			name: "colon in user and password", input: "mysql://a%3Ab:c%3Ad@127.0.0.1:3306/testdb",
+			wantUser: "a:b", wantPass: "c:d", wantDBName: "testdb",
+			wantAddr: "127.0.0.1:3306", wantParseTime: true,
+		},
+		{
+			name: "percent in dbname", input: "mysql://root:pass@127.0.0.1:3306/test%25db",
+			wantUser: "root", wantPass: "pass", wantDBName: "test%db",
+			wantAddr: "127.0.0.1:3306", wantParseTime: true,
+		},
+		{
+			name: "no password", input: "mysql://root@127.0.0.1:3306/testdb",
+			wantUser: "root", wantDBName: "testdb",
+			wantAddr: "127.0.0.1:3306", wantParseTime: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := convertDSN(tt.input)
-			if got != tt.want {
-				t.Errorf("convertDSN(%q) = %q, want %q", tt.input, got, tt.want)
+			cfg, err := buildConfig(tt.input)
+			if err != nil {
+				t.Fatalf("buildConfig(%q) failed: %v", tt.input, err)
+			}
+			if cfg.User != tt.wantUser {
+				t.Errorf("User = %q, want %q", cfg.User, tt.wantUser)
+			}
+			if cfg.Passwd != tt.wantPass {
+				t.Errorf("Passwd = %q, want %q", cfg.Passwd, tt.wantPass)
+			}
+			if cfg.DBName != tt.wantDBName {
+				t.Errorf("DBName = %q, want %q", cfg.DBName, tt.wantDBName)
+			}
+			if cfg.Addr != tt.wantAddr {
+				t.Errorf("Addr = %q, want %q", cfg.Addr, tt.wantAddr)
+			}
+			if cfg.Net != "tcp" {
+				t.Errorf("Net = %q, want %q", cfg.Net, "tcp")
+			}
+			if cfg.ParseTime != tt.wantParseTime {
+				t.Errorf("ParseTime = %v, want %v", cfg.ParseTime, tt.wantParseTime)
+			}
+			formatted := cfg.FormatDSN()
+			for _, want := range tt.wantDSNContains {
+				if !strings.Contains(formatted, want) {
+					t.Errorf("FormatDSN() = %q, want it to contain %q", formatted, want)
+				}
 			}
 		})
+	}
+}
+
+// The config must survive the driver's own normalize/FormatDSN round trip,
+// which is what NewConnector puts it through.
+func TestBuildConfig_AcceptedByConnector(t *testing.T) {
+	cfg, err := buildConfig("mysql://first%3Alast:p%40ss@127.0.0.1:3306/testdb")
+	if err != nil {
+		t.Fatalf("buildConfig failed: %v", err)
+	}
+	if _, err := gomysql.NewConnector(cfg); err != nil {
+		t.Fatalf("NewConnector failed: %v", err)
+	}
+}
+
+func TestBuildConfig_InvalidDSN(t *testing.T) {
+	if _, err := buildConfig("root:pass@tcp(127.0.0.1:3306)"); err == nil {
+		t.Error("buildConfig() expected an error for a DSN with no '/', got nil")
 	}
 }
 
