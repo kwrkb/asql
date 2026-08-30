@@ -208,13 +208,9 @@ func (m model) renderWithSnippetOverlay(background string) string {
 			} else {
 				items.WriteString(itemStyle.Render(label))
 			}
-			// Show query preview: sanitize, flatten newlines to spaces, then truncate (rune-safe)
-			preview := strings.Join(strings.Fields(sanitize(s.Query)), " ")
-			maxPreview := modalWidth - 10
-			runes := []rune(preview)
-			if maxPreview > 0 && len(runes) > maxPreview {
-				preview = string(runes[:maxPreview]) + "..."
-			}
+			// Show query preview: sanitize, flatten newlines to spaces, then
+			// truncate to cells so a wide-character query cannot overflow.
+			preview := truncateCells(strings.Join(strings.Fields(sanitize(s.Query)), " "), modalWidth-10)
 			items.WriteByte('\n')
 			items.WriteString(queryPreviewStyle.Render(preview))
 			if i < end-1 {

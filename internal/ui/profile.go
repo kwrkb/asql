@@ -197,12 +197,7 @@ func (m model) renderWithProfileOverlay(background string) string {
 				items.WriteString(itemStyle.Render(label))
 			}
 			// Show masked DSN preview
-			preview := sanitize(db.MaskDSN(p.DSN))
-			maxPreview := modalWidth - 10
-			runes := []rune(preview)
-			if maxPreview > 0 && len(runes) > maxPreview {
-				preview = string(runes[:maxPreview]) + "..."
-			}
+			preview := truncateCells(sanitize(db.MaskDSN(p.DSN)), modalWidth-10)
 			items.WriteByte('\n')
 			items.WriteString(dsnPreviewStyle.Render(preview))
 			if i < end-1 {

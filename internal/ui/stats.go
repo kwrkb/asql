@@ -259,13 +259,3 @@ func (m model) renderWithStatsOverlay(background string) string {
 
 	return overlayModal(m.width, background, modal)
 }
-
-// fit renders s in exactly w terminal cells: truncated with "…" when it is too
-// wide, padded with spaces when it is too narrow. Width is counted in cells
-// rather than bytes or runes, so a wide character is never cut in half and a
-// column of them still lines up. fmt's "%-Ns" cannot stand in here: it pads by
-// rune count, which is two cells short per wide character.
-func fit(s string, w int) string {
-	s = ansi.Truncate(s, w, "…")
-	return s + strings.Repeat(" ", max(w-ansi.StringWidth(s), 0))
-}
