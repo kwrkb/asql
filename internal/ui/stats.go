@@ -178,7 +178,7 @@ func (m model) renderWithStatsOverlay(background string) string {
 	}
 
 	header := fmt.Sprintf("  %s  %s  %6s  %8s  %s",
-		padRight("Column", nameW), padRight("Type", typeW), "NULL%", "Distinct", "Min → Max")
+		fit("Column", nameW), fit("Type", typeW), "NULL%", "Distinct", "Min → Max")
 	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(mutedTextColor)).Render(header))
 	b.WriteByte('\n')
 
@@ -196,8 +196,8 @@ func (m model) renderWithStatsOverlay(background string) string {
 
 		minMax := ""
 		if s.Distinct > 0 {
-			mn := truncate(sanitize(s.Min), 12)
-			mx := truncate(sanitize(s.Max), 12)
+			mn := ansi.Truncate(sanitize(s.Min), 12, "…")
+			mx := ansi.Truncate(sanitize(s.Max), 12, "…")
 			if mn == mx {
 				minMax = mn
 			} else {
@@ -205,11 +205,9 @@ func (m model) renderWithStatsOverlay(background string) string {
 			}
 		}
 
-		name := truncate(sanitize(s.Name), nameW)
-		typ := truncate(sanitize(s.Type), typeW)
-
 		line := fmt.Sprintf("%s %s  %s  %6s  %8d  %s",
-			cursor, padRight(name, nameW), padRight(typ, typeW), nullPct, s.Distinct, minMax)
+			cursor, fit(sanitize(s.Name), nameW), fit(sanitize(s.Type), typeW),
+			nullPct, s.Distinct, minMax)
 		if i == m.statsSt.cursor {
 			line = lipgloss.NewStyle().Foreground(lipgloss.Color(textColor)).Bold(true).Render(line)
 		} else {
@@ -262,19 +260,12 @@ func (m model) renderWithStatsOverlay(background string) string {
 	return overlayModal(m.width, background, modal)
 }
 
-// truncate shortens s to a display width of maxLen cells, appending "…" if
-// truncated. Width is measured in terminal cells (not bytes), so multi-byte and
-// wide characters are never cut mid-sequence.
-func truncate(s string, maxLen int) string {
-	return ansi.Truncate(s, maxLen, "…")
-}
-
-// padRight pads s with spaces until it occupies width terminal cells. fmt's
-// "%-Ns" pads by rune count, which misaligns columns as soon as a value holds
-// a wide character, so the stats table pads by display width instead.
-func padRight(s string, width int) string {
-	if pad := width - ansi.StringWidth(s); pad > 0 {
-		return s + strings.Repeat(" ", pad)
-	}
-	return s
+// fit renders s in exactly w terminal cells: truncated with "…" when it is too
+// wide, padded with spaces when it is too narrow. Width is counted in cells
+// rather than bytes or runes, so a wide character is never cut in half and a
+// column of them still lines up. fmt's "%-Ns" cannot stand in here: it pads by
+// rune count, which is two cells short per wide character.
+func fit(s string, w int) string {
+	s = ansi.Truncate(s, w, "…")
+	return s + strings.Repeat(" ", max(w-ansi.StringWidth(s), 0))
 }

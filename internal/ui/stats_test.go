@@ -308,34 +308,39 @@ func TestStats_RenderOverlay(t *testing.T) {
 	}
 }
 
-func TestTruncate(t *testing.T) {
+func TestFit(t *testing.T) {
 	tests := []struct {
-		input  string
-		maxLen int
-		want   string
+		input string
+		width int
+		want  string
 	}{
-		{"hello", 10, "hello"},
+		{"hello", 10, "hello     "},
 		{"hello", 5, "hello"},
 		{"hello", 4, "hel…"},
 		{"hello", 1, "…"},
-		{"", 5, ""},
-		// maxLen is a display width, not a byte count: a wide character costs
-		// two cells and is never cut in half.
+		{"hello", 0, ""}, // no cell to spend, not even on the ellipsis
+		{"", 5, "     "},
+		// A width is a cell count, not a byte or rune count: a wide character
+		// costs two cells and is never cut in half.
 		{"日本語", 6, "日本語"},
-		{"日本語", 4, "日…"},
-		{"日本語のとても長い値です", 12, "日本語のと…"},
+		{"日本語", 10, "日本語    "},
+		{"日本語", 4, "日… "}, // the cell freed by dropping a wide char is padded back
+		{"日本語のとても長い値です", 12, "日本語のと… "},
 	}
 	for _, tt := range tests {
-		got := truncate(tt.input, tt.maxLen)
+		got := fit(tt.input, tt.width)
 		if got != tt.want {
-			t.Errorf("truncate(%q, %d) = %q, want %q", tt.input, tt.maxLen, got, tt.want)
+			t.Errorf("fit(%q, %d) = %q, want %q", tt.input, tt.width, got, tt.want)
+		}
+		if w := ansi.StringWidth(got); w != tt.width {
+			t.Errorf("fit(%q, %d) = %q: occupies %d cells, want %d", tt.input, tt.width, got, w, tt.width)
 		}
 	}
 }
 
-// truncate used to slice by byte offset, which emitted a half-written UTF-8
-// sequence straight to the terminal for any multi-byte value.
-func TestTruncate_MultibyteNeverExceedsWidthOrBreaksUTF8(t *testing.T) {
+// The old implementation sliced at a byte offset, so a multi-byte value was cut
+// mid-sequence and written to the terminal as invalid UTF-8.
+func TestFit_NeverBreaksUTF8(t *testing.T) {
 	inputs := []string{
 		"日本語のとても長い値です",
 		"aあbいcうdえeお",
@@ -343,36 +348,13 @@ func TestTruncate_MultibyteNeverExceedsWidthOrBreaksUTF8(t *testing.T) {
 	}
 	for _, in := range inputs {
 		for w := 1; w <= 24; w++ {
-			got := truncate(in, w)
+			got := fit(in, w)
 			if !utf8.ValidString(got) {
-				t.Errorf("truncate(%q, %d) = %q: not valid UTF-8", in, w, got)
+				t.Errorf("fit(%q, %d) = %q: not valid UTF-8", in, w, got)
 			}
-			if gw := ansi.StringWidth(got); gw > w {
-				t.Errorf("truncate(%q, %d) = %q: display width %d exceeds %d", in, w, got, gw, w)
+			if gw := ansi.StringWidth(got); gw != w {
+				t.Errorf("fit(%q, %d) = %q: occupies %d cells, want %d", in, w, got, gw, w)
 			}
-		}
-	}
-}
-
-func TestPadRight_UsesDisplayWidth(t *testing.T) {
-	tests := []struct {
-		input string
-		width int
-		want  int // resulting display width
-	}{
-		{"ab", 5, 5},
-		{"日本語", 10, 10}, // 6 cells + 4 spaces, not 9 bytes + 1
-		{"日本語", 6, 6},
-		{"abcdef", 3, 6}, // already wider: left untouched
-		{"", 4, 4},
-	}
-	for _, tt := range tests {
-		got := padRight(tt.input, tt.width)
-		if w := ansi.StringWidth(got); w != tt.want {
-			t.Errorf("padRight(%q, %d) = %q: display width %d, want %d", tt.input, tt.width, got, w, tt.want)
-		}
-		if !strings.HasPrefix(got, tt.input) {
-			t.Errorf("padRight(%q, %d) = %q: lost the original text", tt.input, tt.width, got)
 		}
 	}
 }
@@ -388,18 +370,18 @@ func TestStats_RenderOverlayAlignsMultibyteColumns(t *testing.T) {
 		Rows: [][]string{
 			{"日本語のとても長い値です", "1"},
 			{"あ", "2"},
+			{"い", "9"},
 		},
 	}
 	m.mode = statsMode
 	m.statsSt.stats = computeColumnStats(m.lastResult)
+	m.statsSt.cursor = 1 // the numeric column, so its histogram renders too
 
 	rendered := m.renderWithStatsOverlay("background")
 	if !utf8.ValidString(rendered) {
 		t.Error("stats overlay emitted invalid UTF-8")
 	}
 
-	// The type column must start at the same cell on the multi-byte row and the
-	// ASCII row.
 	lines := strings.Split(rendered, "\n")
 	col := func(needle string) int {
 		for _, ln := range lines {
@@ -411,8 +393,18 @@ func TestStats_RenderOverlayAlignsMultibyteColumns(t *testing.T) {
 		t.Fatalf("no rendered line contains %q", needle)
 		return -1
 	}
+
+	// The type column must start at the same cell on the multi-byte row and the
+	// ASCII row.
 	if got, want := col("TEXT"), col("INTEGER"); got != want {
 		t.Errorf("type column starts at cell %d on the multi-byte row and %d on the ASCII row", got, want)
+	}
+
+	// The histogram indent is written as nameW+typeW+7 rather than derived from
+	// the row, so it drifts too if the widths stop being cell counts.
+	wantIndent := col("INTEGER") + ansi.StringWidth("INTEGER") + 2
+	if got := col("█"); got != wantIndent {
+		t.Errorf("histogram bars start at cell %d, want %d (under the NULL%% column)", got, wantIndent)
 	}
 }
 
