@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kwrkb/asql/internal/db"
 )
@@ -162,11 +163,11 @@ func (m model) renderWithStatsOverlay(background string) string {
 	nameW, typeW := 6, 4
 
 	for _, s := range stats {
-		if len(s.Name) > nameW {
-			nameW = len(s.Name)
+		if w := ansi.StringWidth(sanitize(s.Name)); w > nameW {
+			nameW = w
 		}
-		if len(s.Type) > typeW {
-			typeW = len(s.Type)
+		if w := ansi.StringWidth(sanitize(s.Type)); w > typeW {
+			typeW = w
 		}
 	}
 	if nameW > 20 {
@@ -176,13 +177,12 @@ func (m model) renderWithStatsOverlay(background string) string {
 		typeW = 12
 	}
 
-	headerFmt := fmt.Sprintf("  %%-%ds  %%-%ds  %%6s  %%8s  %%s", nameW, typeW)
-	header := fmt.Sprintf(headerFmt, "Column", "Type", "NULL%", "Distinct", "Min → Max")
+	header := fmt.Sprintf("  %s  %s  %6s  %8s  %s",
+		fit("Column", nameW), fit("Type", typeW), "NULL%", "Distinct", "Min → Max")
 	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(mutedTextColor)).Render(header))
 	b.WriteByte('\n')
 
 	maxVisible := m.statsMaxVisible()
-	rowFmt := fmt.Sprintf("%%s %%-%ds  %%-%ds  %%6s  %%8d  %%s", nameW, typeW)
 	end := min(m.statsSt.scroll+maxVisible, len(stats))
 
 	for i := m.statsSt.scroll; i < end; i++ {
@@ -196,8 +196,8 @@ func (m model) renderWithStatsOverlay(background string) string {
 
 		minMax := ""
 		if s.Distinct > 0 {
-			mn := truncate(sanitize(s.Min), 12)
-			mx := truncate(sanitize(s.Max), 12)
+			mn := ansi.Truncate(sanitize(s.Min), 12, "…")
+			mx := ansi.Truncate(sanitize(s.Max), 12, "…")
 			if mn == mx {
 				minMax = mn
 			} else {
@@ -205,10 +205,9 @@ func (m model) renderWithStatsOverlay(background string) string {
 			}
 		}
 
-		name := truncate(sanitize(s.Name), nameW)
-		typ := truncate(sanitize(s.Type), typeW)
-
-		line := fmt.Sprintf(rowFmt, cursor, name, typ, nullPct, s.Distinct, minMax)
+		line := fmt.Sprintf("%s %s  %s  %6s  %8d  %s",
+			cursor, fit(sanitize(s.Name), nameW), fit(sanitize(s.Type), typeW),
+			nullPct, s.Distinct, minMax)
 		if i == m.statsSt.cursor {
 			line = lipgloss.NewStyle().Foreground(lipgloss.Color(textColor)).Bold(true).Render(line)
 		} else {
@@ -261,13 +260,12 @@ func (m model) renderWithStatsOverlay(background string) string {
 	return overlayModal(m.width, background, modal)
 }
 
-// truncate shortens s to maxLen, appending "…" if truncated.
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	if maxLen <= 1 {
-		return "…"
-	}
-	return s[:maxLen-1] + "…"
+// fit renders s in exactly w terminal cells: truncated with "…" when it is too
+// wide, padded with spaces when it is too narrow. Width is counted in cells
+// rather than bytes or runes, so a wide character is never cut in half and a
+// column of them still lines up. fmt's "%-Ns" cannot stand in here: it pads by
+// rune count, which is two cells short per wide character.
+func fit(s string, w int) string {
+	s = ansi.Truncate(s, w, "…")
+	return s + strings.Repeat(" ", max(w-ansi.StringWidth(s), 0))
 }
