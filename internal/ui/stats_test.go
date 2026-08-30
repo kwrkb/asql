@@ -1,9 +1,12 @@
 package ui
 
 import (
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kwrkb/asql/internal/db"
 )
@@ -316,12 +319,100 @@ func TestTruncate(t *testing.T) {
 		{"hello", 4, "hel…"},
 		{"hello", 1, "…"},
 		{"", 5, ""},
+		// maxLen is a display width, not a byte count: a wide character costs
+		// two cells and is never cut in half.
+		{"日本語", 6, "日本語"},
+		{"日本語", 4, "日…"},
+		{"日本語のとても長い値です", 12, "日本語のと…"},
 	}
 	for _, tt := range tests {
 		got := truncate(tt.input, tt.maxLen)
 		if got != tt.want {
 			t.Errorf("truncate(%q, %d) = %q, want %q", tt.input, tt.maxLen, got, tt.want)
 		}
+	}
+}
+
+// truncate used to slice by byte offset, which emitted a half-written UTF-8
+// sequence straight to the terminal for any multi-byte value.
+func TestTruncate_MultibyteNeverExceedsWidthOrBreaksUTF8(t *testing.T) {
+	inputs := []string{
+		"日本語のとても長い値です",
+		"aあbいcうdえeお",
+		"emoji 👨‍👩‍👧 family",
+	}
+	for _, in := range inputs {
+		for w := 1; w <= 24; w++ {
+			got := truncate(in, w)
+			if !utf8.ValidString(got) {
+				t.Errorf("truncate(%q, %d) = %q: not valid UTF-8", in, w, got)
+			}
+			if gw := ansi.StringWidth(got); gw > w {
+				t.Errorf("truncate(%q, %d) = %q: display width %d exceeds %d", in, w, got, gw, w)
+			}
+		}
+	}
+}
+
+func TestPadRight_UsesDisplayWidth(t *testing.T) {
+	tests := []struct {
+		input string
+		width int
+		want  int // resulting display width
+	}{
+		{"ab", 5, 5},
+		{"日本語", 10, 10}, // 6 cells + 4 spaces, not 9 bytes + 1
+		{"日本語", 6, 6},
+		{"abcdef", 3, 6}, // already wider: left untouched
+		{"", 4, 4},
+	}
+	for _, tt := range tests {
+		got := padRight(tt.input, tt.width)
+		if w := ansi.StringWidth(got); w != tt.want {
+			t.Errorf("padRight(%q, %d) = %q: display width %d, want %d", tt.input, tt.width, got, w, tt.want)
+		}
+		if !strings.HasPrefix(got, tt.input) {
+			t.Errorf("padRight(%q, %d) = %q: lost the original text", tt.input, tt.width, got)
+		}
+	}
+}
+
+// Column widths were measured in bytes while fmt's "%-Ns" pads by rune count,
+// so a single wide-character column name skewed the whole table.
+func TestStats_RenderOverlayAlignsMultibyteColumns(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 100, 30
+	m.lastResult = db.QueryResult{
+		Columns:     []string{"日本語の列名", "id"},
+		ColumnTypes: []string{"TEXT", "INTEGER"},
+		Rows: [][]string{
+			{"日本語のとても長い値です", "1"},
+			{"あ", "2"},
+		},
+	}
+	m.mode = statsMode
+	m.statsSt.stats = computeColumnStats(m.lastResult)
+
+	rendered := m.renderWithStatsOverlay("background")
+	if !utf8.ValidString(rendered) {
+		t.Error("stats overlay emitted invalid UTF-8")
+	}
+
+	// The type column must start at the same cell on the multi-byte row and the
+	// ASCII row.
+	lines := strings.Split(rendered, "\n")
+	col := func(needle string) int {
+		for _, ln := range lines {
+			plain := ansi.Strip(ln)
+			if idx := strings.Index(plain, needle); idx >= 0 {
+				return ansi.StringWidth(plain[:idx])
+			}
+		}
+		t.Fatalf("no rendered line contains %q", needle)
+		return -1
+	}
+	if got, want := col("TEXT"), col("INTEGER"); got != want {
+		t.Errorf("type column starts at cell %d on the multi-byte row and %d on the ASCII row", got, want)
 	}
 }
 
