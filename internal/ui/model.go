@@ -186,7 +186,7 @@ func NewModel(adapter db.DBAdapter, dbPath string, rawDSN string, connName strin
 	input.ShowLineNumbers = true
 	input.SetHeight(8)
 	input.CharLimit = 0
-	input.SetValue("-- Press Esc for NORMAL mode, Ctrl+Enter (or Ctrl+J) to execute.\n" + initialQuery)
+	input.SetValue("-- Press Esc for NORMAL mode, Ctrl+J (or Ctrl+Enter) to execute.\n" + initialQuery)
 	input.Cursor.Style = lipgloss.NewStyle().Foreground(accentColor)
 	input.FocusedStyle.Base = lipgloss.NewStyle().
 		Foreground(textColor).
