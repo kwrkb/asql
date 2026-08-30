@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	gomysql "github.com/go-sql-driver/mysql"
 
 	"github.com/kwrkb/asql/internal/db"
 	"github.com/kwrkb/asql/internal/db/dbutil"
@@ -19,14 +19,18 @@ type Adapter struct {
 }
 
 // Open connects to a MySQL database using the given DSN.
-// Accepts mysql:// URL format and converts it to go-sql-driver format.
+// Accepts both mysql:// URL format and go-sql-driver's own DSN format.
 func Open(dsn string) (*Adapter, error) {
-	driverDSN := convertDSN(dsn)
-
-	conn, err := sql.Open("mysql", driverDSN)
+	cfg, err := buildConfig(dsn)
 	if err != nil {
 		return nil, err
 	}
+
+	connector, err := gomysql.NewConnector(cfg)
+	if err != nil {
+		return nil, err
+	}
+	conn := sql.OpenDB(connector)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -160,34 +164,24 @@ func returnsRows(query string) bool {
 	}
 }
 
-// convertDSN converts a mysql:// URL to go-sql-driver DSN format.
-// Input:  mysql://user:pass@host:port/dbname?charset=utf8mb4
-// Output: user:pass@tcp(host:port)/dbname?charset=utf8mb4&parseTime=true
-func convertDSN(dsn string) string {
+// buildConfig turns a DSN — either a mysql:// URL or go-sql-driver's own
+// format — into a driver config.
+//
+// The credentials are set as struct fields rather than written into a DSN
+// string, because the string form cannot express all of them. go-sql-driver
+// splits `user:password` on the *first* colon and has no escape for one inside
+// a username, so `mysql://first%3Alast:secret@host/db` would come back as user
+// "first" with password "last:secret" — a silent swap to different, sometimes
+// valid, credentials. Everything else still goes through the driver's own
+// parser, so parameter handling (parseTime, loc, tls, ...) stays its business.
+func buildConfig(dsn string) (*gomysql.Config, error) {
 	if !strings.HasPrefix(dsn, "mysql://") {
-		return dsn
+		return gomysql.ParseDSN(dsn)
 	}
 
 	u, err := url.Parse(dsn)
 	if err != nil {
-		return dsn
-	}
-
-	// The two DSN formats disagree on escaping, so decode on the way in and
-	// hand the driver what its own parser expects:
-	//
-	//   - credentials: url.Userinfo.String re-encodes for URL use, but
-	//     go-sql-driver takes the bytes between the first ':' and the last '@'
-	//     verbatim. A URL-encoded "p%40ss" would arrive as the literal password
-	//     "p%40ss" instead of "p@ss", so use the decoded pair.
-	//   - dbname: go-sql-driver runs url.PathUnescape on it, so keep the
-	//     escaped form or a name containing '%' is decoded twice (or rejected).
-	var userInfo string
-	if u.User != nil {
-		userInfo = u.User.Username()
-		if pass, ok := u.User.Password(); ok {
-			userInfo += ":" + pass
-		}
+		return nil, fmt.Errorf("parsing MySQL URL: %w", err)
 	}
 
 	host := u.Host
@@ -195,12 +189,24 @@ func convertDSN(dsn string) string {
 		host = "127.0.0.1:3306"
 	}
 
-	path := strings.TrimPrefix(u.EscapedPath(), "/")
-
 	params := u.Query()
 	if params.Get("parseTime") == "" {
 		params.Set("parseTime", "true")
 	}
 
-	return fmt.Sprintf("%s@tcp(%s)/%s?%s", userInfo, host, path, params.Encode())
+	// The dbname keeps its escaped form: ParseDSN runs url.PathUnescape on it,
+	// so handing over the already-decoded path would decode it twice.
+	cfg, err := gomysql.ParseDSN(fmt.Sprintf("tcp(%s)/%s?%s",
+		host, strings.TrimPrefix(u.EscapedPath(), "/"), params.Encode()))
+	if err != nil {
+		return nil, err
+	}
+
+	// Decoded, and past the parser: url.Userinfo.String would re-encode these
+	// for URL use and the driver does not percent-decode them.
+	if u.User != nil {
+		cfg.User = u.User.Username()
+		cfg.Passwd, _ = u.User.Password()
+	}
+	return cfg, nil
 }
