@@ -1221,3 +1221,100 @@ func TestMaterialize_HighPrecisionDecimalStaysText(t *testing.T) {
 		t.Errorf("got %q (%s), want the digits preserved as text", got.Rows[0][0], got.Rows[0][1])
 	}
 }
+
+func TestMaterialize_NumericLookingBlobInDecimalColumnStaysABlob(t *testing.T) {
+	// SQLite is dynamically typed: a column declared DECIMAL can hold a BLOB.
+	// The scanner promotes DECIMAL values that arrive as text to numbers, so a
+	// blob whose bytes happen to spell "123" must be recognised as a blob first
+	// or it is brought over as the integer 123 and the bytes are lost.
+	src, srcAdapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open source: %v", err)
+	}
+	defer src.Close()
+
+	if _, err := src.Exec(`CREATE TABLE src (v DECIMAL)`); err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	if _, err := src.Exec(`INSERT INTO src VALUES (X'313233')`); err != nil {
+		t.Fatalf("seed source: %v", err)
+	}
+
+	result, err := srcAdapter.Query(context.Background(), `SELECT v FROM src`)
+	if err != nil {
+		t.Fatalf("source Query: %v", err)
+	}
+	if got := result.Rows[0][0]; got != "313233" {
+		t.Errorf("display string = %q, want %q (hex)", got, "313233")
+	}
+	if !result.HasKinds() {
+		t.Fatal("ScanRows did not record kinds")
+	}
+	if got := result.Kinds[0][0]; got != db.KindBlob {
+		t.Errorf("kind = %d, want KindBlob (%d)", got, db.KindBlob)
+	}
+
+	dst, dstAdapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open dest: %v", err)
+	}
+	defer dst.Close()
+
+	if err := Materialize(context.Background(), dst, dstAdapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+
+	got, err := dstAdapter.Query(context.Background(), `SELECT typeof(v), hex(v) FROM t1`)
+	if err != nil {
+		t.Fatalf("dest Query: %v", err)
+	}
+	if got.Rows[0][0] != "blob" {
+		t.Errorf("typeof(v) = %q, want %q", got.Rows[0][0], "blob")
+	}
+	if got.Rows[0][1] != "313233" {
+		t.Errorf("hex(v) = %q, want %q", got.Rows[0][1], "313233")
+	}
+}
+
+func TestMaterialize_DecimalTextInDecimalColumnStaysNumeric(t *testing.T) {
+	// The counterpart to the blob case: an ordinary numeric value in a DECIMAL
+	// column must still be brought over as a number, not demoted to text.
+	src, srcAdapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open source: %v", err)
+	}
+	defer src.Close()
+
+	if _, err := src.Exec(`CREATE TABLE src (v DECIMAL)`); err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	if _, err := src.Exec(`INSERT INTO src VALUES ('123'), ('2.5')`); err != nil {
+		t.Fatalf("seed source: %v", err)
+	}
+
+	result, err := srcAdapter.Query(context.Background(), `SELECT v FROM src ORDER BY rowid`)
+	if err != nil {
+		t.Fatalf("source Query: %v", err)
+	}
+
+	dst, dstAdapter, err := Open()
+	if err != nil {
+		t.Fatalf("Open dest: %v", err)
+	}
+	defer dst.Close()
+
+	if err := Materialize(context.Background(), dst, dstAdapter.QuoteIdentifier, Source{Seq: 1, Table: "t1"}, result); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+
+	got, err := dstAdapter.Query(context.Background(), `SELECT typeof(v) FROM t1 ORDER BY rowid`)
+	if err != nil {
+		t.Fatalf("dest Query: %v", err)
+	}
+	want := []string{"integer", "real"}
+	for i, w := range want {
+		if got.Rows[i][0] != w {
+			t.Errorf("row %d: typeof(v) = %q, want %q", i, got.Rows[i][0], w)
+		}
+	}
+}

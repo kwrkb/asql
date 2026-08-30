@@ -370,6 +370,18 @@ func TestClassifyValue(t *testing.T) {
 		{"bytes are binary", []byte("abc"), columnHints{bytesAreBinary: true}, "616263", db.KindBlob},
 		{"string is not binary", "abc", columnHints{bytesAreBinary: true}, "abc", db.KindText},
 
+		// The blob override wins over the numeric one. SQLite is dynamically
+		// typed, so a DECIMAL column can hold a blob whose bytes spell a
+		// number; promoting it to KindInt would rewrite it as that number.
+		{"numeric-looking blob in a numeric column", []byte("123"),
+			columnHints{numeric: true, bytesAreBinary: true}, "313233", db.KindBlob},
+		{"numeric-looking value in a binary numeric column", []byte("123"),
+			columnHints{numeric: true, binary: true}, "313233", db.KindBlob},
+		// ...but a driver that returns []byte for text (MySQL) must keep its
+		// DECIMAL promotion, since bytesAreBinary is off there.
+		{"decimal bytes stay numeric without the binary hint", []byte("123"),
+			columnHints{numeric: true}, "123", db.KindInt},
+
 		// The empty-value sentinel, and what it must not overwrite.
 		{"empty string", "", columnHints{}, `""`, db.KindEmpty},
 		{"empty bytes", []byte{}, columnHints{}, `""`, db.KindEmpty},
