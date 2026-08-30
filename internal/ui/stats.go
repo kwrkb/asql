@@ -150,7 +150,9 @@ func (m model) renderWithStatsOverlay(background string) string {
 	}
 
 	modalWidth := calcModalWidth(m.width, 76)
-	contentWidth := modalWidth - 6 // padding
+	// max: calcModalWidth floors at the real screen width, so a terminal
+	// narrower than this overhead would otherwise give a negative width.
+	contentWidth := max(modalWidth-6, 1) // padding
 	rowCount := len(m.lastResult.Rows)
 
 	var b strings.Builder
