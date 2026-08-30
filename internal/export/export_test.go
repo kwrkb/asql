@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -88,6 +89,16 @@ func TestFormatJSON(t *testing.T) {
 			headers: []string{"id", "name", "id"},
 			rows:    [][]string{{"1", "Alice", "10"}},
 		},
+		{
+			name:    "generated suffix collides with an existing header",
+			headers: []string{"id", "id", "id_2"},
+			rows:    [][]string{{"left", "right", "original"}},
+		},
+		{
+			name:    "several existing suffixes taken",
+			headers: []string{"v", "v", "v", "v_1", "v_3"},
+			rows:    [][]string{{"a", "b", "c", "d", "e"}},
+		},
 	}
 
 	for _, tt := range tests {
@@ -112,6 +123,65 @@ func TestFormatJSON(t *testing.T) {
 				if len(records[0]) != len(tt.headers) {
 					t.Errorf("got %d keys, want %d (all columns should be preserved)", len(records[0]), len(tt.headers))
 				}
+				// Every cell must survive: a duplicate key would silently drop one.
+				want := make(map[string]int)
+				for _, v := range tt.rows[0] {
+					want[v]++
+				}
+				have := make(map[string]int)
+				for _, v := range records[0] {
+					have[v]++
+				}
+				for v, n := range want {
+					if have[v] != n {
+						t.Errorf("value %q appears %d time(s), want %d\n%s", v, have[v], n, got)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestDeduplicateHeaders(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers []string
+		want    []string
+	}{
+		{
+			name:    "all unique",
+			headers: []string{"id", "name"},
+			want:    []string{"id", "name"},
+		},
+		{
+			name:    "plain duplicates",
+			headers: []string{"id", "name", "id"},
+			want:    []string{"id_1", "name", "id_2"},
+		},
+		{
+			name:    "suffix collides with an existing header",
+			headers: []string{"id", "id", "id_2"},
+			want:    []string{"id_1", "id_3", "id_2"},
+		},
+		{
+			name:    "several existing suffixes taken",
+			headers: []string{"v", "v", "v", "v_1", "v_3"},
+			want:    []string{"v_2", "v_4", "v_5", "v_1", "v_3"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := deduplicateHeaders(tt.headers)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			seen := make(map[string]bool, len(got))
+			for _, k := range got {
+				if seen[k] {
+					t.Errorf("duplicate key %q in %v", k, got)
+				}
+				seen[k] = true
 			}
 		})
 	}

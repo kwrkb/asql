@@ -30,7 +30,8 @@ func FormatCSV(headers []string, rows [][]string) (string, error) {
 }
 
 // FormatJSON formats query results as a JSON array of objects.
-// Duplicate column names get a numeric suffix (e.g. "id", "id_2").
+// Duplicate column names get a numeric suffix (e.g. "id_1", "id_2"), chosen so
+// that it never collides with another column's name.
 func FormatJSON(headers []string, rows [][]string) (string, error) {
 	keys := deduplicateHeaders(headers)
 	records := make([]map[string]string, 0, len(rows))
@@ -53,21 +54,36 @@ func FormatJSON(headers []string, rows [][]string) (string, error) {
 }
 
 func deduplicateHeaders(headers []string) []string {
-	// Count total occurrences first
+	// Count total occurrences first, and reserve every original name. A
+	// generated suffix must dodge the originals too, or `["id", "id", "id_2"]`
+	// would hand out "id_2" twice and one column's values would be lost.
 	total := make(map[string]int, len(headers))
+	reserved := make(map[string]bool, len(headers))
 	for _, h := range headers {
 		total[h]++
+		reserved[h] = true
 	}
-	// Assign suffixes: if a name appears more than once, all occurrences get _1, _2, ...
-	seen := make(map[string]int, len(headers))
+	// Assign suffixes: if a name appears more than once, all occurrences get
+	// _1, _2, ..., skipping any number whose name is already taken.
+	next := make(map[string]int, len(headers))
+	used := make(map[string]bool, len(headers))
 	result := make([]string, len(headers))
 	for i, h := range headers {
-		seen[h]++
-		if total[h] > 1 {
-			result[i] = fmt.Sprintf("%s_%d", h, seen[h])
-		} else {
+		if total[h] == 1 {
 			result[i] = h
+			used[h] = true
+			continue
 		}
+		var key string
+		for {
+			next[h]++
+			key = fmt.Sprintf("%s_%d", h, next[h])
+			if !reserved[key] && !used[key] {
+				break
+			}
+		}
+		result[i] = key
+		used[key] = true
 	}
 	return result
 }
