@@ -444,13 +444,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.bringSt.brought++
-		// The label is otherwise only recomputed on a connection switch, and J
-		// refuses to switch when the bring DB is already active. Without this,
-		// bringing a JOIN result back into the bring DB leaves the status bar
-		// claiming the old table count until the user leaves and returns.
-		if m.connMgr.ActiveDSN() == bringDSN {
-			m.dbPath = m.bringLabel()
-		}
 		text := fmt.Sprintf("Brought as %s (%d cols, %d rows)", msg.name, msg.cols, msg.rows)
 		if msg.source != "" {
 			text = fmt.Sprintf("Brought %s as %s (%d cols, %d rows)",
@@ -460,6 +453,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			text += " [source truncated]"
 		}
 		m.setStatus(text, false)
+		// Both the status-bar label and the table list are otherwise only
+		// recomputed on a connection switch, and J refuses to switch when the
+		// bring DB is already active — so bringing a JOIN result back into an
+		// active bring DB would leave the label claiming the old table count
+		// and the new tN table missing from the sidebar and from completion
+		// until some later query happened to succeed. That order is backwards:
+		// completion is wanted precisely while writing that query.
+		// When the bring DB is not active, a later J reloads both anyway.
+		if m.connMgr.ActiveDSN() == bringDSN {
+			m.dbPath = m.bringLabel()
+			return m, loadTablesCmd(m.connMgr.Active(), m.connGen)
+		}
 		return m, nil
 	case tablesLoadedMsg:
 		if msg.connGen != m.connGen {
