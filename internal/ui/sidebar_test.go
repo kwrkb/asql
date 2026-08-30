@@ -153,3 +153,23 @@ func TestSidebar_AltKeyIgnored(t *testing.T) {
 		t.Errorf("Alt+j should not move cursor, got %d", result.sidebar.cursor)
 	}
 }
+
+// A table name is DB-controlled text, so the sidebar must strip escapes and
+// control characters like every other render path does. An escape sequence
+// that reaches the terminal also throws off lipgloss's width padding, which
+// breaks the layout of the whole TUI, not just the one row.
+func TestSidebar_RenderSanitizesTableNames(t *testing.T) {
+	m := newSidebarModel([]string{"us\x1b[2Jers", "po\asts"})
+
+	out := m.renderSidebar()
+
+	if strings.Contains(out, "\x1b[2J") {
+		t.Error("renderSidebar leaked an ANSI escape from a table name")
+	}
+	if strings.Contains(out, "\a") {
+		t.Error("renderSidebar leaked a control character from a table name")
+	}
+	if !strings.Contains(out, "users") || !strings.Contains(out, "posts") {
+		t.Errorf("sanitized names missing from output: %q", out)
+	}
+}
