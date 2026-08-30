@@ -20,7 +20,11 @@ VISION.md の `Phase` を参照。
 
 - Phase 0〜4 完了。readonly mode (`--readonly`) 実装済み。最新リリース **v0.11.0**
 - **未着手の機能タスクなし。** 新しい作業は GitHub Issue から
-- 定常作業: 依存更新と `govulncheck ./...` の到達脆弱性 0 件確認
+- 定常作業: 依存更新と `govulncheck ./...` の到達脆弱性 0 件確認。
+  CI が PR・main への push・毎週のスケジュール実行で `govulncheck` を回すので、検知は自動。リリース前のローカル確認は継続
+- CI の解析 toolchain は `go.mod` の `go` ディレクティブ。**stdlib の脆弱性を消すのは
+  ここを上げること**であって、ローカルの Go を上げることではない（ローカルが新しいと
+  govulncheck はクリーンに見えるが、`go.mod` が古い patch を指したままなら CI は赤）
 
 ## 持ち越しの負債
 

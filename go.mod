@@ -1,6 +1,6 @@
 module github.com/kwrkb/asql
 
-go 1.26.2
+go 1.26.6
 
 require (
 	github.com/atotto/clipboard v0.1.4

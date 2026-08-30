@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Weekly, so an advisory published against unchanged code still surfaces.
+    - cron: "17 3 * * 1"
 
 jobs:
   test:
@@ -18,3 +21,21 @@ jobs:
       - run: go test ./...
 
       - run: go vet ./...
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Use the toolchain from go.mod: govulncheck reports stdlib advisories
+      # against the Go version it analyses with, so this must match what we
+      # actually build and release with.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      # Reachability analysis — fails only on vulnerabilities that this code
+      # can actually reach, which is the bar PLAN.md sets for a release.
+      - run: govulncheck ./...

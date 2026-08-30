@@ -33,7 +33,8 @@ go vet ./...
 
 # リリース（ローカル実行）
 # 1. PLAN.md / HISTORY.md を更新してコミット & push（タグはコミットを指すので必須）
-# 2. git status クリーン確認 + go vet ./... + go test ./...
+# 2. git status クリーン確認 + go vet ./... + go test ./... + govulncheck ./...
+#    （govulncheck は CI でも回るが、タグを打つコミットで到達脆弱性 0 件を最終確認する）
 # 3. goreleaser check で .goreleaser.yml の deprecation を事前検証
 git tag v<version>
 git push origin v<version>
