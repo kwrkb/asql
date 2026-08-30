@@ -178,29 +178,35 @@ type columnHints struct {
 // classifyValue turns a scanned driver value into the string Rows will carry
 // and the Kind that says what that string stands for.
 //
-// The order of the steps is load-bearing and has been wrong twice: the
-// column-type overrides must run before the empty-value sentinel, and the
-// sentinel must not undo them. Keep the steps here, in one place, rather than
-// spreading them back through the scan loop.
+// The order of the steps is load-bearing and has been wrong three times: the
+// blob override must run before the numeric one, both column-type overrides
+// must run before the empty-value sentinel, and the sentinel must not undo
+// them. Keep the steps here, in one place, rather than spreading them back
+// through the scan loop.
 func classifyValue(value any, hints columnHints) (string, db.Kind) {
 	s, k := StringifyValueKind(value)
-
-	// A number the driver handed back as text — MySQL does this for DECIMAL —
-	// would otherwise sort and join as a string.
-	if k == db.KindText && hints.numeric {
-		if nk, ok := numericKindOf(s); ok {
-			k = nk
-		}
-	}
 
 	// Binary data that happens to be valid UTF-8 is indistinguishable from text
 	// by value alone, so trust what the driver says about the column (or, where
 	// the driver only uses []byte for binary, about the Go type). Show the hex
 	// form for every binary value, not just the ones that failed the UTF-8
 	// check, so a binary column reads consistently and round-trips as a blob.
+	//
+	// This runs before the numeric override because SQLite is dynamically
+	// typed: a column declared DECIMAL can hold a blob, and a blob whose bytes
+	// spell "123" would otherwise be promoted to KindInt and brought over as
+	// the integer 123 instead of the original bytes.
 	if k == db.KindText && (hints.bytesAreBinary || hints.binary) {
 		if b, ok := value.([]byte); ok {
 			s, k = fmt.Sprintf("%x", b), db.KindBlob
+		}
+	}
+
+	// A number the driver handed back as text — MySQL does this for DECIMAL —
+	// would otherwise sort and join as a string.
+	if k == db.KindText && hints.numeric {
+		if nk, ok := numericKindOf(s); ok {
+			k = nk
 		}
 	}
 
