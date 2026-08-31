@@ -7,7 +7,9 @@ import (
 )
 
 // dateLayouts lists time formats to try, ordered from most specific to least.
-// RFC3339 is first because dbutil.StringifyValue formats time.Time as RFC3339.
+// RFC3339 is first because dbutil.StringifyValue formats time.Time as
+// RFC3339Nano; parsing with time.RFC3339 accepts an optional fractional
+// second, so it covers both.
 var dateLayouts = []string{
 	time.RFC3339,
 	"2006-01-02T15:04:05",

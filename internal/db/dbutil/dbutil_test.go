@@ -20,6 +20,8 @@ func TestStringifyValue(t *testing.T) {
 		{"nil", nil, "NULL"},
 		{"byte slice", []byte("hello"), "hello"},
 		{"time", fixedTime, "2024-01-15T12:00:00Z"},
+		{"time with microseconds", time.Date(2024, 1, 15, 12, 0, 0, 123000, time.UTC), "2024-01-15T12:00:00.000123Z"},
+		{"time with nanoseconds", time.Date(2024, 1, 15, 12, 0, 0, 999999999, time.UTC), "2024-01-15T12:00:00.999999999Z"},
 		{"int", 42, "42"},
 		{"int64", int64(100), "100"},
 		{"float64", 3.14, "3.14"},
