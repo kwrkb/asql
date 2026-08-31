@@ -2,6 +2,8 @@ package sqlite
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -88,6 +90,72 @@ func TestOpen(t *testing.T) {
 		_, err := Open("/nonexistent/path/that/does/not/exist/db.sqlite")
 		if err == nil {
 			t.Error("expected error for invalid path, got nil")
+		}
+	})
+
+	// The driver cuts a raw DSN at the first '?'; without escaping, a path
+	// like "reports?2024.db" silently opens (and creates) the file "reports".
+	t.Run("path containing '?' opens the named file", func(t *testing.T) {
+		ctx := context.Background()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "reports?2024.db")
+
+		a, err := Open(path)
+		if err != nil {
+			t.Fatalf("Open(%q) failed: %v", path, err)
+		}
+		if _, err := a.Query(ctx, "CREATE TABLE t (id INTEGER)"); err != nil {
+			a.Close()
+			t.Fatalf("CREATE TABLE failed: %v", err)
+		}
+		a.Close()
+
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("expected %q to exist: %v", path, err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "reports")); err == nil {
+			t.Errorf("path was cut at '?': stray file %q was created", "reports")
+		}
+
+		// Reopening the same path must see the same database.
+		a2, err := Open(path)
+		if err != nil {
+			t.Fatalf("reopening %q failed: %v", path, err)
+		}
+		defer a2.Close()
+		tables, err := a2.Tables(ctx)
+		if err != nil {
+			t.Fatalf("Tables failed: %v", err)
+		}
+		if len(tables) != 1 || tables[0] != "t" {
+			t.Errorf("Tables = %v, want [t]", tables)
+		}
+	})
+
+	// An absolute path that itself begins with two slashes must not have its
+	// first component read as a URI authority. "file:" + "//tmp/x.db" makes
+	// SQLite refuse with "invalid uri authority" on a path that opened fine
+	// as a raw DSN; the explicit empty authority keeps it a path.
+	t.Run("path beginning with two slashes stays a path", func(t *testing.T) {
+		ctx := context.Background()
+		dir := t.TempDir()
+		path := "/" + filepath.Join(dir, "double.db") // dir is absolute, so this leads with //
+
+		for _, tc := range []struct {
+			name string
+			open func() (*Adapter, error)
+		}{
+			{"Open", func() (*Adapter, error) { return Open(path) }},
+			{"OpenReadonly", func() (*Adapter, error) { return OpenReadonly(path) }},
+		} {
+			a, err := tc.open()
+			if err != nil {
+				t.Fatalf("%s(%q) failed: %v", tc.name, path, err)
+			}
+			if _, err := a.Query(ctx, "SELECT 1"); err != nil {
+				t.Errorf("%s: query failed: %v", tc.name, err)
+			}
+			a.Close()
 		}
 	})
 }
@@ -591,7 +659,11 @@ func TestReadonlyURI(t *testing.T) {
 		want string
 	}{
 		{"relative path", "chinook.db", "file:chinook.db?mode=ro"},
-		{"absolute path", "/data/chinook.db", "file:/data/chinook.db?mode=ro"},
+		// An absolute path carries an explicit empty authority, so a path
+		// beginning with two slashes keeps both of them instead of donating
+		// its first component to the authority slot.
+		{"absolute path", "/data/chinook.db", "file:///data/chinook.db?mode=ro"},
+		{"absolute path with two leading slashes", "//data/chinook.db", "file:////data/chinook.db?mode=ro"},
 		{"path with question mark", "odd?name.db", "file:odd%3Fname.db?mode=ro"},
 		{"path with hash", "odd#name.db", "file:odd%23name.db?mode=ro"},
 		{"path with percent", "odd%name.db", "file:odd%25name.db?mode=ro"},

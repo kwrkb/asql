@@ -19,11 +19,38 @@ type Adapter struct {
 }
 
 func Open(path string) (*Adapter, error) {
-	conn, err := sql.Open("sqlite", path)
+	conn, err := sql.Open("sqlite", uriFor(path))
 	if err != nil {
 		return nil, err
 	}
 	return newAdapter(conn)
+}
+
+// uriFor turns a bare path into a file: URI with URI delimiters escaped.
+// The driver cuts the DSN at the first '?' even without a file: prefix, so a
+// raw path like "reports?2024.db" would silently open (and create) the file
+// "reports" instead. OpenReadonly already escapes; going through the same
+// escaping here keeps path interpretation identical in both modes. Paths
+// that are already URIs, and the :memory: special name, pass through.
+func uriFor(path string) string {
+	if path == ":memory:" || strings.HasPrefix(path, "file:") {
+		return path
+	}
+	return fileURI(path)
+}
+
+// fileURI wraps an escaped path in a file: URI, giving an absolute path an
+// explicit empty authority. "file:" + "//tmp/data.db" would put the path's
+// own first component where the authority goes, and SQLite refuses that with
+// "invalid uri authority" — a path that opened fine as a raw DSN. Writing
+// "file://" + "//tmp/data.db" leaves the authority empty and the whole
+// "//tmp/data.db" as the path. A relative path takes no authority at all,
+// since "file://reports.db" would name a host instead of a file.
+func fileURI(path string) string {
+	if strings.HasPrefix(path, "/") {
+		return "file://" + escapeURIPath(path)
+	}
+	return "file:" + escapeURIPath(path)
 }
 
 // NewAdapter wraps an already-open *sql.DB as a sqlite Adapter. Used when the
@@ -221,7 +248,7 @@ func readonlyURI(path string) string {
 			return u.String()
 		}
 	}
-	return "file:" + escapeURIPath(path) + "?mode=ro"
+	return fileURI(path) + "?mode=ro"
 }
 
 // escapeURIPath percent-encodes the characters that would otherwise be read as
