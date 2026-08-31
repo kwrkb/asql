@@ -326,6 +326,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.queryCancel != nil {
 				m.queryCancel()
 				m.queryCancel = nil
+				// A goroutine that finished just before the cancel has already
+				// posted its message with a matching seq and a nil error; bump
+				// the seq so it is discarded instead of overwriting "Cancelled".
+				m.querySeq++
 				m.aiSt.loading = false
 				m.blurActiveInput()
 				m.mode = normalMode

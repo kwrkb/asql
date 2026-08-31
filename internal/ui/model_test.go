@@ -397,3 +397,54 @@ func TestDetailMode_ShowsSortedRow(t *testing.T) {
 		t.Errorf("expected detail view to show 'alice' (sorted first row), got:\n%s", view)
 	}
 }
+
+// A goroutine that finishes just before a cancel has already posted its
+// message with a matching seq and nil error, so the seq must be bumped on
+// every cancel path or the "Cancelled" state gets silently overwritten.
+func TestCancelDiscardsCompletedResponse(t *testing.T) {
+	t.Run("Ctrl+C bumps querySeq so a stale AI response is dropped", func(t *testing.T) {
+		m := newTestModel()
+		m.querySeq = 5
+		m.queryCancel = func() {}
+		m.textarea.SetValue("SELECT 1;")
+
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+		nm := next.(model)
+		if nm.querySeq != 6 {
+			t.Fatalf("querySeq = %d after Ctrl+C, want 6", nm.querySeq)
+		}
+
+		next, _ = nm.Update(aiResponseMsg{seq: 5, sql: "SELECT 2;"})
+		nm = next.(model)
+		if nm.mode == insertMode {
+			t.Error("stale aiResponseMsg forced INSERT mode after cancel")
+		}
+		if got := nm.textarea.Value(); got != "SELECT 1;" {
+			t.Errorf("stale aiResponseMsg overwrote the editor: %q", got)
+		}
+	})
+
+	t.Run("Esc during AI loading bumps querySeq", func(t *testing.T) {
+		m := newTestModel()
+		m.mode = aiMode
+		m.aiSt.loading = true
+		m.querySeq = 5
+		m.queryCancel = func() {}
+		m.textarea.SetValue("SELECT 1;")
+
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+		nm := next.(model)
+		if nm.querySeq != 6 {
+			t.Fatalf("querySeq = %d after Esc, want 6", nm.querySeq)
+		}
+
+		next, _ = nm.Update(aiResponseMsg{seq: 5, sql: "SELECT 2;"})
+		nm = next.(model)
+		if nm.mode == insertMode {
+			t.Error("stale aiResponseMsg forced INSERT mode after cancel")
+		}
+		if got := nm.textarea.Value(); got != "SELECT 1;" {
+			t.Errorf("stale aiResponseMsg overwrote the editor: %q", got)
+		}
+	})
+}
