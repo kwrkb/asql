@@ -118,3 +118,24 @@ func TestCompareMode_StatusAndLabelsShowRowDiff(t *testing.T) {
 		t.Fatalf("expected row counts in compare labels, got:\n%s", view)
 	}
 }
+
+// Compare rendering at tiny terminal heights: resultsHeight() returns 0 when
+// the terminal is too low, so the derived paneHeight must be clamped instead
+// of going negative (same class as the contentWidth underflow in #72).
+func TestCompareTinyTerminalHeight(t *testing.T) {
+	m := newTestModel()
+	m.mode = normalMode
+	m.applyResult(db.QueryResult{
+		Columns: []string{"id"},
+		Rows:    [][]string{{"1"}},
+		Message: "1 row(s) returned",
+	})
+	m.pinned = m.pinCurrentResult()
+	m.comparePane = 1
+
+	for h := 0; h <= 8; h++ {
+		m.height = h
+		m.syncCompareTables()
+		_ = m.renderCompareView()
+	}
+}
