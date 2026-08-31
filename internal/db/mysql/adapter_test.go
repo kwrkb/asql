@@ -199,6 +199,19 @@ func TestBuildConfig_InvalidDSN(t *testing.T) {
 	}
 }
 
+// A url.Parse failure must not leak the password: url.Error embeds the raw
+// URL in its message, and that message ends up on stderr and in the TUI.
+func TestBuildConfig_ParseErrorRedactsPassword(t *testing.T) {
+	// Invalid percent escape inside the password makes url.Parse fail.
+	_, err := buildConfig("mysql://alice:p%ss@127.0.0.1:3306/prod")
+	if err == nil {
+		t.Fatal("buildConfig() expected an error for an invalid percent escape, got nil")
+	}
+	if msg := err.Error(); strings.Contains(msg, "p%ss") {
+		t.Errorf("error message leaks the password: %q", msg)
+	}
+}
+
 func TestType(t *testing.T) {
 	a := &Adapter{}
 	if got := a.Type(); got != "mysql" {
