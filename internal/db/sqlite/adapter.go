@@ -19,11 +19,24 @@ type Adapter struct {
 }
 
 func Open(path string) (*Adapter, error) {
-	conn, err := sql.Open("sqlite", path)
+	conn, err := sql.Open("sqlite", uriFor(path))
 	if err != nil {
 		return nil, err
 	}
 	return newAdapter(conn)
+}
+
+// uriFor turns a bare path into a file: URI with URI delimiters escaped.
+// The driver cuts the DSN at the first '?' even without a file: prefix, so a
+// raw path like "reports?2024.db" would silently open (and create) the file
+// "reports" instead. OpenReadonly already escapes; going through the same
+// escaping here keeps path interpretation identical in both modes. Paths
+// that are already URIs, and the :memory: special name, pass through.
+func uriFor(path string) string {
+	if path == ":memory:" || strings.HasPrefix(path, "file:") {
+		return path
+	}
+	return "file:" + escapeURIPath(path)
 }
 
 // NewAdapter wraps an already-open *sql.DB as a sqlite Adapter. Used when the
