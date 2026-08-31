@@ -3,6 +3,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -181,6 +182,12 @@ func buildConfig(dsn string) (*gomysql.Config, error) {
 
 	u, err := url.Parse(dsn)
 	if err != nil {
+		// url.Error embeds the raw URL — credentials included — in its message,
+		// and this error surfaces on stderr and in the TUI. Redact before wrapping.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			ue.URL = db.MaskDSN(ue.URL)
+		}
 		return nil, fmt.Errorf("parsing MySQL URL: %w", err)
 	}
 
