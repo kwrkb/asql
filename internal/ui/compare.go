@@ -55,6 +55,7 @@ type pinnedPane struct {
 	sortDir       sortOrder
 	lastVisStart  int
 	lastVisEnd    int
+	lastColCursor int // colCursor at last rebuild (header highlight follows it)
 	viewportDirty bool
 }
 
@@ -199,7 +200,10 @@ func (p *pinnedPane) visibleColumnRange(availWidth int) (int, int) {
 }
 
 // adjustColOffset ensures colCursor is within the visible window for pinned pane.
+// Like model.adjustColOffset, it marks the pane dirty only when the offset
+// actually moves, so the rebuild-skip cache stays effective.
 func (p *pinnedPane) adjustColOffset(availWidth int) {
+	prev := p.colOffset
 	if p.colCursor < p.colOffset {
 		p.colOffset = p.colCursor
 	}
@@ -208,7 +212,9 @@ func (p *pinnedPane) adjustColOffset(availWidth int) {
 		p.colOffset++
 		_, visEnd = p.visibleColumnRange(availWidth)
 	}
-	p.viewportDirty = true
+	if p.colOffset != prev {
+		p.viewportDirty = true
+	}
 }
 
 // togglePinnedSort toggles sort on the pinned pane.
@@ -240,6 +246,9 @@ func (m *model) togglePinnedSort() {
 	}
 	p.table.GotoTop()
 	p.viewportDirty = true
+	// The active pane's diff highlighting compares against the pinned rows,
+	// which just changed order.
+	m.viewportDirty = true
 }
 
 // syncPinnedTable rebuilds the pinned pane's table for the given width/height.
@@ -252,7 +261,8 @@ func (m *model) syncPinnedTable(paneWidth, paneHeight int) {
 	p.adjustColOffset(paneWidth)
 	visStart, visEnd := p.visibleColumnRange(paneWidth)
 
-	rebuildNeeded := visStart != p.lastVisStart || visEnd != p.lastVisEnd || p.viewportDirty
+	rebuildNeeded := visStart != p.lastVisStart || visEnd != p.lastVisEnd ||
+		p.colCursor != p.lastColCursor || p.viewportDirty
 	if !rebuildNeeded {
 		return
 	}
@@ -299,6 +309,7 @@ func (m *model) syncPinnedTable(paneWidth, paneHeight int) {
 	p.table.SetHeight(max(paneHeight-4, 3))
 	p.lastVisStart = visStart
 	p.lastVisEnd = visEnd
+	p.lastColCursor = p.colCursor
 	p.viewportDirty = false
 }
 
