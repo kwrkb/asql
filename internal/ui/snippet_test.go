@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -307,5 +309,48 @@ func TestSnippet_DeleteLastAdjustsCursor(t *testing.T) {
 	}
 	if rm.snippetSt.cursor != 0 {
 		t.Errorf("expected cursor adjusted to 0, got %d", rm.snippetSt.cursor)
+	}
+}
+
+// unwritableConfigHome points XDG_CONFIG_HOME at a directory where a regular
+// file already occupies the "asql" name, so Save fails at MkdirAll.
+func unwritableConfigHome(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "asql"), nil, 0o600); err != nil {
+		t.Fatalf("failed to create blocking file: %v", err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", dir)
+}
+
+func TestSnippet_DeleteSaveFailureKeepsList(t *testing.T) {
+	unwritableConfigHome(t)
+
+	snippets := []snippet.Snippet{
+		{Name: "a", Query: "SELECT 1"},
+		{Name: "b", Query: "SELECT 2"},
+		{Name: "c", Query: "SELECT 3"},
+	}
+	m := newSnippetTestModel(snippets)
+	m.snippetSt.cursor = 0
+
+	result, _ := m.updateSnippet(runeMsg("d"))
+	rm := result.(model)
+
+	if !rm.statusError {
+		t.Fatal("expected an error status when Save fails")
+	}
+	want := []string{"a", "b", "c"}
+	if len(rm.snippetSt.items) != len(want) {
+		t.Fatalf("expected %d snippets after a failed delete, got %d", len(want), len(rm.snippetSt.items))
+	}
+	for i, name := range want {
+		if rm.snippetSt.items[i].Name != name {
+			t.Errorf("items[%d].Name = %q, want %q (list corrupted by the failed delete)", i, rm.snippetSt.items[i].Name, name)
+		}
+		// The caller's slice shares the backing array; it must be intact too.
+		if snippets[i].Name != name {
+			t.Errorf("backing array [%d].Name = %q, want %q", i, snippets[i].Name, name)
+		}
 	}
 }

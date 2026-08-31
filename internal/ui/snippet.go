@@ -49,7 +49,12 @@ func (m model) updateSnippet(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			moveCursor(&m.snippetSt.cursor, len(m.snippetSt.items), -1)
 		case "d":
 			if len(m.snippetSt.items) > 0 && m.snippetSt.cursor < len(m.snippetSt.items) {
-				newSnippets := append(m.snippetSt.items[:m.snippetSt.cursor], m.snippetSt.items[m.snippetSt.cursor+1:]...)
+				// Build the new list in a fresh slice: appending onto
+				// items[:cursor] would left-shift the shared backing array
+				// before Save runs, corrupting items when Save fails.
+				newSnippets := make([]snippet.Snippet, 0, len(m.snippetSt.items)-1)
+				newSnippets = append(newSnippets, m.snippetSt.items[:m.snippetSt.cursor]...)
+				newSnippets = append(newSnippets, m.snippetSt.items[m.snippetSt.cursor+1:]...)
 				if err := snippet.Save(newSnippets); err != nil {
 					m.setStatus(fmt.Sprintf("Save failed: %v", err), true)
 				} else {
