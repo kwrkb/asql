@@ -519,3 +519,117 @@ func TestViewportRebuildSkip(t *testing.T) {
 		t.Error("expected a rebuild after leaving NORMAL mode")
 	}
 }
+
+// The UI stays interactive while a connection switch runs in its goroutine,
+// so a completion message must carry the switch generation and must not yank
+// the user out of whatever they started in the meantime.
+func TestConnSwitchGuards(t *testing.T) {
+	newSwitchModel := func() *model {
+		m := newTestModel()
+		m.connMgr = newConnManager("test", "", &stubAdapter{}, false)
+		return m
+	}
+
+	t.Run("stale switch completion is discarded", func(t *testing.T) {
+		m := newSwitchModel()
+		m.switchSeq = 2
+		m.querySeq = 5
+		m.mode = insertMode
+		m.setStatus("Insert mode", false)
+
+		next, _ := m.Update(connSwitchedMsg{seq: 1})
+		nm := next.(model)
+		if nm.querySeq != 5 || nm.connGen != 0 {
+			t.Errorf("stale connSwitchedMsg mutated state: querySeq=%d connGen=%d", nm.querySeq, nm.connGen)
+		}
+		if nm.mode != insertMode {
+			t.Errorf("stale connSwitchedMsg changed mode to %q", nm.mode)
+		}
+		if nm.statusText != "Insert mode" {
+			t.Errorf("stale connSwitchedMsg changed status to %q", nm.statusText)
+		}
+	})
+
+	t.Run("completion leaves INSERT mode alone", func(t *testing.T) {
+		m := newSwitchModel()
+		m.mode = insertMode
+		m.textarea.Focus()
+		m.textarea.SetValue("SELECT 1;")
+
+		next, _ := m.Update(connSwitchedMsg{seq: 0})
+		nm := next.(model)
+		if nm.mode != insertMode {
+			t.Errorf("switch completion forced mode to %q while user was typing", nm.mode)
+		}
+		if got := nm.textarea.Value(); got != "SELECT 1;" {
+			t.Errorf("editor content changed: %q", got)
+		}
+	})
+
+	t.Run("completion closes the profile overlay when still open", func(t *testing.T) {
+		m := newSwitchModel()
+		m.mode = profileMode
+
+		next, _ := m.Update(connSwitchedMsg{seq: 0})
+		nm := next.(model)
+		if nm.mode != normalMode {
+			t.Errorf("expected normalMode after switch from profile overlay, got %q", nm.mode)
+		}
+	})
+
+	t.Run("cancelling an in-flight query is said in the status", func(t *testing.T) {
+		m := newSwitchModel()
+		m.mode = normalMode
+		m.queryCancel = func() {}
+
+		next, _ := m.Update(connSwitchedMsg{seq: 0})
+		nm := next.(model)
+		if !strings.Contains(nm.statusText, "cancelled") {
+			t.Errorf("status does not mention the cancelled query: %q", nm.statusText)
+		}
+	})
+}
+
+// Two switches in flight at once. The newer one completes and is applied; the
+// older one completes afterwards and must leave the active connection where it
+// is. Opening is what runs in the goroutine — committing happens on the UI
+// thread, past the sequence check — so the connection queries actually run
+// against never drifts from the one the status bar, the DSN, the table cache
+// and the connection generation describe.
+func TestStaleSwitchDoesNotMoveTheActiveConnection(t *testing.T) {
+	m := newTestModel()
+	m.connMgr = newConnManager("base", "base.db", &stubAdapter{}, false)
+	m.connMgr.Register("older", "older.db", &stubAdapter{})
+	m.connMgr.Register("newer", "newer.db", &stubAdapter{})
+
+	m.switchSeq++
+	olderSeq := m.switchSeq
+	olderIdx, err := m.connMgr.Prepare("older", "older.db")
+	if err != nil {
+		t.Fatalf("Prepare(older): %v", err)
+	}
+	m.switchSeq++
+	newerSeq := m.switchSeq
+	newerIdx, err := m.connMgr.Prepare("newer", "newer.db")
+	if err != nil {
+		t.Fatalf("Prepare(newer): %v", err)
+	}
+	if got := m.connMgr.ActiveName(); got != "base" {
+		t.Fatalf("Prepare moved the active connection to %q; it must only open", got)
+	}
+
+	applied, _ := m.Update(connSwitchedMsg{seq: newerSeq, conn: newerIdx})
+	am := applied.(model)
+	if got := am.connMgr.ActiveName(); got != "newer" {
+		t.Fatalf("active connection = %q after the newer switch, want newer", got)
+	}
+
+	stale, _ := am.Update(connSwitchedMsg{seq: olderSeq, conn: olderIdx})
+	sm := stale.(model)
+	if got := sm.connMgr.ActiveName(); got != "newer" {
+		t.Errorf("a stale switch completion moved the active connection to %q", got)
+	}
+	if got := sm.statusText; !strings.Contains(got, "newer") {
+		t.Errorf("status = %q, no longer describes the connection queries run against", got)
+	}
+}

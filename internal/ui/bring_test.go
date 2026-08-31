@@ -392,10 +392,13 @@ func TestBring_ProvenanceKeepsTheSourceConnectionAfterASwitch(t *testing.T) {
 	}
 	t.Cleanup(func() { other.Close() })
 	am.connMgr.Register("staging", "staging.db", other)
-	if err := am.connMgr.Switch("staging", "staging.db"); err != nil {
-		t.Fatalf("Switch: %v", err)
+	// The switch path opens with Prepare and commits in Update, so the message
+	// has to carry the index the way the real one does.
+	idx, err := am.connMgr.Prepare("staging", "staging.db")
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
 	}
-	switched, _ := am.Update(connSwitchedMsg{})
+	switched, _ := am.Update(connSwitchedMsg{conn: idx})
 	sm := switched.(model)
 	if sm.connMgr.ActiveName() != "staging" {
 		t.Fatalf("active connection = %q, want staging", sm.connMgr.ActiveName())
@@ -538,10 +541,11 @@ func TestBring_LabelRefreshesWhileTheBringDBIsActive(t *testing.T) {
 	fm = next.(model)
 
 	// Switch to the bring DB, the way J does.
-	if err := fm.connMgr.Switch(bringConnName, bringDSN); err != nil {
-		t.Fatalf("Switch: %v", err)
+	idx, err := fm.connMgr.Prepare(bringConnName, bringDSN)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
 	}
-	switched, _ := fm.Update(connSwitchedMsg{})
+	switched, _ := fm.Update(connSwitchedMsg{conn: idx})
 	sm := switched.(model)
 	if sm.dbPath != "(local bring: 1 table)" {
 		t.Fatalf("dbPath after switch = %q, want the one-table label", sm.dbPath)
@@ -590,10 +594,11 @@ func TestBring_ReloadsTablesWhileTheBringDBIsActive(t *testing.T) {
 		t.Error("expected no table reload while the bring DB is inactive")
 	}
 
-	if err := fm.connMgr.Switch(bringConnName, bringDSN); err != nil {
-		t.Fatalf("Switch: %v", err)
+	idx, err := fm.connMgr.Prepare(bringConnName, bringDSN)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
 	}
-	switched, _ := fm.Update(connSwitchedMsg{})
+	switched, _ := fm.Update(connSwitchedMsg{conn: idx})
 	sm := switched.(model)
 
 	sm.mode = normalMode
