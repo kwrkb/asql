@@ -499,7 +499,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.completion.colOrder = append(m.completion.colOrder, msg.table)
 			// Re-trigger completion only if cursor context still matches
 			if m.mode == insertMode && m.completion.pendingPrefix != "" {
-				prefix, _ := wordAtCursor(m.textarea.Value(), m.textarea.Line(), m.textarea.LineInfo().CharOffset)
+				prefix, _ := wordAtCursor(m.textarea.Value(), m.textarea.Line(), m.cursorRuneCol())
 				if prefix == m.completion.pendingPrefix {
 					return m, m.triggerCompletion()
 				}

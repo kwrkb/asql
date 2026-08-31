@@ -19,40 +19,50 @@ const (
 )
 
 // wordAtCursor extracts the prefix being typed at the cursor position.
-// Returns the prefix and its start position within the full text.
-func wordAtCursor(text string, cursorRow int, charOffset int) (prefix string, startPos int) {
+// runeCol is the cursor's rune index within the logical line (see
+// cursorRuneCol). Returns the prefix and its start position within the
+// full text as a byte offset.
+func wordAtCursor(text string, cursorRow int, runeCol int) (prefix string, startPos int) {
 	lines := strings.Split(text, "\n")
 	if cursorRow < 0 || cursorRow >= len(lines) {
 		return "", 0
 	}
-	line := lines[cursorRow]
-	// charOffset may exceed line length if cursor is at end
-	col := charOffset
-	if col > len(line) {
-		col = len(line)
-	}
-
-	// Calculate absolute position in text
-	absPos := 0
-	for i := 0; i < cursorRow; i++ {
-		absPos += len(lines[i]) + 1 // +1 for newline
-	}
-	absPos += col
+	line := []rune(lines[cursorRow])
+	// runeCol may exceed line length if cursor is at end
+	col := min(max(runeCol, 0), len(line))
 
 	// Scan backward for identifier characters or dot-prefix
 	start := col
 	for start > 0 {
-		r := rune(line[start-1])
+		r := line[start-1]
 		if isIdentRune(r) || r == '.' {
 			start--
 		} else {
 			break
 		}
 	}
+	prefix = string(line[start:col])
 
-	prefix = line[start:col]
-	startPos = absPos - len(prefix)
-	return prefix, startPos
+	// Absolute byte position of the prefix start in text
+	absPos := 0
+	for i := range cursorRow {
+		absPos += len(lines[i]) + 1 // +1 for newline
+	}
+	absPos += len(string(line[:start]))
+	return prefix, absPos
+}
+
+// cursorRuneCol returns the cursor's rune index within the current logical
+// line. LineInfo describes the soft-wrapped row the cursor sits on:
+// StartColumn is the rune index where that row starts in the logical line
+// and ColumnOffset the rune offset within the row, so their sum is the
+// cursor's rune column. CharOffset must not be used for indexing — it is a
+// display-cell width (a double-width rune counts as 2) measured from the
+// wrapped row's start, so it diverges from any byte/rune index on wide
+// characters and resets to 0 after a soft wrap.
+func (m *model) cursorRuneCol() int {
+	li := m.textarea.LineInfo()
+	return li.StartColumn + li.ColumnOffset
 }
 
 func isIdentRune(r rune) bool {
@@ -191,9 +201,8 @@ func filterByPrefix(items []string, prefix string) []string {
 func (m *model) triggerCompletion() tea.Cmd {
 	text := m.textarea.Value()
 	row := m.textarea.Line()
-	charOffset := m.textarea.LineInfo().CharOffset
 
-	prefix, startPos := wordAtCursor(text, row, charOffset)
+	prefix, startPos := wordAtCursor(text, row, m.cursorRuneCol())
 
 	// Strip table prefix for column filtering (e.g., "users.na" → filter "na")
 	filterPrefix := prefix
