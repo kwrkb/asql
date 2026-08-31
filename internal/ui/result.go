@@ -9,7 +9,11 @@ import (
 )
 
 // adjustColOffset ensures colCursor is within the visible column window.
+// It marks the viewport dirty only when the offset actually moves: it runs on
+// every syncViewport, so an unconditional mark would defeat the rebuild-skip
+// cache (lastVisStart/lastVisEnd) entirely.
 func (m *model) adjustColOffset() {
+	prev := m.colOffset
 	if m.colCursor < m.colOffset {
 		m.colOffset = m.colCursor
 	}
@@ -18,7 +22,9 @@ func (m *model) adjustColOffset() {
 		m.colOffset++
 		_, visEnd = m.visibleColumnRange()
 	}
-	m.viewportDirty = true
+	if m.colOffset != prev {
+		m.viewportDirty = true
+	}
 }
 
 // visibleColumnRange returns the range [start, end) of columns that fit within
@@ -66,9 +72,12 @@ func (m *model) syncViewport() {
 
 	visStart, visEnd := m.visibleColumnRange()
 
-	// Rebuild columns/rows only when the visible window or column cursor changes.
-	// For row-only navigation (j/k) we skip the expensive rebuild.
-	rebuildNeeded := visStart != m.lastVisStart || visEnd != m.lastVisEnd || m.viewportDirty
+	// Rebuild columns/rows only when the visible window, the column cursor, or
+	// the header-highlight state changes. For row-only navigation (j/k) we skip
+	// the expensive rebuild.
+	highlight := m.mode == normalMode && (m.pinned == nil || m.comparePane == 1)
+	rebuildNeeded := visStart != m.lastVisStart || visEnd != m.lastVisEnd ||
+		m.colCursor != m.lastColCursor || highlight != m.lastHighlight || m.viewportDirty
 	if rebuildNeeded {
 		// Build windowed columns
 		selectedStyle := lipgloss.NewStyle().Reverse(true)
@@ -114,6 +123,8 @@ func (m *model) syncViewport() {
 		m.table.SetCursor(cursor)
 		m.lastVisStart = visStart
 		m.lastVisEnd = visEnd
+		m.lastColCursor = m.colCursor
+		m.lastHighlight = highlight
 		m.viewportDirty = false
 	}
 
@@ -225,5 +236,10 @@ func (m *model) applyResultWithSort(result db.QueryResult) {
 
 	m.setStatus(sanitize(result.Message), false)
 	m.viewportDirty = true
+	if m.pinned != nil {
+		// The pinned pane's diff highlighting compares against the active rows,
+		// which just changed.
+		m.pinned.viewportDirty = true
+	}
 	m.syncViewport()
 }

@@ -397,3 +397,41 @@ func TestDetailMode_ShowsSortedRow(t *testing.T) {
 		t.Errorf("expected detail view to show 'alice' (sorted first row), got:\n%s", view)
 	}
 }
+
+// The rebuild-skip cache: syncViewport must rebuild when the column cursor or
+// the header-highlight state changes, and must NOT be forced dirty by the
+// adjustColOffset call that runs on every sync (that would rebuild all rows on
+// every keypress, j/k included).
+func TestViewportRebuildSkip(t *testing.T) {
+	m := newTestModel()
+	m.mode = normalMode
+	m.applyResult(db.QueryResult{
+		Columns: []string{"a", "b"},
+		Rows:    [][]string{{"1", "2"}, {"3", "4"}},
+		Message: "2 row(s) returned",
+	})
+	if m.viewportDirty {
+		t.Fatal("viewportDirty still set after applyResult's rebuild")
+	}
+
+	// A no-op adjustment (cursor already visible) must not dirty the viewport.
+	m.adjustColOffset()
+	if m.viewportDirty {
+		t.Error("adjustColOffset dirtied the viewport without an offset change")
+	}
+
+	// Moving the column cursor must trigger a rebuild (the header highlight
+	// follows it), observable via the cache bookkeeping.
+	m.colCursor = 1
+	m.syncViewport()
+	if m.lastColCursor != 1 {
+		t.Error("expected a rebuild after colCursor moved")
+	}
+
+	// Leaving NORMAL mode drops the header highlight, which needs a rebuild too.
+	m.mode = insertMode
+	m.syncViewport()
+	if m.lastHighlight {
+		t.Error("expected a rebuild after leaving NORMAL mode")
+	}
+}
