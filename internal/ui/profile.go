@@ -129,9 +129,22 @@ func (m model) switchProfile(p profile.Profile, reExecute bool) (tea.Model, tea.
 	name := p.Name
 	dsn := p.DSN
 	cm := m.connMgr
+	m.switchSeq++
+	seq := m.switchSeq
 	return m, func() tea.Msg {
 		err := cm.Switch(name, dsn)
-		return connSwitchedMsg{err: err, reExecute: reExecute}
+		return connSwitchedMsg{seq: seq, err: err, reExecute: reExecute}
+	}
+}
+
+// closeProfileOverlayIfOpen returns to NORMAL mode when the profile overlay is
+// still waiting on a switch. Any other mode is the user's doing after the
+// switch started — an INSERT session, another overlay — and a completion
+// message arriving must not yank them out of it.
+func (m *model) closeProfileOverlayIfOpen() {
+	if m.mode == profileMode {
+		m.mode = normalMode
+		m.textarea.Blur()
 	}
 }
 
