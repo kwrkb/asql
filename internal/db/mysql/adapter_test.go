@@ -199,6 +199,45 @@ func TestBuildConfig_InvalidDSN(t *testing.T) {
 	}
 }
 
+// A url.Parse failure must not leak the password. Two places carry it:
+// url.Error embeds the raw URL, and its cause embeds the offending escape
+// sequence — which can be the whole password. The message ends up on stderr
+// and in the TUI, so neither may survive.
+func TestBuildConfig_ParseErrorRedactsPassword(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		dsn     string
+		secrets []string
+	}{
+		// The escape is part of a longer password: the URL carries "p%ss" and
+		// the cause carries "%ss", and "%ss" alone is most of the secret.
+		{"escape inside the password", "mysql://alice:p%ss@127.0.0.1:3306/prod", []string{"p%ss", "%ss"}},
+		// The escape *is* the password: redacting only the URL leaves it whole
+		// in the cause.
+		{"escape is the password", "mysql://alice:%ss@127.0.0.1:3306/prod", []string{"%ss"}},
+		// net/url reads userinfo up to the last '@', so the password is
+		// "sec@ret" and the failure is the port. The masked DSN must not carry
+		// the tail of the password either.
+		{"at-sign in the password", "mysql://alice:sec@ret@127.0.0.1:bad/prod", []string{"sec@ret", "ret@"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := buildConfig(tc.dsn)
+			if err == nil {
+				t.Fatal("buildConfig() expected an error for an invalid percent escape, got nil")
+			}
+			msg := err.Error()
+			for _, secret := range tc.secrets {
+				if strings.Contains(msg, secret) {
+					t.Errorf("error message leaks %q: %q", secret, msg)
+				}
+			}
+			if !strings.Contains(msg, "***") {
+				t.Errorf("error message does not show the DSN masked: %q", msg)
+			}
+		})
+	}
+}
+
 func TestType(t *testing.T) {
 	a := &Adapter{}
 	if got := a.Type(); got != "mysql" {
