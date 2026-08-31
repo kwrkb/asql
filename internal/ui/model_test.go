@@ -397,3 +397,36 @@ func TestDetailMode_ShowsSortedRow(t *testing.T) {
 		t.Errorf("expected detail view to show 'alice' (sorted first row), got:\n%s", view)
 	}
 }
+
+// The completion popup must not grow the view past the terminal height: it
+// used to be appended below the textarea, pushing the status bar and the
+// bottom of the results pane past the final MaxHeight cut.
+func TestViewHeightWithCompletionPopup(t *testing.T) {
+	m := newTestModel()
+	m.connMgr = newConnManager("test", "", &stubAdapter{}, false)
+	m.mode = insertMode
+	m.width = 80
+	m.height = 24
+	m.resize()
+	m.setStatus("Insert mode", false)
+
+	baseline := len(strings.Split(m.View(), "\n"))
+
+	m.completion.active = true
+	m.completion.items = []string{"users", "user_logs", "user_roles"}
+	withPopup := m.View()
+	lines := strings.Split(withPopup, "\n")
+
+	if len(lines) > baseline {
+		t.Errorf("popup grew the view: %d -> %d lines", baseline, len(lines))
+	}
+	if len(lines) > m.height {
+		t.Errorf("view is %d lines, exceeds terminal height %d", len(lines), m.height)
+	}
+	if !strings.Contains(ansiRe.ReplaceAllString(withPopup, ""), "Insert mode") {
+		t.Error("status bar is missing while the completion popup is open")
+	}
+	if !strings.Contains(ansiRe.ReplaceAllString(withPopup, ""), "user_logs") {
+		t.Error("completion popup items are not rendered")
+	}
+}

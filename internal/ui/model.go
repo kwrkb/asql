@@ -576,17 +576,11 @@ func (m model) View() string {
 
 	fullWidth := m.fullContentWidth()
 
-	editorView := m.textarea.View()
-	if m.completion.active && len(m.completion.items) > 0 {
-		popup := m.renderCompletionPopup()
-		editorView = editorView + "\n" + popup
-	}
-
 	editor := lipgloss.NewStyle().
 		Width(fullWidth).
 		Height(m.editorHeight()).
 		Background(appBackground).
-		Render(editorView)
+		Render(m.textarea.View())
 
 	var results string
 	if m.pinned != nil {
@@ -597,6 +591,14 @@ func (m model) View() string {
 			Height(m.resultsHeight()).
 			Background(appBackground).
 			Render(m.viewport.View())
+	}
+
+	// The completion popup floats over the top of the results pane instead of
+	// being appended to the editor block: appending grew the view past
+	// m.height (lipgloss Height is a minimum, not a cap), and the final
+	// MaxHeight then cut the status bar and the bottom of the results pane.
+	if m.completion.active && len(m.completion.items) > 0 {
+		results = overlayTopLines(results, m.renderCompletionPopup(), fullWidth)
 	}
 
 	main := lipgloss.JoinVertical(lipgloss.Left, editor, results)
