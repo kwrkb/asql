@@ -139,3 +139,26 @@ func TestCompareTinyTerminalHeight(t *testing.T) {
 		_ = m.renderCompareView()
 	}
 }
+
+// A message-only result — an UPDATE or DELETE run while compare mode is open —
+// must still invalidate the pinned pane. Its diff highlighting was computed
+// against the previous active rows, and the active side now has none; with the
+// rebuild-skip cache in place, a pane left clean keeps that stale highlighting
+// indefinitely rather than only until the next redraw.
+func TestMessageOnlyResultInvalidatesPinnedPane(t *testing.T) {
+	m := newTestModel()
+	m.mode = normalMode
+	m.applyResult(db.QueryResult{
+		Columns: []string{"id"},
+		Rows:    [][]string{{"1"}},
+		Message: "1 row(s) returned",
+	})
+	m.pinned = m.pinCurrentResult()
+	m.pinned.viewportDirty = false
+
+	m.applyResult(db.QueryResult{Message: "Query OK, 1 row affected"})
+
+	if !m.pinned.viewportDirty {
+		t.Error("a message-only result left the pinned pane's diff highlighting stale")
+	}
+}

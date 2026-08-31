@@ -9,7 +9,11 @@ import (
 )
 
 // adjustColOffset ensures colCursor is within the visible column window.
+// It marks the viewport dirty only when the offset actually moves: it runs on
+// every syncViewport, so an unconditional mark would defeat the rebuild-skip
+// cache (lastVisStart/lastVisEnd) entirely.
 func (m *model) adjustColOffset() {
+	prev := m.colOffset
 	if m.colCursor < m.colOffset {
 		m.colOffset = m.colCursor
 	}
@@ -18,7 +22,9 @@ func (m *model) adjustColOffset() {
 		m.colOffset++
 		_, visEnd = m.visibleColumnRange()
 	}
-	m.viewportDirty = true
+	if m.colOffset != prev {
+		m.viewportDirty = true
+	}
 }
 
 // visibleColumnRange returns the range [start, end) of columns that fit within
@@ -66,9 +72,12 @@ func (m *model) syncViewport() {
 
 	visStart, visEnd := m.visibleColumnRange()
 
-	// Rebuild columns/rows only when the visible window or column cursor changes.
-	// For row-only navigation (j/k) we skip the expensive rebuild.
-	rebuildNeeded := visStart != m.lastVisStart || visEnd != m.lastVisEnd || m.viewportDirty
+	// Rebuild columns/rows only when the visible window, the column cursor, or
+	// the header-highlight state changes. For row-only navigation (j/k) we skip
+	// the expensive rebuild.
+	highlight := m.mode == normalMode && (m.pinned == nil || m.comparePane == 1)
+	rebuildNeeded := visStart != m.lastVisStart || visEnd != m.lastVisEnd ||
+		m.colCursor != m.lastColCursor || highlight != m.lastHighlight || m.viewportDirty
 	if rebuildNeeded {
 		// Build windowed columns
 		selectedStyle := lipgloss.NewStyle().Reverse(true)
@@ -114,6 +123,8 @@ func (m *model) syncViewport() {
 		m.table.SetCursor(cursor)
 		m.lastVisStart = visStart
 		m.lastVisEnd = visEnd
+		m.lastColCursor = m.colCursor
+		m.lastHighlight = highlight
 		m.viewportDirty = false
 	}
 
@@ -179,6 +190,15 @@ func (m *model) applySortedResult() {
 
 // applyResultWithSort computes column widths, saves displayRows, and delegates rendering to syncViewport.
 func (m *model) applyResultWithSort(result db.QueryResult) {
+	if m.pinned != nil {
+		// The pinned pane's diff highlighting compares against the active rows,
+		// which are about to change. This sits above the message-only return
+		// below, not after it: an UPDATE or DELETE run while compare mode is
+		// open leaves the active side with no rows at all, and the pinned pane
+		// would otherwise keep the highlighting computed against the result
+		// before it — now that a rebuild can be skipped, forever.
+		m.pinned.viewportDirty = true
+	}
 	if len(result.Columns) == 0 {
 		// Message-only result: set directly without windowing
 		m.cachedColWidths = nil
