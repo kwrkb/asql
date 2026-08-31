@@ -103,15 +103,52 @@ func (a *Adapter) Schema(ctx context.Context) (string, error) {
 
 	var stmts []string
 	for _, t := range tables {
-		var tableName, ddl string
-		quoted := "`" + strings.ReplaceAll(t, "`", "``") + "`"
-		err := a.conn.QueryRowContext(ctx, "SHOW CREATE TABLE "+quoted).Scan(&tableName, &ddl)
+		ddl, err := a.showCreate(ctx, t)
 		if err != nil {
 			return "", fmt.Errorf("SHOW CREATE TABLE %s: %w", t, err)
 		}
 		stmts = append(stmts, ddl+";")
 	}
 	return strings.Join(stmts, "\n\n"), nil
+}
+
+// showCreate returns the DDL for a table or view. SHOW TABLES lists views
+// too, and SHOW CREATE TABLE answers with 2 columns for a base table but 4
+// for a view (View, Create View, character_set_client,
+// collation_connection). The DDL sits in the second column either way, so
+// scan by column count instead of assuming the base-table shape — a fixed
+// 2-destination Scan fails on the first view and takes the whole schema
+// (and with it the AI assistant) down.
+func (a *Adapter) showCreate(ctx context.Context, name string) (string, error) {
+	rows, err := a.conn.QueryContext(ctx, "SHOW CREATE TABLE "+a.QuoteIdentifier(name))
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return "", err
+	}
+	if len(cols) < 2 {
+		return "", fmt.Errorf("unexpected result shape (%d columns)", len(cols))
+	}
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return "", err
+		}
+		return "", fmt.Errorf("empty result")
+	}
+
+	vals := make([]sql.RawBytes, len(cols))
+	ptrs := make([]any, len(cols))
+	for i := range vals {
+		ptrs[i] = &vals[i]
+	}
+	if err := rows.Scan(ptrs...); err != nil {
+		return "", err
+	}
+	return string(vals[1]), rows.Err()
 }
 
 func (a *Adapter) Query(ctx context.Context, query string) (db.QueryResult, error) {
