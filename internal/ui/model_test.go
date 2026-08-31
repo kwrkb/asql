@@ -397,3 +397,73 @@ func TestDetailMode_ShowsSortedRow(t *testing.T) {
 		t.Errorf("expected detail view to show 'alice' (sorted first row), got:\n%s", view)
 	}
 }
+
+// The UI stays interactive while a connection switch runs in its goroutine,
+// so a completion message must carry the switch generation and must not yank
+// the user out of whatever they started in the meantime.
+func TestConnSwitchGuards(t *testing.T) {
+	newSwitchModel := func() *model {
+		m := newTestModel()
+		m.connMgr = newConnManager("test", "", &stubAdapter{}, false)
+		return m
+	}
+
+	t.Run("stale switch completion is discarded", func(t *testing.T) {
+		m := newSwitchModel()
+		m.switchSeq = 2
+		m.querySeq = 5
+		m.mode = insertMode
+		m.setStatus("Insert mode", false)
+
+		next, _ := m.Update(connSwitchedMsg{seq: 1})
+		nm := next.(model)
+		if nm.querySeq != 5 || nm.connGen != 0 {
+			t.Errorf("stale connSwitchedMsg mutated state: querySeq=%d connGen=%d", nm.querySeq, nm.connGen)
+		}
+		if nm.mode != insertMode {
+			t.Errorf("stale connSwitchedMsg changed mode to %q", nm.mode)
+		}
+		if nm.statusText != "Insert mode" {
+			t.Errorf("stale connSwitchedMsg changed status to %q", nm.statusText)
+		}
+	})
+
+	t.Run("completion leaves INSERT mode alone", func(t *testing.T) {
+		m := newSwitchModel()
+		m.mode = insertMode
+		m.textarea.Focus()
+		m.textarea.SetValue("SELECT 1;")
+
+		next, _ := m.Update(connSwitchedMsg{seq: 0})
+		nm := next.(model)
+		if nm.mode != insertMode {
+			t.Errorf("switch completion forced mode to %q while user was typing", nm.mode)
+		}
+		if got := nm.textarea.Value(); got != "SELECT 1;" {
+			t.Errorf("editor content changed: %q", got)
+		}
+	})
+
+	t.Run("completion closes the profile overlay when still open", func(t *testing.T) {
+		m := newSwitchModel()
+		m.mode = profileMode
+
+		next, _ := m.Update(connSwitchedMsg{seq: 0})
+		nm := next.(model)
+		if nm.mode != normalMode {
+			t.Errorf("expected normalMode after switch from profile overlay, got %q", nm.mode)
+		}
+	})
+
+	t.Run("cancelling an in-flight query is said in the status", func(t *testing.T) {
+		m := newSwitchModel()
+		m.mode = normalMode
+		m.queryCancel = func() {}
+
+		next, _ := m.Update(connSwitchedMsg{seq: 0})
+		nm := next.(model)
+		if !strings.Contains(nm.statusText, "cancelled") {
+			t.Errorf("status does not mention the cancelled query: %q", nm.statusText)
+		}
+	})
+}
