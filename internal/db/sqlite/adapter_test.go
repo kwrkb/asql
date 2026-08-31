@@ -2,6 +2,8 @@ package sqlite
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -88,6 +90,45 @@ func TestOpen(t *testing.T) {
 		_, err := Open("/nonexistent/path/that/does/not/exist/db.sqlite")
 		if err == nil {
 			t.Error("expected error for invalid path, got nil")
+		}
+	})
+
+	// The driver cuts a raw DSN at the first '?'; without escaping, a path
+	// like "reports?2024.db" silently opens (and creates) the file "reports".
+	t.Run("path containing '?' opens the named file", func(t *testing.T) {
+		ctx := context.Background()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "reports?2024.db")
+
+		a, err := Open(path)
+		if err != nil {
+			t.Fatalf("Open(%q) failed: %v", path, err)
+		}
+		if _, err := a.Query(ctx, "CREATE TABLE t (id INTEGER)"); err != nil {
+			a.Close()
+			t.Fatalf("CREATE TABLE failed: %v", err)
+		}
+		a.Close()
+
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("expected %q to exist: %v", path, err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "reports")); err == nil {
+			t.Errorf("path was cut at '?': stray file %q was created", "reports")
+		}
+
+		// Reopening the same path must see the same database.
+		a2, err := Open(path)
+		if err != nil {
+			t.Fatalf("reopening %q failed: %v", path, err)
+		}
+		defer a2.Close()
+		tables, err := a2.Tables(ctx)
+		if err != nil {
+			t.Fatalf("Tables failed: %v", err)
+		}
+		if len(tables) != 1 || tables[0] != "t" {
+			t.Errorf("Tables = %v, want [t]", tables)
 		}
 	})
 }
