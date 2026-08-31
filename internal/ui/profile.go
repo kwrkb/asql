@@ -34,7 +34,12 @@ func (m model) updateProfile(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			moveCursor(&m.profileSt.cursor, len(m.profileSt.items), -1)
 		case "d":
 			if len(m.profileSt.items) > 0 && m.profileSt.cursor < len(m.profileSt.items) {
-				newProfiles := append(m.profileSt.items[:m.profileSt.cursor], m.profileSt.items[m.profileSt.cursor+1:]...)
+				// Build the new list in a fresh slice: appending onto
+				// items[:cursor] would left-shift the shared backing array
+				// before Save runs, corrupting items when Save fails.
+				newProfiles := make([]profile.Profile, 0, len(m.profileSt.items)-1)
+				newProfiles = append(newProfiles, m.profileSt.items[:m.profileSt.cursor]...)
+				newProfiles = append(newProfiles, m.profileSt.items[m.profileSt.cursor+1:]...)
 				if err := profile.Save(newProfiles); err != nil {
 					m.setStatus(fmt.Sprintf("Save failed: %v", err), true)
 				} else {

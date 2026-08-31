@@ -188,3 +188,57 @@ func TestProfile_AltKeyIgnored(t *testing.T) {
 		t.Errorf("Alt+j should not move cursor, got %d", result.profileSt.cursor)
 	}
 }
+
+func TestProfile_DeleteSaveFailureKeepsList(t *testing.T) {
+	unwritableConfigHome(t)
+
+	profiles := []profile.Profile{
+		{Name: "a", DSN: "sqlite://a.db"},
+		{Name: "b", DSN: "sqlite://b.db"},
+		{Name: "c", DSN: "sqlite://c.db"},
+	}
+	m := newProfileModel(profiles)
+	m.profileSt.cursor = 0
+
+	updated, _ := m.Update(runeMsg("d"))
+	result := updated.(model)
+
+	if !result.statusError {
+		t.Fatal("expected an error status when Save fails")
+	}
+	want := []string{"a", "b", "c"}
+	if len(result.profileSt.items) != len(want) {
+		t.Fatalf("expected %d profiles after a failed delete, got %d", len(want), len(result.profileSt.items))
+	}
+	for i, name := range want {
+		if result.profileSt.items[i].Name != name {
+			t.Errorf("items[%d].Name = %q, want %q (list corrupted by the failed delete)", i, result.profileSt.items[i].Name, name)
+		}
+		// The caller's slice shares the backing array; it must be intact too.
+		if profiles[i].Name != name {
+			t.Errorf("backing array [%d].Name = %q, want %q", i, profiles[i].Name, name)
+		}
+	}
+}
+
+func TestProfile_DeleteUpdatesState(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	profiles := []profile.Profile{
+		{Name: "a", DSN: "sqlite://a.db"},
+		{Name: "b", DSN: "sqlite://b.db"},
+		{Name: "c", DSN: "sqlite://c.db"},
+	}
+	m := newProfileModel(profiles)
+	m.profileSt.cursor = 1
+
+	updated, _ := m.Update(runeMsg("d"))
+	result := updated.(model)
+
+	if len(result.profileSt.items) != 2 {
+		t.Fatalf("expected 2 profiles after delete, got %d", len(result.profileSt.items))
+	}
+	if result.profileSt.items[0].Name != "a" || result.profileSt.items[1].Name != "c" {
+		t.Errorf("unexpected remaining profiles: %+v", result.profileSt.items)
+	}
+}
