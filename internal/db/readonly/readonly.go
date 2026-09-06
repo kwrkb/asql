@@ -191,8 +191,9 @@ func classifyWith(query string) error {
 // A read-only leading keyword is not enough: PostgreSQL's
 // `SELECT * INTO backup FROM t` creates and fills a table, and MySQL's
 // `SELECT ... INTO OUTFILE '/path'` writes a file on the server. Both start
-// with SELECT, and neither MySQL nor PostgreSQL has a verified connection-level
-// layer here, so the statement would reach the database and write for real.
+// with SELECT, and the connection-level layer those two do have is one the
+// session can lift, so the statement would reach the database and write for
+// real.
 //
 // INTO is reserved in every dialect asql speaks, so a bare INTO outside quoted
 // runs and comments is always the clause and never a column name.

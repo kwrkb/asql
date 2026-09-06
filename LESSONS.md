@@ -1119,3 +1119,95 @@ go-sql-driver の `ParseDSN` は `user:password` を**最初の** `:` で分割�
 `max(modalWidth-6, 1)` が 5 箇所に並ぶので `modalInnerWidth()` ヘルパーも検討したが、これも見送った。オフセットと下限が実際にはばらついており（`-6`/floor 1 が 5 箇所、`-6`/floor 10 が `detail.go` に 2 箇所、`-10` は `if maxLen > 0` ガード、`model.go` は `-12`/`-10`）、ヘルパーは 5 箇所しか吸収できない。残りが「ヘルパーがあるから安全」に見えるだけになる。
 
 一般化: **既存ルールがあるのにバグが出たら、まず「ルールが弱い」ではなく「ルールから漏れた箇所がある」を疑う。**今回、`width - N` を必ずクランプするルールは既に LESSONS.md にあり、`calcModalWidth` の呼び出し元は stats.go を除いて全部それに従っていた。直すべきは漏れた 1 箇所であって、ルールでもインフラでもない。
+
+### 層2 を MySQL / PostgreSQL に広げた — ただし SQLite と同じ強度ではない
+
+前掲「層2（接続レベル）を MySQL / PostgreSQL に広げなかった」の**覆す条件**（実サーバに繋げる環境ができ、
+DSN パラメータがプール内の全コネクションに効いていることを実測できたとき）が満たされたので、実測した。
+過去エントリは追記専用のため書き換えず、ここに結果を残す。
+
+**却下した案**: (a) `testcontainers-go` でコンテナを立てる。(b) GitHub Actions の `services:` だけで CI を組む。
+(c) 「INSERT が落ちた」ことをもって層2 が効いた証拠とする。(d) 変数を知らないサーバでは `--readonly` の接続を失敗させる。
+
+**決め手**:
+- (a) 依存ツリーを実測すると asql 全体 75 モジュールに対し `testcontainers-go` 単体で 80（`moby/moby`, `containerd/*` 等）。
+  `govulncheck ./...` はテストパッケージも解析対象にするので、**出荷バイナリに 1 バイトも入らない依存**で
+  リリースゲートの前に CVE 源を置くことになる。docker compose + `//go:build integration` なら
+  `git diff --exit-code go.mod go.sum` が通る（依存追加ゼロ）
+- (b) `services:` は CI 専用の再現環境になり、層2 の失敗を手元でデバッグできない。同じ compose を両方で使う
+- (c) **層1 より下で測らないと何も測れていない。** `opener.OpenReadonly` 経由だと `readonly.Wrap` が
+  `INSERT` も `CREATE TABLE` も `SET` も先に拒否するので、全アサーションが緑になり層1 を二度測るだけになる。
+  加えて「書き込みが落ちた」だけでは、パラメータが**黙って無視された**場合と区別できない。
+  同時保持した5本の接続それぞれで変数を**読み戻す**必要がある
+- 実測（`mysql:8.4` / go-sql-driver v1.10.0、`postgres:17` / pgx v5.10.0、autocommit、明示的 BEGIN なし）:
+  プール5本すべてで `@@session.transaction_read_only=1` / `default_transaction_read_only=on` を読み戻し、
+  `INSERT` は全本で `Error 1792 (25006)` / `SQLSTATE 25006`。`CREATE TABLE` / `CREATE TEMPORARY TABLE` /
+  `DROP TABLE` も全部拒否。**ただし `SET SESSION transaction_read_only=0` /
+  `SET default_transaction_read_only = off` は通り、その後の `INSERT` が成功した。**
+  PostgreSQL は `SET` すら要らず `BEGIN READ WRITE` だけで書けた
+- (d) 未知のパラメータは**接続そのものを失敗させる**（実測: MySQL `*mysql.MySQLError` Number=1193、
+  PostgreSQL `*pgconn.PgError` Code=42704 Severity=FATAL）。`transaction_read_only` を持たない古い MySQL では
+  「今まで繋がっていた DSN が繋がらなくなる」退行になり、ユーザーを `--readonly` を外す方向に押す。
+  このエラーコードに限ってパラメータなしで再接続する
+
+**覆す条件**: MySQL / PostgreSQL が `SET` によるセッション内解除を許さなくなったとき
+（統合テスト `TestReadonlyCanBeLiftedBySession` が落ちる形で通知される。落ちたら
+`docs/readonly-design.md` と README を強い方の記述へ書き直す）。
+
+**判断**: 実測前に「正直な着地は『層2 を入れたが SQLite より弱い（解除可能）』になり得る」と期待値を先に
+書いておいたのが効いた。結果はそのとおりで、Issue #54 の項目3「README の更新（層2の実装完了報告）」を
+その文面のまま書かずに済んだ。README には3 DB の解除可否を表で並べ、**解除文を止めているのは層1 である**
+ことを明記した。`docs/readonly-design.md` の「『readonly 接続だから安全』と README に書かない」制約は、
+層2 が入った後も変わらない。
+
+**判断**: 「解除できる」ことを統合テストのアサーションにした。普通は「できてはいけない」ことを
+テストにするが、ここでは**現在の強度を固定して、変化を検知する**のが目的。サーバ側が強くなったら
+テストが落ち、それがドキュメントを書き直す合図になる。
+
+### 層2 のフォールバックは「特定のエラーコード」ではなく「相手が答えたか」で判断する
+
+前掲「層2 を MySQL / PostgreSQL に広げた」で入れたフォールバックは、MySQL 1193 /
+PostgreSQL 42704 に**限定**していた。PR #103 のレビュー指摘を受けて実測したところ、その限定が
+`--readonly` 専用の接続不能を生むことが分かったので広げた。
+
+**却下した案**: (a) 1193 / 42704 限定のまま維持する。(b) 逆に全エラーで再試行する。
+(c) MariaDB 10.x 用に `tx_read_only` を2段目に足して層2 を復活させる。
+(d) 接続後に変数を読み戻し、層2 が無ければユーザーに知らせる。
+
+**決め手**:
+- (a) `edoburu/pgbouncer:v1.25.2-p0` を `postgres:17` の前に置いて pgx から接続すると、
+  `*pgconn.ConnectError` が包む `*pgconn.PgError` **Code=08P01** Severity=FATAL
+  `unsupported startup parameter: default_transaction_read_only`。**42704 ではない**ので
+  フォールバックが発火せず、`--readonly` を付けたときだけ接続できなくなる。
+  同じ DSN は `--readonly` 無しなら繋がる — フォールバックが防ぐはずだった退行そのもの。
+  ゲートを `errors.As` 成功だけに広げた状態で `TestReadonlyFallsBackBehindAPooler` が緑、
+  42704 限定に戻すと赤になることを確認した
+- (b) にはなっていない。ドライバレベルの失敗（タイムアウト・切断）には `*MySQLError` /
+  `*PgError` が付かないのでそのまま返る。「接続タイムアウトが倍になるから総当たりはしない」という
+  前掲エントリの制約は、コードの形が変わっても維持されている
+- (c) `mariadb:10.11.19` には `transaction_read_only` が無く（1193）、`tx_read_only` はある。
+  `SET SESSION tx_read_only=1` の後は `INSERT` / `CREATE TABLE` / `CREATE TEMPORARY TABLE` /
+  `DROP TABLE` すべて 1792 (25006) で、MySQL 8.4 と同じ強度。復活は**できる**。
+  ただし `mysql:8.4` に `tx_read_only` は無い（1193）ので別名ではなく互いに素で、2段構えが要る。
+  メンテナンス期の Decision Rule（実利用で不足が観察されたこと）を満たしていないので入れず、
+  README に「MariaDB 11.1 未満は層2 なしで接続する」と明記して Issue #104 に残した
+- (d) 検出はできる（`ignore_startup_parameters=default_transaction_read_only` を付けた PgBouncer は
+  **エラーを出さずに**接続でき、`SHOW default_transaction_read_only` が `off` を返す）。
+  だが分かったところで打つ手が無い — 層2 は belt-and-braces で、無ければ層1 だけで続けるほかない。
+  ステータスバーの表示を変えるのは新機能側
+
+**覆す条件**: MySQL / PostgreSQL のドライバが、サーバの応答したエラーを型付きエラーとして
+返さなくなったとき（`TestReadonlyFallsBackBehindAPooler` が「rejection is *X, want *pgconn.PgError」で
+落ちる形で通知される）。あるいは MariaDB 10.x で層2 が要るという実利用の要望が出たとき（Issue #104）。
+
+**判断**: 統合テストの前提そのものを assert に入れた。`TestReadonlyFallsBackBehindAPooler` は
+「フォールバックが効く」だけでなく「相手の返すコードが 42704 **ではない**」も見ている。
+プロキシ側が将来 42704 を返すようになったらテストが落ち、それは「このテストはもう
+書かれた目的をカバーしていない」という通知になる。同じ理由で `TestReadonlyFallsBackOnMariaDB` は
+サーバに `transaction_read_only` があったら `t.Skip` する。
+
+**判断**: `TestReadonlyRefusesDDL` は「エラーが返った」ではなく「1792 / 25006 が返った」を見る形に
+直した。旧実装は `CREATE TABLE asql_ro_ddl_new` を後始末していなかったので、層2 が退行して
+CREATE が通った場合、**次回以降は "already exists" で落ちて緑のまま**になる。
+永続 DB に対しては初回から空振りだった。**「何かエラーが出た」を成功条件にしたテストは、
+自分が壊した状態で緑になる経路を持っていないか疑う。**

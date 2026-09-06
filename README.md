@@ -99,8 +99,29 @@ readonly: DELETE is not allowed (asql --readonly)
 ```
 
 The status bar marks the connection with `ro` (`production:POSTGRES ro`) so the
-mode is never invisible. SQLite databases are additionally opened through the
-driver's read-only mode.
+mode is never invisible.
+
+The connection is also opened read-only where the database offers it, but that
+second layer is not equally strong everywhere and is not what asql relies on:
+
+| | connection-level layer | can the session lift it? |
+|---|---|---|
+| SQLite | `mode=ro` | **no** — `PRAGMA query_only(0)` succeeds but writes still fail |
+| MySQL | `transaction_read_only=1` on every pooled connection | yes, with `SET SESSION transaction_read_only=0` |
+| PostgreSQL | `default_transaction_read_only=on` on every pooled connection | yes, with `SET` — or with an explicit `BEGIN READ WRITE` |
+
+What refuses those lifting statements is the statement guard. So does the
+absence of the second layer altogether, which is not rare:
+
+- **MariaDB before 11.1** — 10.11 LTS included — has only the older
+  `tx_read_only` name, so `transaction_read_only` is not there to set.
+- **Behind a connection pooler**, PgBouncer among them,
+  `default_transaction_read_only` is not one of the startup parameters the
+  pooler tracks, so it never reaches PostgreSQL.
+
+Both connect anyway, with layer 1 alone, rather than failing on a DSN that
+worked before `--readonly` was added to it. The guard is the layer that has to
+hold. Read the list below as what read-only mode actually promises.
 
 What the guard refuses, beyond the obvious `INSERT` / `UPDATE` / `DELETE` /
 `DROP`:

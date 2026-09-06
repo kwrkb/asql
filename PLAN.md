@@ -32,8 +32,13 @@ VISION.md の `Phase` を参照。
 
 - `internal/ui/table/` の vendor fork — bubbles v1 に上流修正が来ないため恒久。
   解消には bubbles/bubbletea/lipgloss v2 移行が必要で、2 行のパッチには見合わない
-- readonly の層2（接続レベル）は **SQLite のみ検証済み**。MySQL / PostgreSQL は層1（文ガード）だけが防御。
-  実サーバで検証できる機会があれば層2を足す。README に「readonly 接続だから安全」とは書かない
+- readonly の層2（接続レベル）は 3 DB すべてに入ったが **強度が揃っていない**。SQLite の `mode=ro` は
+  解除できないが、MySQL / PostgreSQL のセッション変数はセッション自身が `SET` で外せる（2026-09-06 実測）。
+  さらに**接続先によっては層2 が無い**: MariaDB 11.1 未満と、プーラー配下の PostgreSQL は
+  層2 なしで接続する（同日実測。MariaDB 側の復活可否は Issue #104）。
+  外す文を拒否しているのも、層2 が無いときに残るのも層1 なので、**層1 が防御の本体である**ことは変わらない。
+  README に「readonly 接続だから安全」とは書かない。層2 の有無と強度は `//go:build integration` の
+  統合テストで実サーバに当たっており、サーバ側が変わればテストが落ちる
 
 ## フェーズ履歴
 

@@ -3,6 +3,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -25,7 +26,69 @@ func Open(dsn string) (*Adapter, error) {
 	if err != nil {
 		return nil, err
 	}
+	return openConfig(cfg)
+}
 
+// readonlyVar is the session variable that carries readonly's second layer on
+// MySQL. go-sql-driver treats an unrecognised DSN parameter as a system
+// variable and issues a SET for it on *every* new connection, so the whole pool
+// is covered rather than whichever connection happened to run a one-off SET.
+//
+// Measured against MySQL 8.4 with go-sql-driver v1.10.0 (see
+// docs/readonly-design.md): five concurrently held connections each read back
+// transaction_read_only=1, and INSERT, CREATE TABLE, CREATE TEMPORARY TABLE and
+// DROP TABLE were all refused with error 1792 (SQLSTATE 25006). The session can
+// lift it with SET SESSION transaction_read_only=0 — this layer is weaker than
+// SQLite's mode=ro, which cannot be lifted. The statement guard is what refuses
+// that SET, and the guard remains the layer asql relies on.
+const readonlyVar = "transaction_read_only"
+
+// OpenReadonly connects with the session marked read-only where the server
+// supports it.
+//
+// A server that does not know the variable refuses the connection outright.
+// Rather than turn a working DSN into a connection error, that case falls back
+// to a plain connection: layer 2 is belt-and-braces, and the statement guard —
+// which the caller wraps around this adapter — is unaffected either way.
+func OpenReadonly(dsn string) (*Adapter, error) {
+	return openReadonly(dsn, readonlyVar)
+}
+
+// openReadonly takes the variable name so the fallback branch — the one that
+// only fires against a server too old to have it — can be exercised by naming a
+// variable no server has.
+//
+// The fallback fires on any error the server answered with, not on error 1193
+// alone. 1193 (unknown system variable) is what MySQL 8.4 and MariaDB 10.11
+// were both measured returning, but pinning it makes every other server-side
+// refusal — a proxy that will not take the SET, a build that reports it
+// differently — a hard connection failure under --readonly on a DSN that
+// worked before. A driver-level failure (timeout, torn connection) carries no
+// MySQLError and still returns straight away, so the retry never doubles a
+// wait; where the server did answer it costs one round trip and repeats that
+// same answer if the DSN was simply wrong.
+func openReadonly(dsn, variable string) (*Adapter, error) {
+	cfg, err := buildConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Params == nil {
+		cfg.Params = map[string]string{}
+	}
+	cfg.Params[variable] = "1"
+
+	adapter, err := openConfig(cfg)
+	if err == nil {
+		return adapter, nil
+	}
+	var myErr *gomysql.MySQLError
+	if !errors.As(err, &myErr) {
+		return nil, err
+	}
+	return Open(dsn)
+}
+
+func openConfig(cfg *gomysql.Config) (*Adapter, error) {
 	connector, err := gomysql.NewConnector(cfg)
 	if err != nil {
 		return nil, err

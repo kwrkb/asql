@@ -22,10 +22,13 @@ func Open(dsn string) (db.DBAdapter, error) {
 
 // OpenReadonly creates a DBAdapter that refuses to write.
 //
-// Every type gets the statement guard, which is the layer asql relies on.
-// SQLite additionally opens the file in the driver's read-only mode; MySQL and
-// PostgreSQL have no verified connection-level equivalent here, so for them the
-// guard is the only layer. That is why the guard refuses data-modifying CTEs
+// Every type gets the statement guard, which is the layer asql relies on. Each
+// also gets a connection-level second layer, but the three are not equally
+// strong: SQLite's mode=ro cannot be lifted, while the MySQL and PostgreSQL
+// session variables can be turned off by the session itself (measured — see
+// docs/readonly-design.md). What refuses that SET is the guard, and a server
+// too old for the variable falls back to a plain connection, so the guard is
+// still the layer that has to hold. That is why it refuses data-modifying CTEs
 // and EXPLAIN ANALYZE outright instead of treating them as PostgreSQL trivia.
 func OpenReadonly(dsn string) (db.DBAdapter, error) {
 	var (
@@ -34,9 +37,9 @@ func OpenReadonly(dsn string) (db.DBAdapter, error) {
 	)
 	switch db.DetectType(dsn) {
 	case "mysql":
-		adapter, err = mysql.Open(dsn)
+		adapter, err = mysql.OpenReadonly(dsn)
 	case "postgres":
-		adapter, err = postgres.Open(dsn)
+		adapter, err = postgres.OpenReadonly(dsn)
 	default:
 		adapter, err = sqlite.OpenReadonly(dsn)
 	}
