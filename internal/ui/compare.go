@@ -306,13 +306,13 @@ func (m *model) syncCompareTables() {
 	if m.pinned == nil {
 		return
 	}
-	m.syncPinnedTable(m.comparePaneWidth(), m.resultsHeight()-1)
+	m.syncPinnedTable(m.comparePaneWidth(), max(m.resultsHeight()-1, 0))
 }
 
 // renderCompareView renders side-by-side panels.
 func (m *model) renderCompareView() string {
 	paneWidth := m.comparePaneWidth()
-	paneHeight := m.resultsHeight() - 1 // subtract 1 for label row
+	paneHeight := max(m.resultsHeight()-1, 0) // subtract 1 for label row; resultsHeight can be 0
 
 	focusedBorder := lipgloss.Color("#38BDF8") // accentColor
 	unfocusedBorder := panelBorder
