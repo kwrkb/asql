@@ -139,6 +139,8 @@ type model struct {
 	displayRows     []table.Row // sorted rows for windowing source
 	lastVisStart    int         // cached visible range start for rebuild optimization
 	lastVisEnd      int         // cached visible range end for rebuild optimization
+	lastColCursor   int         // colCursor at last rebuild (header highlight follows it)
+	lastHighlight   bool        // whether the header highlight was drawn at last rebuild
 	viewportDirty   bool        // forces column/row rebuild on next syncViewport
 
 	// Compare
