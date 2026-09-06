@@ -61,6 +61,16 @@ func seedTable(t *testing.T, dsn, name string) {
 	if _, err := writable.conn.ExecContext(ctx, "CREATE TABLE "+name+" (a INT)"); err != nil {
 		t.Fatalf("create seed table: %v", err)
 	}
+	dropOnCleanup(t, dsn, name)
+}
+
+// dropOnCleanup registers a drop for a table the test must not leave behind.
+// A table a readonly assertion expects never to be created still needs one:
+// were layer 2 to regress, the CREATE would go through, and every later run
+// would then fail on "already exists" — an error, so a test asserting only
+// that an error occurred would stay green right over the regression.
+func dropOnCleanup(t *testing.T, dsn, name string) {
+	t.Helper()
 	t.Cleanup(func() {
 		cleanup, err := Open(dsn)
 		if err != nil {
@@ -69,6 +79,28 @@ func seedTable(t *testing.T, dsn, name string) {
 		defer cleanup.Close()
 		_, _ = cleanup.conn.ExecContext(context.Background(), "DROP TABLE IF EXISTS "+name)
 	})
+}
+
+// readOnlySQLTransaction is what PostgreSQL answers a write with while
+// default_transaction_read_only is on (measured against postgres:17: SQLSTATE
+// 25006, "cannot execute CREATE TABLE / DROP TABLE / INSERT in a read-only
+// transaction"). The assertions name it rather than accepting any error, so a
+// statement that fails for an unrelated reason cannot stand in for layer 2
+// having held.
+const readOnlySQLTransaction = "25006"
+
+// refusedAsReadOnly fails the test unless err is that error.
+func refusedAsReadOnly(t *testing.T, stmt string, err error) {
+	t.Helper()
+	if err == nil {
+		t.Errorf("%s succeeded on a read-only connection", stmt)
+		return
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != readOnlySQLTransaction {
+		t.Errorf("%s failed with %v, want SQLSTATE %s (read-only transaction)",
+			stmt, err, readOnlySQLTransaction)
+	}
 }
 
 // The claim behind the DSN-parameter approach is that it covers the pool, not
@@ -124,6 +156,7 @@ func TestReadonlyCoversEveryPooledConnection(t *testing.T) {
 func TestReadonlyRefusesDDL(t *testing.T) {
 	dsn := postgresDSN(t)
 	seedTable(t, dsn, "asql_ro_ddl")
+	dropOnCleanup(t, dsn, "asql_ro_ddl_new")
 
 	adapter, err := OpenReadonly(dsn)
 	if err != nil {
@@ -137,9 +170,8 @@ func TestReadonlyRefusesDDL(t *testing.T) {
 		"CREATE TEMP TABLE asql_ro_ddl_tmp (a INT)",
 		"DROP TABLE asql_ro_ddl",
 	} {
-		if _, err := adapter.conn.ExecContext(ctx, stmt); err == nil {
-			t.Errorf("%s succeeded on a read-only connection", stmt)
-		}
+		_, err := adapter.conn.ExecContext(ctx, stmt)
+		refusedAsReadOnly(t, stmt, err)
 	}
 }
 
