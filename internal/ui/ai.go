@@ -22,6 +22,10 @@ func (m model) updateAI(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.queryCancel()
 				m.queryCancel = nil
 			}
+			// Discard a response that completed just before the cancel: its
+			// aiResponseMsg carries the old seq and would otherwise overwrite
+			// the editor and force INSERT mode after "Cancelled".
+			m.querySeq++
 			m.aiSt.loading = false
 			m.aiSt.input.Blur()
 			m.mode = normalMode
