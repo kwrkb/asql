@@ -43,6 +43,18 @@ func postgresDSN(t *testing.T) string {
 	return dsn
 }
 
+// pgbouncerDSN points at a pooler in front of the server. A pooler tracks a
+// fixed set of startup parameters, default_transaction_read_only is not one of
+// them, and asql has to keep connecting anyway.
+func pgbouncerDSN(t *testing.T) string {
+	t.Helper()
+	dsn := os.Getenv("ASQL_TEST_PGBOUNCER_DSN")
+	if dsn == "" {
+		t.Skip("ASQL_TEST_PGBOUNCER_DSN not set; start testdata/compose.yaml to run this")
+	}
+	return dsn
+}
+
 // seedTable creates a table through a writable connection and registers its
 // cleanup, so the readonly assertions fail on being refused rather than on the
 // target not existing.
@@ -247,10 +259,17 @@ func TestReadonlyKeepsCallerParameters(t *testing.T) {
 	}
 }
 
-// OpenReadonly falls back to a plain connection on one specific error, so what
-// the server actually returns for an unrecognised runtime parameter is worth
-// pinning: if the shape changed, the fallback would stop firing and a server
-// without the parameter would be unable to connect at all.
+// undefinedObject is the SQLSTATE PostgreSQL answers a startup packet with
+// when it does not recognise a runtime parameter. OpenReadonly no longer keys
+// its fallback on this code — a pooler rejects the same parameter with 08P01
+// instead — but what a server without the parameter actually does is the fact
+// the whole design rests on, so it stays pinned here.
+const undefinedObject = "42704"
+
+// A server that lacks the parameter must fail the connection rather than
+// ignore it: an ignored parameter would leave layer 2 silently absent with
+// nothing to notice. Pinning the error is what makes "the connection fails, so
+// we retry without it" a measured claim.
 func TestUnknownRuntimeParameterFailsWithKnownError(t *testing.T) {
 	dsn := postgresDSN(t)
 	_, err := Open(addParam(dsn, "asql_no_such_parameter=1"))
@@ -282,5 +301,64 @@ func TestReadonlyFallsBackWhenParameterIsUnknown(t *testing.T) {
 	var one int
 	if err := adapter.conn.QueryRowContext(context.Background(), "SELECT 1").Scan(&one); err != nil {
 		t.Fatalf("the fallback connection is not usable: %v", err)
+	}
+}
+
+// protocolViolation is the SQLSTATE PgBouncer rejects an untracked startup
+// parameter with — measured against edoburu/pgbouncer v1.25.2-p0 in its default
+// configuration: "FATAL: unsupported startup parameter:
+// default_transaction_read_only". Not the server's own 42704, which is the
+// whole point of the test below.
+const protocolViolation = "08P01"
+
+// A pooler is the deployment the fallback has to survive, and the one a
+// fallback keyed on a single SQLSTATE would break: --readonly would be unable
+// to connect at all through a pooler that the same DSN connects through fine
+// without it. Both halves are asserted — that the rejection is not 42704, and
+// that OpenReadonly connects regardless.
+func TestReadonlyFallsBackBehindAPooler(t *testing.T) {
+	dsn := pgbouncerDSN(t)
+
+	_, err := Open(addParam(dsn, readonlyParam+"=on"))
+	if err == nil {
+		t.Skipf("this pooler passes %s through, so there is no fallback to measure here", readonlyParam)
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		t.Fatalf("the pooler's rejection is %T (%v), want *pgconn.PgError — the fallback cannot see it", err, err)
+	}
+	if pgErr.Code != protocolViolation {
+		t.Errorf("pooler rejected %s with SQLSTATE %q (%s), want %q",
+			readonlyParam, pgErr.Code, pgErr.Message, protocolViolation)
+	}
+	if pgErr.Code == undefinedObject {
+		t.Errorf("the pooler answered %q, the server's own code — this test no longer covers the case it was written for",
+			undefinedObject)
+	}
+
+	adapter, err := OpenReadonly(dsn)
+	if err != nil {
+		t.Fatalf("OpenReadonly did not fall back to a plain connection: %v", err)
+	}
+	defer adapter.Close()
+
+	ctx := context.Background()
+	var one int
+	if err := adapter.conn.QueryRowContext(ctx, "SELECT 1").Scan(&one); err != nil {
+		t.Fatalf("the fallback connection is not usable: %v", err)
+	}
+
+	// What the fallback costs, read back rather than assumed. A pooler
+	// configured to ignore the parameter instead of rejecting it lands in the
+	// same place with no error anywhere (measured with
+	// ignore_startup_parameters=default_transaction_read_only: connects, reads
+	// back "off"), which is why layer 2 is not what --readonly relies on.
+	var readOnly string
+	if err := adapter.conn.QueryRowContext(ctx, "SHOW default_transaction_read_only").Scan(&readOnly); err != nil {
+		t.Fatalf("reading default_transaction_read_only: %v", err)
+	}
+	if readOnly != "off" {
+		t.Errorf("default_transaction_read_only = %q, want %q — layer 2 survived the pooler after all",
+			readOnly, "off")
 	}
 }

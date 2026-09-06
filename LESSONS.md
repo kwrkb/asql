@@ -1163,3 +1163,51 @@ DSN パラメータがプール内の全コネクションに効いているこ�
 **判断**: 「解除できる」ことを統合テストのアサーションにした。普通は「できてはいけない」ことを
 テストにするが、ここでは**現在の強度を固定して、変化を検知する**のが目的。サーバ側が強くなったら
 テストが落ち、それがドキュメントを書き直す合図になる。
+
+### 層2 のフォールバックは「特定のエラーコード」ではなく「相手が答えたか」で判断する
+
+前掲「層2 を MySQL / PostgreSQL に広げた」で入れたフォールバックは、MySQL 1193 /
+PostgreSQL 42704 に**限定**していた。PR #103 のレビュー指摘を受けて実測したところ、その限定が
+`--readonly` 専用の接続不能を生むことが分かったので広げた。
+
+**却下した案**: (a) 1193 / 42704 限定のまま維持する。(b) 逆に全エラーで再試行する。
+(c) MariaDB 10.x 用に `tx_read_only` を2段目に足して層2 を復活させる。
+(d) 接続後に変数を読み戻し、層2 が無ければユーザーに知らせる。
+
+**決め手**:
+- (a) `edoburu/pgbouncer:v1.25.2-p0` を `postgres:17` の前に置いて pgx から接続すると、
+  `*pgconn.ConnectError` が包む `*pgconn.PgError` **Code=08P01** Severity=FATAL
+  `unsupported startup parameter: default_transaction_read_only`。**42704 ではない**ので
+  フォールバックが発火せず、`--readonly` を付けたときだけ接続できなくなる。
+  同じ DSN は `--readonly` 無しなら繋がる — フォールバックが防ぐはずだった退行そのもの。
+  ゲートを `errors.As` 成功だけに広げた状態で `TestReadonlyFallsBackBehindAPooler` が緑、
+  42704 限定に戻すと赤になることを確認した
+- (b) にはなっていない。ドライバレベルの失敗（タイムアウト・切断）には `*MySQLError` /
+  `*PgError` が付かないのでそのまま返る。「接続タイムアウトが倍になるから総当たりはしない」という
+  前掲エントリの制約は、コードの形が変わっても維持されている
+- (c) `mariadb:10.11.19` には `transaction_read_only` が無く（1193）、`tx_read_only` はある。
+  `SET SESSION tx_read_only=1` の後は `INSERT` / `CREATE TABLE` / `CREATE TEMPORARY TABLE` /
+  `DROP TABLE` すべて 1792 (25006) で、MySQL 8.4 と同じ強度。復活は**できる**。
+  ただし `mysql:8.4` に `tx_read_only` は無い（1193）ので別名ではなく互いに素で、2段構えが要る。
+  メンテナンス期の Decision Rule（実利用で不足が観察されたこと）を満たしていないので入れず、
+  README に「MariaDB 11.1 未満は層2 なしで接続する」と明記して Issue #104 に残した
+- (d) 検出はできる（`ignore_startup_parameters=default_transaction_read_only` を付けた PgBouncer は
+  **エラーを出さずに**接続でき、`SHOW default_transaction_read_only` が `off` を返す）。
+  だが分かったところで打つ手が無い — 層2 は belt-and-braces で、無ければ層1 だけで続けるほかない。
+  ステータスバーの表示を変えるのは新機能側
+
+**覆す条件**: MySQL / PostgreSQL のドライバが、サーバの応答したエラーを型付きエラーとして
+返さなくなったとき（`TestReadonlyFallsBackBehindAPooler` が「rejection is *X, want *pgconn.PgError」で
+落ちる形で通知される）。あるいは MariaDB 10.x で層2 が要るという実利用の要望が出たとき（Issue #104）。
+
+**判断**: 統合テストの前提そのものを assert に入れた。`TestReadonlyFallsBackBehindAPooler` は
+「フォールバックが効く」だけでなく「相手の返すコードが 42704 **ではない**」も見ている。
+プロキシ側が将来 42704 を返すようになったらテストが落ち、それは「このテストはもう
+書かれた目的をカバーしていない」という通知になる。同じ理由で `TestReadonlyFallsBackOnMariaDB` は
+サーバに `transaction_read_only` があったら `t.Skip` する。
+
+**判断**: `TestReadonlyRefusesDDL` は「エラーが返った」ではなく「1792 / 25006 が返った」を見る形に
+直した。旧実装は `CREATE TABLE asql_ro_ddl_new` を後始末していなかったので、層2 が退行して
+CREATE が通った場合、**次回以降は "already exists" で落ちて緑のまま**になる。
+永続 DB に対しては初回から空振りだった。**「何かエラーが出た」を成功条件にしたテストは、
+自分が壊した状態で緑になる経路を持っていないか疑う。**

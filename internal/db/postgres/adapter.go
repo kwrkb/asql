@@ -57,18 +57,14 @@ func Open(dsn string) (*Adapter, error) {
 // statement guard's job, and the guard stays the layer asql relies on.
 const readonlyParam = "default_transaction_read_only"
 
-// undefinedObject is the SQLSTATE PostgreSQL answers a startup packet with when
-// it does not recognise a runtime parameter. It separates "this server has no
-// layer 2" from "this DSN is wrong".
-const undefinedObject = "42704"
-
 // OpenReadonly connects with the session's default transaction marked
 // read-only where the server supports it.
 //
-// A server that rejects the parameter refuses the connection outright. Rather
-// than turn a working DSN into a connection error, that case falls back to a
-// plain connection: layer 2 is belt-and-braces, and the statement guard — which
-// the caller wraps around this adapter — is unaffected either way.
+// Whatever is at the far end — a server, or a pooler in front of one — refuses
+// the connection outright if it will not take the parameter. Rather than turn a
+// working DSN into a connection error, that case falls back to a plain
+// connection: layer 2 is belt-and-braces, and the statement guard — which the
+// caller wraps around this adapter — is unaffected either way.
 func OpenReadonly(dsn string) (*Adapter, error) {
 	return openReadonly(dsn, readonlyParam)
 }
@@ -76,6 +72,20 @@ func OpenReadonly(dsn string) (*Adapter, error) {
 // openReadonly takes the parameter name so the fallback branch — the one that
 // only fires against a server that does not have it — can be exercised by
 // naming a parameter no server has.
+//
+// The fallback fires on any error the far end answered with, not on one chosen
+// SQLSTATE. Two different rejections were measured (see
+// docs/readonly-design.md): PostgreSQL 17 answers 42704 undefined_object, and
+// PgBouncer 1.25.2 in its default configuration answers 08P01 "unsupported
+// startup parameter: default_transaction_read_only" — it tracks a fixed set of
+// startup parameters and this is not in it. Naming 42704 alone would leave
+// every pooled deployment unable to connect under --readonly at all, which is
+// the regression the fallback exists to prevent.
+//
+// It stays narrow in the way that matters: a timeout or a torn connection
+// produces no PgError, so the retry never doubles a wait it could not have
+// survived anyway. Where the far end did answer, the retry costs one round
+// trip and returns that same answer if the DSN was simply wrong.
 func openReadonly(dsn, parameter string) (*Adapter, error) {
 	roDSN, err := withParam(dsn, parameter, "on")
 	if err != nil {
@@ -87,7 +97,7 @@ func openReadonly(dsn, parameter string) (*Adapter, error) {
 		return adapter, nil
 	}
 	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) || pgErr.Code != undefinedObject {
+	if !errors.As(err, &pgErr) {
 		return nil, err
 	}
 	return Open(dsn)

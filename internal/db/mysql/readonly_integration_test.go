@@ -34,6 +34,18 @@ func mysqlDSN(t *testing.T) string {
 	return dsn
 }
 
+// mariadbDSN points at the server layer 2 is absent on. MariaDB kept the older
+// tx_read_only name until 11.1, so 10.11 LTS — still the widely deployed one —
+// has no transaction_read_only for OpenReadonly to set.
+func mariadbDSN(t *testing.T) string {
+	t.Helper()
+	dsn := os.Getenv("ASQL_TEST_MARIADB_DSN")
+	if dsn == "" {
+		t.Skip("ASQL_TEST_MARIADB_DSN not set; start testdata/compose.yaml to run this")
+	}
+	return dsn
+}
+
 // seedTable creates a table through a writable connection and registers its
 // cleanup, so the readonly assertions fail on being refused rather than on the
 // target not existing.
@@ -229,10 +241,17 @@ func TestReadonlyKeepsCallerParameters(t *testing.T) {
 	}
 }
 
-// OpenReadonly falls back to a plain connection on one specific error, so what
-// the driver actually returns for an unknown system variable is worth pinning:
-// if the shape changed, the fallback would stop firing and a server without the
-// variable would be unable to connect at all.
+// erUnknownSystemVariable is MySQL's error for a SET naming a variable it does
+// not have. OpenReadonly no longer keys its fallback on this number — any
+// error the server answered with is enough — but what a server without
+// transaction_read_only actually does is the fact the whole design rests on,
+// so it stays pinned here.
+const erUnknownSystemVariable = 1193
+
+// A server that lacks the variable must fail the connection rather than
+// ignore the parameter: an ignored parameter would leave layer 2 silently
+// absent with nothing to notice. Pinning the error is what makes "the
+// connection fails, so we retry without it" a measured claim.
 func TestUnknownSystemVariableFailsWithKnownError(t *testing.T) {
 	dsn := mysqlDSN(t)
 	cfg, err := buildConfig(dsn)
@@ -273,5 +292,60 @@ func TestReadonlyFallsBackWhenVariableIsUnknown(t *testing.T) {
 	var one int
 	if err := adapter.conn.QueryRowContext(context.Background(), "SELECT 1").Scan(&one); err != nil {
 		t.Fatalf("the fallback connection is not usable: %v", err)
+	}
+}
+
+// The fallback measured on the server it was written for, rather than on a
+// made-up variable name. MariaDB 10.11 refuses the connection because it has
+// no transaction_read_only, --readonly retries without it, and what the user
+// gets is a working connection with no layer 2 on it. Both halves are
+// asserted: that it connects, and — read back rather than assumed — that layer
+// 2 really is gone. README describes MySQL's layer 2 as resting on
+// transaction_read_only for exactly this reason.
+//
+// MariaDB's own tx_read_only would give the same layer 2 (measured on 10.11.19:
+// error 1792 / SQLSTATE 25006 for INSERT, CREATE TABLE, CREATE TEMPORARY TABLE
+// and DROP TABLE, liftable with SET the same way). asql does not reach for it —
+// see issue #104 — so this test pins the gap as it stands.
+func TestReadonlyFallsBackOnMariaDB(t *testing.T) {
+	dsn := mariadbDSN(t)
+
+	cfg, err := buildConfig(dsn)
+	if err != nil {
+		t.Fatalf("buildConfig: %v", err)
+	}
+	if cfg.Params == nil {
+		cfg.Params = map[string]string{}
+	}
+	cfg.Params[readonlyVar] = "1"
+	if direct, err := openConfig(cfg); err == nil {
+		direct.Close()
+		t.Skipf("this server has %s, so there is no fallback to measure here", readonlyVar)
+	} else {
+		var myErr *gomysql.MySQLError
+		if !errors.As(err, &myErr) || myErr.Number != erUnknownSystemVariable {
+			t.Fatalf("setting %s failed with %v, want MySQL error %d",
+				readonlyVar, err, erUnknownSystemVariable)
+		}
+	}
+
+	adapter, err := OpenReadonly(dsn)
+	if err != nil {
+		t.Fatalf("OpenReadonly did not fall back to a plain connection: %v", err)
+	}
+	defer adapter.Close()
+
+	ctx := context.Background()
+	var one int
+	if err := adapter.conn.QueryRowContext(ctx, "SELECT 1").Scan(&one); err != nil {
+		t.Fatalf("the fallback connection is not usable: %v", err)
+	}
+	var readOnly string
+	if err := adapter.conn.QueryRowContext(ctx, "SELECT @@session.tx_read_only").Scan(&readOnly); err != nil {
+		t.Fatalf("reading tx_read_only: %v", err)
+	}
+	if readOnly != "0" {
+		t.Errorf("@@session.tx_read_only = %q, want %q — layer 2 is present after all, and README understates it",
+			readOnly, "0")
 	}
 }

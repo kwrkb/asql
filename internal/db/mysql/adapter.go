@@ -43,12 +43,6 @@ func Open(dsn string) (*Adapter, error) {
 // that SET, and the guard remains the layer asql relies on.
 const readonlyVar = "transaction_read_only"
 
-// erUnknownSystemVariable is MySQL's error for a SET naming a variable it does
-// not have. A server too old for transaction_read_only fails the connection
-// with it, which is why OpenReadonly can tell "this server has no layer 2"
-// apart from "this DSN is wrong".
-const erUnknownSystemVariable = 1193
-
 // OpenReadonly connects with the session marked read-only where the server
 // supports it.
 //
@@ -63,6 +57,16 @@ func OpenReadonly(dsn string) (*Adapter, error) {
 // openReadonly takes the variable name so the fallback branch — the one that
 // only fires against a server too old to have it — can be exercised by naming a
 // variable no server has.
+//
+// The fallback fires on any error the server answered with, not on error 1193
+// alone. 1193 (unknown system variable) is what MySQL 8.4 and MariaDB 10.11
+// were both measured returning, but pinning it makes every other server-side
+// refusal — a proxy that will not take the SET, a build that reports it
+// differently — a hard connection failure under --readonly on a DSN that
+// worked before. A driver-level failure (timeout, torn connection) carries no
+// MySQLError and still returns straight away, so the retry never doubles a
+// wait; where the server did answer it costs one round trip and repeats that
+// same answer if the DSN was simply wrong.
 func openReadonly(dsn, variable string) (*Adapter, error) {
 	cfg, err := buildConfig(dsn)
 	if err != nil {
@@ -78,7 +82,7 @@ func openReadonly(dsn, variable string) (*Adapter, error) {
 		return adapter, nil
 	}
 	var myErr *gomysql.MySQLError
-	if !errors.As(err, &myErr) || myErr.Number != erUnknownSystemVariable {
+	if !errors.As(err, &myErr) {
 		return nil, err
 	}
 	return Open(dsn)

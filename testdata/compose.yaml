@@ -1,13 +1,19 @@
-# MySQL / PostgreSQL for the readonly layer-2 integration tests.
+# Servers for the readonly layer-2 integration tests.
 #
-#   docker compose -f testdata/compose.yaml up -d --wait
+#   docker compose -f testdata/compose.yaml --profile extra up -d --wait
 #   ASQL_TEST_MYSQL_DSN='mysql://asql:asql@127.0.0.1:13306/asql' \
 #   ASQL_TEST_POSTGRES_DSN='postgres://asql:asql@127.0.0.1:15432/asql?sslmode=disable' \
+#   ASQL_TEST_MARIADB_DSN='mysql://asql:asql@127.0.0.1:13307/asql' \
+#   ASQL_TEST_PGBOUNCER_DSN='postgres://asql:asql@127.0.0.1:16432/asql?sslmode=disable' \
 #     go test -tags integration ./internal/db/...
-#   docker compose -f testdata/compose.yaml down -v
+#   docker compose -f testdata/compose.yaml --profile extra down -v
 #
-# CI uses this same file, so a layer-2 failure can be reproduced locally.
-# Ports are shifted off the defaults so a developer's own server keeps its port.
+# mysql and postgres are the two servers layer 2 is measured on, and CI starts
+# and sets exactly those two. mariadb and pgbouncer are the two deployments
+# layer 2 is *absent* on: they sit behind the "extra" profile, so a bare `up`
+# — which is what the workflow runs — leaves them alone, and their tests skip
+# unless their DSN is set. Ports are shifted off the defaults so a developer's
+# own server keeps its port.
 services:
   mysql:
     image: mysql:8.4
@@ -34,6 +40,53 @@ services:
       POSTGRES_PASSWORD: asql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U asql -d asql"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  # MariaDB 10.11 LTS has no transaction_read_only — it kept the older
+  # tx_read_only name until 11.1 — so --readonly connects to it with no layer 2
+  # at all. Here to keep that fallback measured rather than assumed.
+  mariadb:
+    profiles: ["extra"]
+    image: mariadb:10.11
+    ports:
+      - "13307:3306"
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: asql
+      MARIADB_USER: asql
+      MARIADB_PASSWORD: asql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  # A pooler in front of postgres. It tracks a fixed set of startup parameters
+  # and default_transaction_read_only is not among them, so it rejects the
+  # connection outright — with a different SQLSTATE than the server's own.
+  # Here so that "--readonly still connects through a pooler" is a test rather
+  # than a hope.
+  pgbouncer:
+    profiles: ["extra"]
+    image: edoburu/pgbouncer:v1.25.2-p0
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "16432:5432"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: asql
+      DB_PASSWORD: asql
+      DB_NAME: asql
+      AUTH_TYPE: scram-sha-256
+      POOL_MODE: transaction
+      LISTEN_PORT: 5432
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-p", "5432", "-U", "asql", "-d", "asql"]
       interval: 3s
       timeout: 5s
       retries: 30

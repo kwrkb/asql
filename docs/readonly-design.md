@@ -213,16 +213,36 @@ file::memory:?_pragma=query_only(1) で接続
 データ変更 CTE と `EXPLAIN ANALYZE` はどちらも PostgreSQL 固有の実行経路であり、上記2つの検査は
 「あれば良い」ではなく必須のまま。
 
-#### 変数を知らないサーバへのフォールバック
+#### 層2 が無い接続先へのフォールバック
 
-未知のパラメータは**接続そのものを失敗させる**（実測: MySQL は `*mysql.MySQLError` Number=1193
-`Unknown system variable`、PostgreSQL は `*pgconn.PgError` Code=42704 `unrecognized configuration
-parameter`、Severity=FATAL）。`transaction_read_only` を持たない古い MySQL では、層2 を足したことが
-「今まで繋がっていた DSN が繋がらなくなる」退行になる。
+未知のパラメータは**接続そのものを失敗させる**（実測: MySQL 8.4 は `*mysql.MySQLError` Number=1193
+`Unknown system variable`、PostgreSQL 17 は `*pgconn.PgError` Code=42704 `unrecognized configuration
+parameter`、Severity=FATAL）。何もしなければ、層2 を足したこと自体が「今まで繋がっていた DSN が
+繋がらなくなる」退行になる。**パラメータなしで再接続し、層1 のみで続行する。**
 
-**このエラーコードに限って、パラメータなしで再接続し層1 のみで続行する。** 層2 は belt-and-braces
-であって、そのために接続を失わせるのは割に合わない。総当たりの再試行はしない（不正な DSN で
-接続タイムアウトが倍になるため）。
+再接続の条件は「**相手がエラーを返してきたこと**」であって、特定のエラーコードではない
+（`errors.As` で `*mysql.MySQLError` / `*pgconn.PgError` が取り出せたか）。当初は 1193 / 42704 に
+限定していたが、2026-09-06 に別経路を 3 つ実測した:
+
+| 接続先 | 実測 | 1193 / 42704 限定だとどうなるか |
+|---|---|---|
+| MariaDB 10.11.19 | `transaction_read_only` が無く **1193**。`tx_read_only` は存在し、`=1` で `INSERT` / `CREATE TABLE` / `CREATE TEMPORARY TABLE` / `DROP TABLE` すべて 1792 (25006)、`SET` で解除可 — **MySQL 8.4 と同じ強度**。ただし `mysql:8.4` に `tx_read_only` は**無い**（1193）ので、別名ではなく互いに素で、2 段構えが要る | フォールバックは効く。層2 が**黙って無くなる**（README に明記した） |
+| PgBouncer 1.25.2（既定設定） | `*pgconn.ConnectError` が包む `*pgconn.PgError` Code=**08P01** Severity=FATAL `unsupported startup parameter: default_transaction_read_only`。追跡する startup parameter が固定で、これはその中に無い | **42704 ではないので弾かれる。`--readonly` を付けたときだけ接続不能**になる。層2 を足したことによる退行そのもの |
+| PgBouncer 1.25.2 + `ignore_startup_parameters=default_transaction_read_only` | エラーが**出ない**。接続でき、`SHOW default_transaction_read_only` は `off` | 無関係。層2 が**エラーなしで消える**。接続時に読み戻さない限り検出できない |
+
+総当たりの再試行にはなっていない: ドライバレベルの失敗（タイムアウト・切断）には `*MySQLError` /
+`*PgError` が付かないのでそのまま返る。接続タイムアウトが倍になる経路は残っていない。相手が
+答えたケースの再接続は1往復で、DSN が単に間違っていれば同じエラーがそのまま返る。
+
+**MariaDB 10.x の層2 は復活させていない。** `tx_read_only` を2段目に試せば戻せることは上のとおり
+実測済みだが、実利用で不足が観察されていない（メンテナンス期の Decision Rule）。README に層2 が
+`transaction_read_only` に依ることを明記し、要望は Issue で待つ。
+
+これら 3 つは `testdata/compose.yaml` の `mariadb` / `pgbouncer` サービスと、
+`ASQL_TEST_MARIADB_DSN` / `ASQL_TEST_PGBOUNCER_DSN` が設定されたときだけ走る統合テストで固定してある。
+2 つは `extra` プロファイルの下に置いてあり、workflow が実行する素の
+`docker compose up -d --wait` では起動しない（`--profile extra` を付けたときだけ）。
+CI が起動して DSN を渡すのは `mysql` / `postgres` の 2 つだけ。
 
 ## 配線が必要な箇所（実装コストの実体）
 
