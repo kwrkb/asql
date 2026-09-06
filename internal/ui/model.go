@@ -82,6 +82,8 @@ type aiResponseMsg struct {
 }
 
 type connSwitchedMsg struct {
+	seq       uint64 // switchSeq when the switch was initiated
+	conn      int    // index Prepare opened; activated only if seq still matches
 	err       error
 	reExecute bool
 }
@@ -119,6 +121,12 @@ type model struct {
 
 	// Connection generation (incremented on each connection switch)
 	connGen uint64
+
+	// Switch generation (incremented when a switch is *initiated*). The UI
+	// stays interactive while a switch runs in its goroutine, so a second
+	// switch can be started before the first completes; only the message
+	// carrying the latest seq is applied.
+	switchSeq uint64
 
 	// Query execution
 	queryCancel  context.CancelFunc
@@ -394,16 +402,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case connSwitchedMsg:
+		if msg.seq != m.switchSeq {
+			return m, nil // a newer switch was initiated; this completion is stale
+		}
 		if msg.err != nil {
 			m.setStatus(fmt.Sprintf("Connection failed: %v", msg.err), true)
-			m.mode = normalMode
-			m.textarea.Blur()
+			m.closeProfileOverlayIfOpen()
 			return m, nil
 		}
-		// Cancel any in-flight query from the previous connection
+		// Commit the switch here, on the UI thread, past the sequence check:
+		// the goroutine only opened the connection. An older switch that
+		// finishes after a newer one has been applied returns above with
+		// nothing touched, rather than moving the active connection out from
+		// under everything this handler has already resynchronized.
+		m.connMgr.Activate(msg.conn)
+		// Cancel any in-flight query from the previous connection: the active
+		// adapter is about to change under it, and its result would otherwise
+		// render as if it came from the new connection. The status message
+		// below says so instead of dropping it silently.
+		cancelled := false
 		if m.queryCancel != nil {
 			m.queryCancel()
 			m.queryCancel = nil
+			m.aiSt.loading = false
+			cancelled = true
 		}
 		m.querySeq++ // invalidate stale query results
 		m.connGen++  // invalidate stale column fetches
@@ -419,17 +441,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.completion.colCache = nil
 		m.completion.colOrder = nil
 		m.sidebar.tables = nil
+		var status string
 		if m.connMgr.ActiveDSN() == bringDSN {
 			// Name the provenance table on arrival: "which of these tables is
 			// which" is the question this connection provokes, and this is the
 			// moment it comes up.
-			m.setStatus(fmt.Sprintf("Connected to %s — sources in %s",
-				sanitize(m.connMgr.ActiveName()), bring.ProvenanceTable), false)
+			status = fmt.Sprintf("Connected to %s — sources in %s",
+				sanitize(m.connMgr.ActiveName()), bring.ProvenanceTable)
 		} else {
-			m.setStatus(fmt.Sprintf("Connected to %s", sanitize(m.connMgr.ActiveName())), false)
+			status = fmt.Sprintf("Connected to %s", sanitize(m.connMgr.ActiveName()))
 		}
-		m.mode = normalMode
-		m.textarea.Blur()
+		if cancelled {
+			status += " — in-flight query cancelled"
+		}
+		m.setStatus(status, false)
+		m.closeProfileOverlayIfOpen()
 		if msg.reExecute {
 			query := strings.TrimSpace(m.textarea.Value())
 			if query != "" {

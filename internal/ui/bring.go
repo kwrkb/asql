@@ -125,8 +125,10 @@ func (m model) switchToBring() (tea.Model, tea.Cmd) {
 	}
 	m.setStatus("Switching to local (bring) connection...", false)
 	cm := m.connMgr
+	m.switchSeq++
+	seq := m.switchSeq
 	return m, func() tea.Msg {
-		err := cm.Switch(bringConnName, bringDSN)
-		return connSwitchedMsg{err: err}
+		idx, err := cm.Prepare(bringConnName, bringDSN)
+		return connSwitchedMsg{seq: seq, conn: idx, err: err}
 	}
 }
