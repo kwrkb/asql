@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -140,4 +141,39 @@ func TestToggleSort(t *testing.T) {
 			t.Errorf("expected Asc on col 1, got dir=%d col=%d", m.sortDir, m.sortCol)
 		}
 	})
+}
+
+// RFC3339Nano trims trailing zeros and drops the fraction entirely on a whole
+// second, so the strings a timestamp column yields do not compare lexically in
+// chronological order: '.' (0x2E) sorts before 'Z' (0x5A), putting the later
+// value first. compareValues has to read them as instants.
+func TestCompareValuesOrdersTimestampsChronologically(t *testing.T) {
+	const (
+		whole    = "2024-01-15T12:00:00Z"
+		fraction = "2024-01-15T12:00:00.1Z"
+	)
+	if strings.Compare(whole, fraction) < 0 {
+		t.Fatal("premise gone: these two now compare lexically in the right order")
+	}
+	if got := compareValues(whole, fraction); got >= 0 {
+		t.Errorf("compareValues(%q, %q) = %d, want < 0", whole, fraction, got)
+	}
+	if got := compareValues(fraction, whole); got <= 0 {
+		t.Errorf("compareValues(%q, %q) = %d, want > 0", fraction, whole, got)
+	}
+	if got := compareValues(whole, whole); got != 0 {
+		t.Errorf("compareValues(%q, %q) = %d, want 0", whole, whole, got)
+	}
+
+	rows := [][]string{{fraction}, {whole}}
+	sorted := sortedRows(rows, 0, sortAsc)
+	if sorted[0][0] != whole {
+		t.Errorf("ascending sort put %q first, want %q", sorted[0][0], whole)
+	}
+
+	// A column that only looks date-shaped must keep falling through to the
+	// lexical path rather than comparing as equal.
+	if got := compareValues("2024-ab-cd", "2024-ab-ce"); got >= 0 {
+		t.Errorf("compareValues on unparseable date-shaped text = %d, want < 0", got)
+	}
 }

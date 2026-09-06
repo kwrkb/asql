@@ -43,7 +43,12 @@ func StringifyValueKind(value any) (string, db.Kind) {
 		}
 		return fmt.Sprintf("%x", v), db.KindBlob
 	case time.Time:
-		return v.Format(time.RFC3339), db.KindText
+		// RFC3339Nano keeps sub-second precision: this string is the only
+		// representation the value has from here on (display, export, Bring),
+		// so RFC3339 would silently merge DATETIME(6) values differing only
+		// in microseconds. Values without a fractional part still render
+		// seconds-only, so the common case looks the same as before.
+		return v.Format(time.RFC3339Nano), db.KindText
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		return fmt.Sprint(v), db.KindInt
 	case float32, float64:

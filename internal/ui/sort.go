@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kwrkb/asql/internal/db"
 )
@@ -17,7 +18,8 @@ const (
 )
 
 // compareValues orders two cell values with no NULL handling at all: they are
-// compared numerically when both parse as numbers, lexically otherwise.
+// compared numerically when both parse as numbers, chronologically when both
+// parse as timestamps, and lexically otherwise.
 //
 // Callers that have already separated out the NULLs — computeColumnStats skips
 // them before computing min/max — must use this rather than smartCompare, or a
@@ -36,7 +38,30 @@ func compareValues(a, b string) int {
 		}
 	}
 
+	// Timestamps are compared as instants rather than as text. Lexical order
+	// happens to be chronological for most date shapes, but not for the one
+	// the database hands back: dbutil formats time.Time with RFC3339Nano,
+	// which trims trailing zeros from the fraction and drops it entirely on a
+	// whole second, so "…:00Z" and "…:00.1Z" put '.' (0x2E) against 'Z'
+	// (0x5A) and sort the later value first — in the result table and in the
+	// column min/max alike.
+	if at, ok := parseTimestamp(a); ok {
+		if bt, ok := parseTimestamp(b); ok {
+			return at.Compare(bt)
+		}
+	}
+
 	return strings.Compare(a, b)
+}
+
+// parseTimestamp is parseDate behind a shape check, so an ordinary text column
+// does not pay for a run of failed time.Parse calls on every comparison. Every
+// layout parseDate knows carries a separator at index 4.
+func parseTimestamp(s string) (time.Time, bool) {
+	if len(s) < len("2006-01-02") || (s[4] != '-' && s[4] != '/') {
+		return time.Time{}, false
+	}
+	return parseDate(s)
 }
 
 // smartCompare compares two display strings, ordering the NULL sentinel after
