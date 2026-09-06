@@ -9,7 +9,7 @@ func TestWordAtCursor(t *testing.T) {
 		name       string
 		text       string
 		row        int
-		charOffset int
+		runeCol    int
 		wantPrefix string
 		wantStart  int
 	}{
@@ -24,11 +24,16 @@ func TestWordAtCursor(t *testing.T) {
 		{"after dot", "users.", 0, 6, "users.", 0},
 		{"empty text", "", 0, 0, "", 0},
 		{"empty line", "\n", 0, 0, "", 0},
+		// runeCol counts runes, startPos counts bytes: 16 runes / 20 bytes,
+		// the "ci" prefix starts at byte 18.
+		{"wide runes before word", "name='日本' AND ci", 0, 16, "ci", 18},
+		{"cursor right after wide runes", "日本", 0, 2, "", 6},
+		{"runeCol clamped to line length", "日本", 0, 99, "", 6},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			prefix, startPos := wordAtCursor(tt.text, tt.row, tt.charOffset)
+			prefix, startPos := wordAtCursor(tt.text, tt.row, tt.runeCol)
 			if prefix != tt.wantPrefix {
 				t.Errorf("prefix = %q, want %q", prefix, tt.wantPrefix)
 			}
