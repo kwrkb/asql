@@ -1,0 +1,39 @@
+# MySQL / PostgreSQL for the readonly layer-2 integration tests.
+#
+#   docker compose -f testdata/compose.yaml up -d --wait
+#   ASQL_TEST_MYSQL_DSN='mysql://asql:asql@127.0.0.1:13306/asql' \
+#   ASQL_TEST_POSTGRES_DSN='postgres://asql:asql@127.0.0.1:15432/asql?sslmode=disable' \
+#     go test -tags integration ./internal/db/...
+#   docker compose -f testdata/compose.yaml down -v
+#
+# CI uses this same file, so a layer-2 failure can be reproduced locally.
+# Ports are shifted off the defaults so a developer's own server keeps its port.
+services:
+  mysql:
+    image: mysql:8.4
+    ports:
+      - "13306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: asql
+      MYSQL_USER: asql
+      MYSQL_PASSWORD: asql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uasql", "-pasql"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  postgres:
+    image: postgres:17
+    ports:
+      - "15432:5432"
+    environment:
+      POSTGRES_DB: asql
+      POSTGRES_USER: asql
+      POSTGRES_PASSWORD: asql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U asql -d asql"]
+      interval: 3s
+      timeout: 5s
+      retries: 30

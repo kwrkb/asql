@@ -3,10 +3,13 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/kwrkb/asql/internal/db"
@@ -37,6 +40,71 @@ func Open(dsn string) (*Adapter, error) {
 	conn.SetConnMaxLifetime(5 * time.Minute)
 
 	return &Adapter{conn: conn}, nil
+}
+
+// readonlyParam is the runtime parameter that carries readonly's second layer
+// on PostgreSQL. pgx passes an unknown DSN parameter in the startup packet, so
+// the server applies it as every new connection is made and the whole pool is
+// covered — not just whichever connection a one-off SET happened to land on.
+//
+// Measured against PostgreSQL 17 with pgx v5.10.0 (see
+// docs/readonly-design.md): five concurrently held connections each read back
+// default_transaction_read_only=on, and INSERT, CREATE TABLE, CREATE TEMP TABLE
+// and DROP TABLE were all refused with SQLSTATE 25006. The session can lift it,
+// both with SET default_transaction_read_only = off and — without any SET — by
+// opening an explicit BEGIN READ WRITE. That makes this layer weaker than
+// SQLite's mode=ro, which cannot be lifted; refusing those statements is the
+// statement guard's job, and the guard stays the layer asql relies on.
+const readonlyParam = "default_transaction_read_only"
+
+// undefinedObject is the SQLSTATE PostgreSQL answers a startup packet with when
+// it does not recognise a runtime parameter. It separates "this server has no
+// layer 2" from "this DSN is wrong".
+const undefinedObject = "42704"
+
+// OpenReadonly connects with the session's default transaction marked
+// read-only where the server supports it.
+//
+// A server that rejects the parameter refuses the connection outright. Rather
+// than turn a working DSN into a connection error, that case falls back to a
+// plain connection: layer 2 is belt-and-braces, and the statement guard — which
+// the caller wraps around this adapter — is unaffected either way.
+func OpenReadonly(dsn string) (*Adapter, error) {
+	return openReadonly(dsn, readonlyParam)
+}
+
+// openReadonly takes the parameter name so the fallback branch — the one that
+// only fires against a server that does not have it — can be exercised by
+// naming a parameter no server has.
+func openReadonly(dsn, parameter string) (*Adapter, error) {
+	roDSN, err := withParam(dsn, parameter, "on")
+	if err != nil {
+		return nil, err
+	}
+
+	adapter, err := Open(roDSN)
+	if err == nil {
+		return adapter, nil
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != undefinedObject {
+		return nil, err
+	}
+	return Open(dsn)
+}
+
+// withParam adds a runtime parameter to a DSN, leaving the caller's own
+// parameters in place. db.DetectType only routes postgres:// and postgresql://
+// URLs here, so the URL form is the only one to handle.
+func withParam(dsn, name, value string) (string, error) {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return "", fmt.Errorf("parsing PostgreSQL URL: %w", err)
+	}
+	q := u.Query()
+	q.Set(name, value)
+	u.RawQuery = q.Encode()
+	return u.String(), nil
 }
 
 func (a *Adapter) Type() string { return "postgres" }

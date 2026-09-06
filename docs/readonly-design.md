@@ -10,8 +10,11 @@
 
 - スコープは **セッション全体 `--readonly` のみ**。`profiles.yaml` のキーと環境変数 `ASQL_READONLY` は
   用意しなかった。`connManager` のフラグ1つで済み、必要になってから足せる
-- 層2は **SQLite のみ**。MySQL / PostgreSQL は実サーバで検証できないため層1のみで出荷した。
-  この2つでは層1が唯一の防御であり、データ変更CTEと `EXPLAIN ANALYZE` の検査は必須（本文のとおり）
+- 層2は当初 **SQLite のみ**だった。MySQL / PostgreSQL は実サーバで検証できないため層1のみで出荷し、
+  2026-09-06 に Docker 上の実サーバで実測して層2を足した（本文「層2」節の実測結果表）。
+  ただし **3つの層2は同じ強度ではない**: SQLite の `mode=ro` は解除できないが、MySQL / PostgreSQL の
+  セッション変数はセッション自身が解除できる。解除文を止めているのは層1 である。
+  したがって、データ変更CTEと `EXPLAIN ANALYZE` の検査は依然として必須（本文のとおり）
 
 ## 目的と非目的
 
@@ -26,7 +29,7 @@ readonly は二層で構成する。どちらか一方では足りない。
 | 層 | 役割 | 限界 |
 |----|------|------|
 | **SQL guard**（主）| asql が発行する前に文を分類して拒否する | 方言の全構文は網羅できない |
-| **接続レベル**（従）| DBドライバ/サーバ側で書き込みを拒否させる | DBによって強度が違う。SQLite以外は未検証 |
+| **接続レベル**（従）| DBドライバ/サーバ側で書き込みを拒否させる | DBによって強度が違う。MySQL / PostgreSQL はセッション自身が解除できる |
 
 ### 層1: SQL guard（主）
 
@@ -122,7 +125,7 @@ MySQL と SQLite はデータ変更 CTE を持たないが、方言で分岐さ�
 
 #### EXPLAIN: 説明対象の文を再帰的に検査する
 
-PostgreSQL の `EXPLAIN ANALYZE` は**対象の文を実際に実行する**。`EXPLAIN ANALYZE DELETE FROM t` は先頭キーワードが `explain` なので、素朴な許可リストでは通ってしまう（実測: `LeadingKeyword="explain"`）。層2は PostgreSQL では未検証のまま出荷しうる（後述）ため、ここを層1で止められないと防御がゼロになる。
+PostgreSQL の `EXPLAIN ANALYZE` は**対象の文を実際に実行する**。`EXPLAIN ANALYZE DELETE FROM t` は先頭キーワードが `explain` なので、素朴な許可リストでは通ってしまう（実測: `LeadingKeyword="explain"`）。PostgreSQL の層2 はセッション自身が解除できる（後述）ため、ここを層1で止められないと防御が薄くなる。
 
 **したがって `explain` は、説明対象の文自体が許可される場合にのみ許可する。** 手順:
 
@@ -183,13 +186,43 @@ file::memory:?_pragma=query_only(1) で接続
 
 `mode=ro` は `file:` URI 形式を要求するため、現在の `sqlite.Open(path)` が受ける素のパスを URI へ変換する必要がある。パスに `?` や `#` を含むケースのエスケープに注意（`file:` + `url.PathEscape` 相当）。
 
-**MySQL**: go-sql-driver/mysql v1.10.0 は DSN の未知パラメータを system variable として解釈し、**新規コネクションごとに `SET` を発行する**（README "System Variables"）。したがって `?transaction_read_only=1` はプール内の全コネクションに効く。アドバイザが懸念した「一度きりの `SET SESSION` はプールの1本にしか効かない」問題は、DSNパラメータ経由なら回避できる。**ただし実サーバでの動作は未検証**（この環境にMySQLがない）。
+#### MySQL / PostgreSQL の実測（2026-09-06）
 
-**PostgreSQL**: pgx は未知の接続パラメータをサーバの runtime parameter として渡すので `?default_transaction_read_only=on` が効くはず。こちらも**未検証**。
+当初は「効くはず」としか書けなかった（この環境に実サーバがなかった）。Docker で
+`mysql:8.4` と `postgres:17` を立てて実測した。**計測は層1 より下で行っている** — `readonly.Wrap`
+越しでは `INSERT` も `CREATE TABLE` も `SET` も先に層1 が拒否するので、全部緑になって層1 を
+二度測るだけになる。書き込みは明示的な `BEGIN` を張らない autocommit で、asql が実際に使う経路。
 
-結論: 層2は SQLite でのみ検証済み。MySQL/PostgreSQL は実装時にライブサーバで確認し、確認が取れない場合は層1のみで出荷してよい（層2はあくまで belt-and-braces）。**「readonly接続だから安全」とREADMEに書かないこと。**
+| 測定項目 | MySQL 8.4 (`transaction_read_only=1`) | PostgreSQL 17 (`default_transaction_read_only=on`) |
+|---|---|---|
+| プール全体に効くか | **効く**。同時保持した5本すべてで `@@session.transaction_read_only=1` を読み戻し、5本すべてで `INSERT` が `Error 1792 (25006)` | **効く**。5本すべてで `SHOW default_transaction_read_only=on`、`INSERT` は `SQLSTATE 25006` |
+| DDL も止まるか | **止まる**。`CREATE TABLE` / `CREATE TEMPORARY TABLE` / `DROP TABLE` すべて 1792 | **止まる**。`CREATE TABLE` / `CREATE TEMP TABLE` / `DROP TABLE` すべて 25006 |
+| 解除できるか | **できてしまう**。`SET SESSION transaction_read_only=0` が通り、その後 `INSERT` が成功 | **できてしまう**。`SET default_transaction_read_only = off` で解除可。加えて `BEGIN READ WRITE` は `SET` なしで書ける |
+| 接続が弾かれないか | **弾かれない**。`charset` / `parseTime` / `sql_mode` を持つ DSN でも全部保持される | **弾かれない**。`application_name` は保持される |
 
-ただしこれは、**PostgreSQL では層1が唯一の防御になりうる**ということでもある。データ変更 CTE と `EXPLAIN ANALYZE` はどちらも PostgreSQL 固有の実行経路なので、上記2つの検査は「あれば良い」ではなく必須。
+ドライバがプール全体に効かせる仕組み: go-sql-driver は DSN の未知パラメータを system variable として
+解釈し**新規コネクションごとに `SET` を発行する**（README "System Variables"）。pgx は未知の接続
+パラメータを startup packet の runtime parameter として渡す。どちらも「一度きりの `SET SESSION` は
+プールの1本にしか効かない」問題を回避する。
+
+**したがって層2 の強度は3つで揃っていない。** SQLite の `mode=ro` は `PRAGMA query_only(0)` を
+実行しても解除できないが、MySQL / PostgreSQL のセッション変数はセッション自身が外せる。
+外す文（`SET` / `BEGIN`）を拒否しているのは**層1 であって層2 ではない**。
+
+**「readonly接続だから安全」とREADMEに書かないこと。** これは実測後も変わらない。
+データ変更 CTE と `EXPLAIN ANALYZE` はどちらも PostgreSQL 固有の実行経路であり、上記2つの検査は
+「あれば良い」ではなく必須のまま。
+
+#### 変数を知らないサーバへのフォールバック
+
+未知のパラメータは**接続そのものを失敗させる**（実測: MySQL は `*mysql.MySQLError` Number=1193
+`Unknown system variable`、PostgreSQL は `*pgconn.PgError` Code=42704 `unrecognized configuration
+parameter`、Severity=FATAL）。`transaction_read_only` を持たない古い MySQL では、層2 を足したことが
+「今まで繋がっていた DSN が繋がらなくなる」退行になる。
+
+**このエラーコードに限って、パラメータなしで再接続し層1 のみで続行する。** 層2 は belt-and-braces
+であって、そのために接続を失わせるのは割に合わない。総当たりの再試行はしない（不正な DSN で
+接続タイムアウトが倍になるため）。
 
 ## 配線が必要な箇所（実装コストの実体）
 
@@ -232,6 +265,11 @@ guard 本体は小さい。コストはこちらにある。
   - `ATTACH DATABASE ...` → 拒否
 - ラッパが `Tables`/`Columns`/`Schema` を素通しすることの確認
 - SQLite の `mode=ro` 実接続で `INSERT` が層2でも落ちることの確認
+- MySQL / PostgreSQL の層2 は `//go:build integration` の統合テストで実サーバに当てる
+  （`testdata/compose.yaml` + `ASQL_TEST_MYSQL_DSN` / `ASQL_TEST_POSTGRES_DSN`）。
+  上の実測結果表の4項目をそのままアサーションにしてある。**「解除できる」もテストにしてある** —
+  将来サーバ側が変わったらテストが落ち、この文書の記述を強い方へ書き直す合図になる。
+  これらは `readonly.Wrap` を通さない（通すと層1 を二度測ることになる）
 
 ## 見積り
 

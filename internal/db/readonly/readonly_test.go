@@ -227,3 +227,22 @@ func TestIsRefusedUnwraps(t *testing.T) {
 		t.Fatal("IsRefused claimed a plain database error")
 	}
 }
+
+// The connection-level layer on MySQL and PostgreSQL is liftable — measured, see
+// docs/readonly-design.md — so what keeps a session from turning it off is this
+// guard. README says so; these are the statements that claim rests on. SQLite is
+// the only one whose layer 2 holds without them.
+func TestRefusesStatementsThatLiftLayerTwo(t *testing.T) {
+	for _, query := range []string{
+		"SET SESSION transaction_read_only=0",
+		"SET default_transaction_read_only = off",
+		"SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE",
+		"BEGIN READ WRITE",
+		"START TRANSACTION READ WRITE",
+		"BEGIN READ WRITE; INSERT INTO t VALUES (1); COMMIT",
+	} {
+		if err := Check(query); err == nil {
+			t.Errorf("Check(%q) = nil; the session could lift the connection-level layer", query)
+		}
+	}
+}

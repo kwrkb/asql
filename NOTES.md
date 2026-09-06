@@ -25,7 +25,7 @@
 | `open.go` | DSN のユーティリティ（`MaskDSN` / `DetectType` / `DisplayName` / `Placeholder` / `InitialQuery`） |
 | `opener/` | DSN から各アダプタを生成する接着剤 |
 | `dbutil/` | 全アダプタ共通。値の文字列化と kind 判定（`classifyValue` / `StringifyValueKind`）、行スキャン（`ScanRowsOpts`、10,000 行上限）、SQL スキャナ（`LeadingKeyword` / `CteBodyKeyword` / `ContainsReturning`）。`sqlscan.go` は**移植可能な部分集合**だけを読む文形状スキャナ（`UnlexableReason` / `HasMultipleStatements` / `CteTermKeywords` / `StripExplain` / `PragmaName` / `ContainsKeyword`）で、方言を取らない |
-| `sqlite/`, `mysql/`, `postgres/` | 各 DB のアダプタ実装 |
+| `sqlite/`, `mysql/`, `postgres/` | 各 DB のアダプタ実装。3 つとも `OpenReadonly` を持つ（readonly の層2）。SQLite は `mode=ro`、MySQL は `transaction_read_only=1`、PostgreSQL は `default_transaction_read_only=on`。後ろ 2 つは DSN パラメータなのでプール全体に効くが、セッション自身が `SET` で外せる。変数を知らないサーバではパラメータなしで再接続する |
 | `bring/` | 持ち寄り先のローカル SQLite。`Open` / `Materialize`（affinity 決定 + 型付き bind）/ `recordProvenance`（`_asql_bring`） |
 | `readonly/` | `--readonly` の文ガード（`Check`）と `DBAdapter` ラッパ（`Wrap`）。許可リストは policy、文の形の判定は `dbutil/sqlscan.go`。接続先の DB 種別は見ない |
 
@@ -74,7 +74,8 @@ v2 移行は bubbletea/lipgloss v2 を巻き込むため見合わない。詳細
 
 | 文書 | 内容 |
 |---|---|
-| `docs/readonly-design.md` | readonly mode の設計（実装済み）。二層構成、SQL guard の分類ルール、実測結果 |
+| `docs/readonly-design.md` | readonly mode の設計（実装済み）。二層構成、SQL guard の分類ルール、3 DB の層2 実測結果 |
+| `testdata/compose.yaml` | 統合テスト用の MySQL 8.4 / PostgreSQL 17。`docker compose -f testdata/compose.yaml up -d --wait` の後、`ASQL_TEST_MYSQL_DSN` / `ASQL_TEST_POSTGRES_DSN` を渡して `go test -tags integration ./internal/db/...`。環境変数がなければ skip するので `go test ./...` には影響しない。CI の `integration` ジョブも同じファイルを使う |
 | `docs/*.tape`, `docs/setup-demo-db.py` | README 用の VHS デモ録画 |
 | `e2e/` | VHS による E2E テスト（`run.sh` / `*.tape` / `setup-profiles.py`）。**実行前に `e2e/README.md` を必ず読む**。`vhs` / `ttyd` / `ffmpeg` が要る |
 | `status/` | 品質監査スキルの出力先（`review.md` 等） |

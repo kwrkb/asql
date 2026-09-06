@@ -22,6 +22,28 @@ jobs:
 
       - run: go vet ./...
 
+  # Layer 2 of readonly is a claim about a real server's behaviour, so it is
+  # measured against real servers. The same compose file works locally, which
+  # is the point: a failure here can be reproduced on a laptop.
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - run: docker compose -f testdata/compose.yaml up -d --wait
+
+      - env:
+          ASQL_TEST_MYSQL_DSN: mysql://asql:asql@127.0.0.1:13306/asql
+          ASQL_TEST_POSTGRES_DSN: postgres://asql:asql@127.0.0.1:15432/asql?sslmode=disable
+        run: go test -tags integration ./internal/db/...
+
+      - if: always()
+        run: docker compose -f testdata/compose.yaml down -v
+
   govulncheck:
     runs-on: ubuntu-latest
     steps:
