@@ -52,6 +52,12 @@ func TestMaskDSN(t *testing.T) {
 		{"both userinfo and query param", "mysql://user:pass@host/db?password=secret", "mysql://user:%2A%2A%2A@host/db?password=%2A%2A%2A"},
 		{"no password unchanged", "postgres://user@host/db", "postgres://user@host/db"},
 		{"malformed URL best-effort", "postgres://user:secret@host:5432/db%zz", "postgres://user:***@host:5432/db%zz"},
+		// net/url reads userinfo up to the *last* '@', so the password here is
+		// "sec@ret". Masking only to the first '@' would print "ret@host" back.
+		{"malformed URL with '@' in the password", "mysql://user:sec@ret@host:bad/db", "mysql://user:***@host:bad/db"},
+		// The bound at '/' keeps the match inside the authority: an '@' in the
+		// path must not extend the masked span.
+		{"malformed URL with '@' in the path", "mysql://user:secret@host:bad/db@x", "mysql://user:***@host:bad/db@x"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

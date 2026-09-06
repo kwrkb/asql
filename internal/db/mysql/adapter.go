@@ -274,6 +274,26 @@ func returnsRows(query string) bool {
 // "first" with password "last:secret" — a silent swap to different, sometimes
 // valid, credentials. Everything else still goes through the driver's own
 // parser, so parameter handling (parseTime, loc, tls, ...) stays its business.
+// parseCause names the kind of url.Parse failure without quoting any of the
+// DSN back. The causes that embed input do so unpredictably — url.Parse reads
+// userinfo greedily, so which bytes land in an escape or port error is not
+// something the DSN's shape predicts — which is why this describes the known
+// kinds and says nothing more for the rest, rather than allow-listing causes
+// believed to be safe to print verbatim.
+func parseCause(err error) string {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		err = ue.Err
+	}
+	switch err.(type) {
+	case url.EscapeError:
+		return "invalid percent-escape"
+	case url.InvalidHostError:
+		return "invalid character in host"
+	}
+	return "invalid URL"
+}
+
 func buildConfig(dsn string) (*gomysql.Config, error) {
 	if !strings.HasPrefix(dsn, "mysql://") {
 		return gomysql.ParseDSN(dsn)
@@ -281,7 +301,14 @@ func buildConfig(dsn string) (*gomysql.Config, error) {
 
 	u, err := url.Parse(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("parsing MySQL URL: %w", err)
+		// Neither half of a url.Parse failure is safe to print here, and this
+		// error reaches both stderr and the TUI. url.Error carries the raw DSN,
+		// and its cause carries a fragment of it: url.EscapeError holds the
+		// offending "%xx" sequence, which is the whole password in a DSN like
+		// mysql://alice:%ss@host/db. So the DSN is reported masked, the cause
+		// is reduced to the kind of failure, and the original error is dropped
+		// rather than wrapped so it cannot travel to a caller that prints it.
+		return nil, fmt.Errorf("parsing MySQL URL %s: %s", db.MaskDSN(dsn), parseCause(err))
 	}
 
 	host := u.Host

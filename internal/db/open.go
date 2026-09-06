@@ -6,7 +6,13 @@ import (
 	"strings"
 )
 
-var rePasswordInDSN = regexp.MustCompile(`(://[^:]*:)([^@]*)(@)`)
+// rePasswordInDSN masks the password in a DSN url.Parse could not read. The
+// password group stops at '/' rather than at '@' so it can backtrack to the
+// *last* '@' before the path — net/url reads userinfo greedily, so in
+// "mysql://user:sec@ret@host/db" the password is "sec@ret", and stopping at
+// the first '@' would print "ret@host" back. Bounding it at '/' keeps the
+// match from running past the authority into an '@' in the path.
+var rePasswordInDSN = regexp.MustCompile(`(://[^:]*:)([^/]*)(@)`)
 
 // MaskDSN returns a display-safe version of the DSN with passwords masked.
 func MaskDSN(dsn string) string {
