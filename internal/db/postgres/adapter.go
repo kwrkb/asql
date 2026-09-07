@@ -109,7 +109,9 @@ func openReadonly(dsn, parameter string) (*Adapter, error) {
 func withParam(dsn, name, value string) (string, error) {
 	u, err := url.Parse(dsn)
 	if err != nil {
-		return "", fmt.Errorf("parsing PostgreSQL URL: %w", err)
+		// Not wrapped: url.Parse's error embeds the raw DSN and this reaches
+		// both stderr and the TUI connection-switch display. See db.URLParseError.
+		return "", db.URLParseError("PostgreSQL", dsn, err)
 	}
 	q := u.Query()
 	q.Set(name, value)
