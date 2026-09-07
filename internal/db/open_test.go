@@ -62,6 +62,18 @@ func TestMaskDSN(t *testing.T) {
 		// The bound at '/' keeps the match inside the authority: an '@' in the
 		// path must not extend the masked span.
 		{"malformed URL with '@' in the path", "mysql://user:secret@host:bad/db@x", "mysql://user:***@host:bad/db@x"},
+		// A literal '/' in the password puts it out of reach of the bound at
+		// '/', and the whole pattern then fails to match. Before the fallback
+		// to the last '@' this returned the DSN with the password intact.
+		{"malformed URL with '/' in the password", "postgres://alice:se/cret@localhost:bad/db", "postgres://alice:***@localhost:bad/db"},
+		{"malformed URL with '/' and '@' in the password", "postgres://alice:se/cr@et@localhost:bad/db", "postgres://alice:***@localhost:bad/db"},
+		// The parsed path masks a password= parameter; the malformed path has
+		// no RawQuery to read, so it has to do the same textually.
+		{"malformed URL with a password parameter", "postgres://alice@localhost:bad/db?password=secret", "postgres://alice@localhost:bad/db?password=***"},
+		{"malformed URL with an upper-case password parameter", "postgres://alice@localhost:bad/db?PASSWORD=secret&x=1", "postgres://alice@localhost:bad/db?PASSWORD=***&x=1"},
+		// Nothing that looks like a credential: the DSN must survive readable,
+		// or a bad-host error stops naming the host.
+		{"malformed URL with no password", "postgres://alice@ho|st/db", "postgres://alice@ho|st/db"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

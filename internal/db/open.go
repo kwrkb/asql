@@ -15,6 +15,33 @@ import (
 // match from running past the authority into an '@' in the path.
 var rePasswordInDSN = regexp.MustCompile(`(://[^:]*:)([^/]*)(@)`)
 
+// rePasswordToLastAt is the fallback for a password rePasswordInDSN cannot
+// reach. Its bound at '/' is what stops an '@' in the *path* from extending the
+// masked span, but that same bound means a password containing a literal '/' —
+// which url.Parse rejects, so it only ever shows up here — leaves the pattern
+// unmatched and the DSN printed raw. This one runs to the *last* '@' in the
+// string instead. It can over-mask (an '@' in the path swallows the host), and
+// that is the direction to fail in: a hidden host is a worse error message, a
+// printed password is a leaked credential.
+var rePasswordToLastAt = regexp.MustCompile(`(://[^:]*:)(.*)(@)`)
+
+// rePasswordParam masks a password passed as a query parameter. The parsed path
+// below does this through url.Values; on a DSN url.Parse rejected there is no
+// RawQuery to read, so it is done textually.
+var rePasswordParam = regexp.MustCompile(`([?&](?i:password)=)([^&]*)`)
+
+// maskMalformedDSN is the best effort for a DSN url.Parse could not read. It is
+// not a fallback for display alone: every DSN reported in a url.Parse *error*
+// arrives here by construction, so an unmatched pattern here means the raw
+// credential reaches stderr and the TUI.
+func maskMalformedDSN(dsn string) string {
+	masked := rePasswordInDSN.ReplaceAllString(dsn, "${1}***${3}")
+	if masked == dsn {
+		masked = rePasswordToLastAt.ReplaceAllString(dsn, "${1}***${3}")
+	}
+	return rePasswordParam.ReplaceAllString(masked, "${1}***")
+}
+
 // MaskDSN returns a display-safe version of the DSN with passwords masked.
 func MaskDSN(dsn string) string {
 	if !strings.Contains(dsn, "://") {
@@ -22,8 +49,7 @@ func MaskDSN(dsn string) string {
 	}
 	u, err := url.Parse(dsn)
 	if err != nil {
-		// Best-effort: mask password in malformed URLs
-		return rePasswordInDSN.ReplaceAllString(dsn, "${1}***${3}")
+		return maskMalformedDSN(dsn)
 	}
 	masked := false
 	if u.User != nil {

@@ -141,6 +141,11 @@ func TestWithParam_ParseErrorRedactsPassword(t *testing.T) {
 		// "sec@ret" and the failure is the port. The masked DSN must not carry
 		// the tail of the password either.
 		{"at-sign in the password", "postgres://alice:sec@ret@127.0.0.1:bad/prod", []string{"sec@ret", "ret@"}},
+		// A literal '/' in the password is only reachable here — url.Parse
+		// rejects it — and it is what MaskDSN's primary pattern cannot match.
+		{"slash in the password", "postgres://alice:se/cret@127.0.0.1:bad/prod", []string{"se/cret", "cret"}},
+		// The password is a query parameter rather than userinfo.
+		{"password as a query parameter", "postgres://alice@127.0.0.1:bad/prod?password=review-secret", []string{"review-secret"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, call := range []struct {
