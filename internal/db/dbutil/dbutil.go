@@ -341,6 +341,12 @@ func ScanRowsOpts(rows *sql.Rows, opts ScanOptions) (db.QueryResult, error) {
 
 // LeadingKeyword returns the first SQL keyword from query, skipping comments
 // and leading semicolons. The result is always lowercase.
+//
+// The keyword ends where the identifier characters end, not at the next
+// whitespace: SELECT(1), SELECT/* c */1 and VALUES(1) are valid SQL whose
+// first whitespace-delimited field is not a keyword. Read as fields, the
+// adapters sent them down the Exec path and discarded the result set, and
+// the readonly guard refused them as unknown statements.
 func LeadingKeyword(query string) string {
 	trimmed := strings.TrimSpace(query)
 
@@ -365,11 +371,11 @@ func LeadingKeyword(query string) string {
 		break
 	}
 
-	fields := strings.Fields(strings.ToLower(trimmed))
-	if len(fields) == 0 {
-		return ""
+	end := 0
+	for end < len(trimmed) && isIdentCharByte(trimmed[end]) {
+		end++
 	}
-	return fields[0]
+	return strings.ToLower(trimmed[:end])
 }
 
 // CteBodyKeyword extracts the leading keyword of the body statement in a

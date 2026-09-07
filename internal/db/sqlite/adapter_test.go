@@ -358,6 +358,22 @@ func TestQuery(t *testing.T) {
 		}
 	})
 
+	// Valid SQL with no whitespace after the leading keyword used to be
+	// classified by its first whitespace-delimited field ("select(1)"), sent
+	// down the Exec path, and reported as "0 row(s) affected" with no rows.
+	t.Run("no whitespace after the leading keyword still returns rows", func(t *testing.T) {
+		a := setup(t)
+		for _, q := range []string{"SELECT(1)", "SELECT/* comment */ 1", "VALUES(1)"} {
+			result, err := a.Query(ctx, q)
+			if err != nil {
+				t.Fatalf("%s: %v", q, err)
+			}
+			if len(result.Rows) != 1 || len(result.Rows[0]) != 1 || result.Rows[0][0] != "1" {
+				t.Errorf("%s: rows = %v, want [[1]] (message %q)", q, result.Rows, result.Message)
+			}
+		}
+	})
+
 	t.Run("INSERT returns rows affected message", func(t *testing.T) {
 		a := setup(t)
 		_, err := a.Query(ctx, "CREATE TABLE t (v INTEGER)")
