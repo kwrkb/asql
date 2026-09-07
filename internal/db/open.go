@@ -24,7 +24,13 @@ import (
 // "mysql://user:secret@host:bad/db@x" masks down to "mysql://user:***@x". That
 // is the direction to fail in — a hidden host is a worse error message, a
 // printed password is a leaked credential.
-var rePasswordInDSN = regexp.MustCompile(`(://[^:]*:)(.*)(@)`)
+//
+// The (?s) flag is load-bearing: url.Parse rejects a DSN whose password holds a
+// newline, so such a DSN reaches here by construction, and without dot-all the
+// span between ':' and '@' would not match at all — MaskDSN would then hand the
+// whole credential back unmasked. Only '\n' needs the flag; '.' already covers
+// every other control byte.
+var rePasswordInDSN = regexp.MustCompile(`(?s)(://[^:]*:)(.*)(@)`)
 
 // isPasswordParam reports whether a query-parameter key names a password. Both
 // halves of MaskDSN consult it, so a key one half masks cannot be a key the

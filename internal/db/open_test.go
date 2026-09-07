@@ -84,6 +84,12 @@ func TestMaskDSN(t *testing.T) {
 		// at all — the DSN came back with the password intact.
 		{"malformed URL with '/' in the password", "postgres://alice:se/cret@localhost:bad/db", "postgres://alice:***@localhost:bad/db"},
 		{"malformed URL with '/' and '@' in the password", "postgres://alice:se/cr@et@localhost:bad/db", "postgres://alice:***@localhost:bad/db"},
+		// url.Parse rejects a control character anywhere in the URL, so a
+		// password holding a newline always lands on the malformed path. The
+		// pattern is dot-all so the span still matches; without that it matched
+		// nothing and the credential came back whole.
+		{"malformed URL with a newline in the password", "postgres://alice:se\ncret@localhost/db", "postgres://alice:***@localhost/db"},
+		{"malformed URL with a newline in the user", "postgres://al\nice:secret@localhost/db", "postgres://al\nice:***@localhost/db"},
 		// The parsed path masks a password= parameter; the malformed path has
 		// no RawQuery to read, so it has to do the same textually.
 		{"malformed URL with a password parameter", "postgres://alice@localhost:bad/db?password=secret", "postgres://alice@localhost:bad/db?password=***"},
@@ -132,6 +138,15 @@ func TestURLParseError(t *testing.T) {
 			"postgres://alice:secret@ho|st/db",
 			"parsing PostgreSQL URL postgres://alice:***@ho|st/db: invalid character in host",
 			[]string{"secret"},
+		},
+		{
+			// The leak this guards is the whole reason the mask pattern is
+			// dot-all: url.Parse refuses the DSN, so the raw password would
+			// otherwise travel to stderr and the TUI inside this message.
+			"newline in the password",
+			"postgres://alice:se\ncret@localhost/db",
+			"parsing PostgreSQL URL postgres://alice:***@localhost/db: invalid URL",
+			[]string{"se\ncret", "cret"},
 		},
 	}
 	for _, tt := range tests {
