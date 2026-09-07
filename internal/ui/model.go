@@ -727,10 +727,7 @@ func (m *model) resize() {
 
 	// Auto-close compare if terminal too narrow
 	if m.pinned != nil && m.fullContentWidth() < minWidthForCompare {
-		m.pinned = nil
-		m.comparePane = 0
-		m.table.SetStyles(focusedTableStyles())
-		m.setStatus("Compare closed (terminal too narrow)", false)
+		m.closeCompare("Compare closed (terminal too narrow)")
 	}
 
 	fullWidth := m.fullContentWidth()
