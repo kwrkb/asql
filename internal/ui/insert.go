@@ -9,6 +9,15 @@ import (
 const maxHistory = 100
 
 func (m model) updateInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Any key but Tab moves the completion's context on — it edits the text,
+	// moves the cursor, or leaves INSERT mode — so an outstanding batch column
+	// fetch is asking for a prefix that no longer exists. Tab is the exception
+	// because it is the key that asks for the completion; it starts its own
+	// batch, which supersedes the previous one in fetchAllColumnsCmd.
+	if msg.Type != tea.KeyTab {
+		m.cancelColumnsFetch()
+	}
+
 	// Handle completion-active keys first
 	if m.completion.active {
 		switch msg.Type {
