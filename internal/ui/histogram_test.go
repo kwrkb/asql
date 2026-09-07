@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"math"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -323,6 +325,93 @@ func TestFormatHistogramLabel(t *testing.T) {
 			got := formatHistogramLabel(tt.min, tt.max)
 			if got != tt.want {
 				t.Errorf("formatHistogramLabel(%v, %v) = %q, want %q", tt.min, tt.max, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestBucketCounts asserts the bin each value lands in, not merely that the
+// call returns. The failure this pins is architecture-dependent: on amd64 a NaN
+// or Inf bin index converts to math.MinInt64 and panics, on arm64 it converts
+// to 0 and the values pile into the first bin — so a test that only checks for
+// a panic passes on an arm64 laptop and fails in CI.
+func TestBucketCounts(t *testing.T) {
+	tests := []struct {
+		name       string
+		values     []float64
+		numBuckets int
+		want       []int
+	}{
+		{
+			name:       "ordinary range",
+			values:     []float64{0, 10, 20, 30, 40, 50, 60, 70, 80, 90},
+			numBuckets: 10,
+			want:       []int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+		},
+		{
+			name:       "span overflows float64",
+			values:     []float64{-1e308, 1e308},
+			numBuckets: 2,
+			want:       []int{1, 1},
+		},
+		{
+			name:       "span overflows, midpoint stays in the middle",
+			values:     []float64{-1e308, 1e308, 0},
+			numBuckets: 4,
+			want:       []int{1, 0, 1, 1},
+		},
+		{
+			name:       "full float64 range",
+			values:     []float64{-math.MaxFloat64, math.MaxFloat64, 0},
+			numBuckets: 3,
+			want:       []int{1, 1, 1},
+		},
+		{
+			name:       "bin width underflows to zero",
+			values:     []float64{0, 5e-324},
+			numBuckets: 2,
+			want:       []int{1, 1},
+		},
+		{
+			name:       "subnormal span with a value in between",
+			values:     []float64{0, 5e-324, 1e-323},
+			numBuckets: 2,
+			want:       []int{1, 2},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			minVal, maxVal := tt.values[0], tt.values[0]
+			for _, v := range tt.values {
+				minVal = math.Min(minVal, v)
+				maxVal = math.Max(maxVal, v)
+			}
+			got := bucketCounts(tt.values, minVal, maxVal, tt.numBuckets)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("bucketCounts(%v) = %v, want %v", tt.values, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestComputeHistogram_ExtremeFinite(t *testing.T) {
+	// Finite inputs whose span or bin width leaves float64. Each must render
+	// one bar per value rather than panic (amd64) or collapse into one bin (arm64).
+	tests := []struct {
+		name     string
+		rows     [][]string
+		wantBars string
+	}{
+		{"opposite extremes", [][]string{{"-1e308"}, {"1e308"}}, "██"},
+		{"zero and smallest subnormal", [][]string{{"0"}, {"5e-324"}}, "██"},
+		{"max float64 with midpoint", [][]string{{"-1.7976931348623157e308"}, {"1.7976931348623157e308"}, {"0"}}, "███"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := computeHistogram(tt.rows, 0)
+			if got.Bars != tt.wantBars {
+				t.Errorf("Bars = %q, want %q", got.Bars, tt.wantBars)
 			}
 		})
 	}
