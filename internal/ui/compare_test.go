@@ -2,8 +2,11 @@ package ui
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/kwrkb/asql/internal/db"
 	"github.com/kwrkb/asql/internal/db/sqlite"
@@ -249,5 +252,105 @@ func TestCompareLabels_NameTheResultOrigin(t *testing.T) {
 	rm = switchTo(rm, "prod")
 	if l, r := compareLabels(t, rm); l != "[test" || r != "[staging" {
 		t.Fatalf("labels after switching under an open compare = %s / %s, want [test / [staging", l, r)
+	}
+}
+
+// PgUp/PgDn go through table.Update, which drops every key while the table is
+// unfocused. Tab used to switch styles only, so the left pane was reachable
+// with j/k (direct MoveDown/MoveUp) but never with the page keys.
+func TestComparePane_PageKeysFollowTheFocusedPane(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 120, 40
+	m.mode = normalMode
+	m.table.Focus() // as model.New does
+	rows := make([][]string, 100)
+	for i := range rows {
+		rows[i] = []string{strconv.Itoa(i)}
+	}
+	m.applyResult(db.QueryResult{Columns: []string{"id"}, Rows: rows, Message: "100 row(s) returned"})
+
+	press := func(m model, msg tea.KeyMsg) model {
+		next, _ := m.Update(msg)
+		return next.(model)
+	}
+	pgDn := tea.KeyMsg{Type: tea.KeyPgDown}
+	pgUp := tea.KeyMsg{Type: tea.KeyPgUp}
+
+	rm := press(*m, runeMsg("c"))
+	if rm.pinned == nil || rm.comparePane != 1 {
+		t.Fatalf("test premise broken: pinned=%v pane=%d", rm.pinned != nil, rm.comparePane)
+	}
+
+	// Left pane: page keys move the pinned cursor and leave the active one alone.
+	rm = press(rm, tea.KeyMsg{Type: tea.KeyTab})
+	if !rm.pinned.table.Focused() || rm.table.Focused() {
+		t.Fatalf("after Tab to the left pane: pinned focused=%v, active focused=%v", rm.pinned.table.Focused(), rm.table.Focused())
+	}
+	rm = press(rm, pgDn)
+	if rm.pinned.table.Cursor() == 0 {
+		t.Fatal("PgDn on the left pane did not move the pinned cursor")
+	}
+	if rm.table.Cursor() != 0 {
+		t.Fatalf("PgDn on the left pane moved the active cursor to %d", rm.table.Cursor())
+	}
+	rm = press(rm, pgUp)
+	if rm.pinned.table.Cursor() != 0 {
+		t.Fatalf("PgUp on the left pane left the pinned cursor at %d", rm.pinned.table.Cursor())
+	}
+	rm = press(rm, runeMsg("j"))
+	if rm.pinned.table.Cursor() != 1 {
+		t.Fatalf("j on the left pane: pinned cursor = %d, want 1", rm.pinned.table.Cursor())
+	}
+
+	// Right pane: the same keys move the active cursor only.
+	rm = press(rm, tea.KeyMsg{Type: tea.KeyTab})
+	if rm.pinned.table.Focused() || !rm.table.Focused() {
+		t.Fatalf("after Tab back to the right pane: pinned focused=%v, active focused=%v", rm.pinned.table.Focused(), rm.table.Focused())
+	}
+	rm = press(rm, pgDn)
+	if rm.table.Cursor() == 0 {
+		t.Fatal("PgDn on the right pane did not move the active cursor")
+	}
+	if rm.pinned.table.Cursor() != 1 {
+		t.Fatalf("PgDn on the right pane moved the pinned cursor to %d", rm.pinned.table.Cursor())
+	}
+
+	// Closing compare from the left pane must hand focus back to the active table.
+	rm = press(rm, tea.KeyMsg{Type: tea.KeyTab})
+	rm = press(rm, runeMsg("c"))
+	if rm.pinned != nil || !rm.table.Focused() {
+		t.Fatalf("after closing compare: pinned=%v, active focused=%v", rm.pinned != nil, rm.table.Focused())
+	}
+	before := rm.table.Cursor()
+	rm = press(rm, pgDn)
+	if rm.table.Cursor() <= before {
+		t.Fatalf("PgDn after closing compare: cursor %d -> %d", before, rm.table.Cursor())
+	}
+}
+
+// resize closes compare on its own when the terminal gets too narrow; it must
+// restore focus the same way the c key does.
+func TestComparePane_NarrowResizeRestoresFocus(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 120, 40
+	m.mode = normalMode
+	m.table.Focus()
+	m.applyResult(db.QueryResult{Columns: []string{"id"}, Rows: [][]string{{"1"}, {"2"}}, Message: "2 row(s) returned"})
+
+	next, _ := m.Update(runeMsg("c"))
+	rm := next.(model)
+	next, _ = rm.Update(tea.KeyMsg{Type: tea.KeyTab})
+	rm = next.(model)
+	if rm.table.Focused() {
+		t.Fatal("test premise broken: active table still focused on the left pane")
+	}
+
+	next, _ = rm.Update(tea.WindowSizeMsg{Width: minWidthForCompare - 1, Height: 40})
+	rm = next.(model)
+	if rm.pinned != nil {
+		t.Fatal("test premise broken: compare stayed open below minWidthForCompare")
+	}
+	if !rm.table.Focused() {
+		t.Fatal("active table left unfocused after resize closed compare")
 	}
 }

@@ -104,6 +104,39 @@ func (m *model) pinCurrentResult() *pinnedPane {
 	}
 }
 
+// focusComparePane routes key input to pane (0 = pinned, 1 = active). The
+// table's focus flag moves with the styles: j/k call MoveDown/MoveUp on the
+// pinned table directly, but PgUp/PgDn go through table.Update, which drops
+// every key while the table is unfocused. A switch that only restyled the
+// panes left the page keys dead on the left side.
+func (m *model) focusComparePane(pane int) {
+	m.comparePane = pane
+	if pane == 0 {
+		m.pinned.table.Focus()
+		m.pinned.table.SetStyles(focusedTableStyles())
+		m.table.Blur()
+		m.table.SetStyles(unfocusedTableStyles())
+	} else {
+		m.pinned.table.Blur()
+		m.pinned.table.SetStyles(unfocusedTableStyles())
+		m.table.Focus()
+		m.table.SetStyles(focusedTableStyles())
+	}
+	m.pinned.viewportDirty = true
+	m.viewportDirty = true
+}
+
+// closeCompare drops the pinned pane and hands key input back to the active
+// table, which focusComparePane may have blurred.
+func (m *model) closeCompare(status string) {
+	m.pinned = nil
+	m.comparePane = 0
+	m.table.Focus()
+	m.table.SetStyles(focusedTableStyles())
+	m.setStatus(status, false)
+	m.viewportDirty = true
+}
+
 // comparePaneWidth returns the width for each pane in side-by-side mode.
 func (m *model) comparePaneWidth() int {
 	return m.fullContentWidth() / 2
