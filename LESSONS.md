@@ -1450,3 +1450,33 @@ SQLite の int64 も表示文字列も差を保っており、比較の段階だ
 
 **覆す条件**: 同点が多い列（同じ値の連続）で `big.Rat` の割り当てが体感できるようになったとき。
 そのときは「文字列が同一なら 0」の早期 return を同点判定の前に置く。
+
+---
+
+## 2026-09-07: `LeadingKeyword` の境界は空白ではなく識別子文字の終わり
+
+`SELECT(1)` / `SELECT/* comment */ 1` / `VALUES(1)` を SQLite で実行すると、エラーなし・Rows 空・
+`0 row(s) affected` になる（Issue #105 の項目4）。`LeadingKeyword` が `strings.Fields` の先頭要素を
+返すため `select(1)` がキーワード扱いになり、アダプタは Exec 経路に入って結果セットを捨てる。
+readonly では同じ字句判定で `SELECT(1) is not allowed` と拒否されていた。
+
+**却下した案**: (a) アダプタ側の `returnsRows` で `strings.HasPrefix(keyword, "select")` のように前方一致で救う。
+(b) `LeadingKeyword` を `sqlscan.go` のスキャナ（`word()`）に置き換える。
+
+**決め手**:
+- (a) は 3 アダプタ + readonly の 4 箇所に同じ緩和を書くことになり、readonly 側では
+  `selectinto`（存在しない語だが前方一致すれば通る）のような誤許可の芽になる
+- (b) `sqlscan.go` は「移植可能な部分集合」しか読まない設計（`#` コメントや空白なし `--` を拒否する）で、
+  `returnsRows` はその外の方言も分類しなければならない。`LeadingKeyword` のコメント処理の緩さは
+  readonly.go のコメントが明示的に許容している前提で、変えると `UnlexableReason` との役割分担が崩れる
+- 採った形: `Fields` をやめ、先頭から `isIdentCharByte` が続く範囲をキーワードとする 1 箇所の変更。
+  `CteBodyKeyword` / `CteTermKeywords` / `word()` は既にこの境界で読んでいたので、揃っただけ
+
+**readonly の分類表への影響**（PR #52 の表を更新する変更）:
+- 新たに許可: `SELECT(1)`、`SELECT/* c */ 1`、`VALUES(1)` — 先頭識別子が許可キーワードで、直後に
+  非識別子文字が来る文。`SELECT(1) INTO backup` は `checkIntoTarget` で従来どおり拒否
+- 拒否のまま、理由だけ変わる: `EXPLAIN(ANALYZE) DELETE FROM t` は「EXPLAIN(ANALYZE) は未知」から
+  「対象の DELETE」へ。`StripExplain` が `(` のオプション群を既に読めるので、空白ありの形と同じ経路に乗る
+- 新たに拒否されるものはない。許可される集合が増えるのは上の 1 クラスだけで、書き込みは含まれない
+
+**覆す条件**: 許可キーワードの直後に非識別子文字を置いて書き込む構文が方言に現れたとき。

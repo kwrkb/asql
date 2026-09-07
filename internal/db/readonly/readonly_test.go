@@ -25,6 +25,12 @@ func TestCheck(t *testing.T) {
 		{"leading comments", "/* comment */ -- x\n SELECT 1", false},
 		{"keyword inside string literal", "SELECT 'DELETE FROM t'", false},
 		{"keyword inside identifier", "SELECT * FROM delete_log", false},
+		// No whitespace after the keyword. These used to be refused as the
+		// unknown statement "SELECT(1)"; the keyword now ends at the paren.
+		{"select paren", "SELECT(1)", false},
+		{"select comment", "SELECT/* comment */ 1", false},
+		{"values paren", "VALUES(1)", false},
+		{"select paren into", "SELECT(1) INTO backup", true},
 
 		// A read-only leading keyword is not enough: these SELECTs write.
 		{"select into table", "SELECT * INTO backup FROM production_table", true},
@@ -153,6 +159,10 @@ func TestCheck(t *testing.T) {
 		{"explain format mysql", "EXPLAIN FORMAT=JSON SELECT 1", false},
 		{"explain analyze delete", "EXPLAIN ANALYZE DELETE FROM t", true},
 		{"explain options delete", "EXPLAIN (ANALYZE, BUFFERS) DELETE FROM t", true},
+		// Once "explain" is read off "EXPLAIN(ANALYZE)", the option group and
+		// the target are classified the same as with the space.
+		{"explain paren options delete", "EXPLAIN(ANALYZE) DELETE FROM t", true},
+		{"explain paren options select", "EXPLAIN(ANALYZE) SELECT 1", false},
 		{"explain delete", "EXPLAIN DELETE FROM t", true},
 		{"explain data-modifying cte", "EXPLAIN ANALYZE WITH a AS (DELETE FROM t RETURNING *) SELECT * FROM a", true},
 		{"nested explain", "EXPLAIN EXPLAIN SELECT 1", true},

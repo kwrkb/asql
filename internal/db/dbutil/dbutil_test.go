@@ -61,6 +61,13 @@ func TestLeadingKeyword(t *testing.T) {
 		{"hash comment", "# comment\nSELECT 1", "select"},
 		{"hash comment only", "# nothing", ""},
 		{"hash then block comment", "# line\n/* block */\nDELETE FROM t", "delete"},
+		// The keyword ends at the first non-identifier byte, not at whitespace.
+		{"paren right after keyword", "SELECT(1)", "select"},
+		{"comment right after keyword", "SELECT/* comment */ 1", "select"},
+		{"values with paren", "VALUES(1)", "values"},
+		{"explain with option group", "EXPLAIN(ANALYZE) DELETE FROM t", "explain"},
+		{"string literal right after keyword", "SELECT'x'", "select"},
+		{"leading paren is not a keyword", "(SELECT 1) UNION (SELECT 2)", ""},
 	}
 
 	for _, tt := range tests {
