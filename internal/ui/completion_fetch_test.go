@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -93,3 +94,90 @@ func TestAllColumnsCompletion_AcrossTheCacheBoundary(t *testing.T) {
 	}
 }
 
+// deadlineAdapter records the deadline each catalog request was given, so a
+// test can tell a per-request budget from one budget shared by the batch.
+type deadlineAdapter struct {
+	db.DBAdapter
+	deadlines []time.Time
+}
+
+func (d *deadlineAdapter) Columns(ctx context.Context, table string) ([]string, error) {
+	dl, ok := ctx.Deadline()
+	if !ok {
+		return nil, fmt.Errorf("Columns(%q) got a context with no deadline", table)
+	}
+	d.deadlines = append(d.deadlines, dl)
+	time.Sleep(time.Millisecond)
+	return d.DBAdapter.Columns(ctx, table)
+}
+
+// One deadline over the whole batch scales with the schema: every request can
+// be healthy and the gather still expire, throwing the completion away. Each
+// request gets its own budget instead, so the deadline a table is given moves
+// forward as the batch proceeds rather than draining towards a fixed instant.
+func TestAllColumnsCompletion_DeadlineIsPerRequest(t *testing.T) {
+	m, counting := newCompletionModel(t, 4)
+	deadlines := &deadlineAdapter{DBAdapter: counting}
+	m.connMgr = newConnManager("test", ":memory:", deadlines, false)
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	drain(t, next, cmd, 4)
+
+	if len(deadlines.deadlines) != 4 {
+		t.Fatalf("recorded %d deadlines, want one per table", len(deadlines.deadlines))
+	}
+	for i := 1; i < len(deadlines.deadlines); i++ {
+		if !deadlines.deadlines[i].After(deadlines.deadlines[i-1]) {
+			t.Errorf("request %d's deadline (%v) is not later than request %d's (%v): the batch shares one budget",
+				i, deadlines.deadlines[i], i-1, deadlines.deadlines[i-1])
+		}
+	}
+}
+
+// A batch fetch must stop once the completion that asked for it is gone. The
+// prefix check only runs when the batch returns, so without cancellation a Tab
+// the user typed straight past still cost one catalog request per table.
+//
+// The abandoned batch then returns early with an error, and that message is
+// still in flight when the next Tab starts its own batch: the late arrival must
+// not clear the pendingPrefix the new batch is waiting on.
+func TestAllColumnsCompletion_CancelledWhenAbandoned(t *testing.T) {
+	const n = 32
+	m, counting := newCompletionModel(t, n)
+
+	next, abandoned := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if abandoned == nil {
+		t.Fatal("Tab produced no fetch Cmd, so there is no batch to abandon")
+	}
+
+	// The user types on before the batch runs: the prefix it is gathering for
+	// no longer exists.
+	next, _ = next.(model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v")})
+	if next.(model).completion.fetchCancel != nil {
+		t.Error("fetchCancel still set after the completion was abandoned")
+	}
+
+	// The user asks again at the new prefix, and only then does the abandoned
+	// batch return.
+	next, wanted := next.(model).Update(tea.KeyMsg{Type: tea.KeyTab})
+	if wanted == nil {
+		t.Fatal("the second Tab produced no fetch Cmd")
+	}
+
+	msg, ok := abandoned().(allColumnsLoadedMsg)
+	if !ok {
+		t.Fatalf("abandoned batch returned %T, want allColumnsLoadedMsg", msg)
+	}
+	if msg.err == nil {
+		t.Error("abandoned batch reported no error, so it ran to completion")
+	}
+	if counting.columnsCalls >= n {
+		t.Errorf("Columns called %d times after the completion was abandoned, want it to stop early", counting.columnsCalls)
+	}
+	next, _ = next.(model).Update(msg)
+
+	rm := drain(t, next, wanted, n)
+	if got := rm.textarea.Value(); got != "SELECT zvalue" {
+		t.Errorf("editor = %q, want %q: the abandoned batch's late message killed the completion the user asked for", got, "SELECT zvalue")
+	}
+}

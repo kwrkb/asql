@@ -308,6 +308,7 @@ func (m *model) insertCompletion(selected string, prefix string) {
 
 // closeCompletion hides the completion popup.
 func (m *model) closeCompletion() {
+	m.cancelColumnsFetch()
 	m.completion.active = false
 	m.completion.items = nil
 	m.completion.cursor = 0
@@ -322,10 +323,11 @@ func (m *model) closeCompletion() {
 // start over — a fetch loop that never produces a candidate.
 const maxColCacheSize = 64
 
-const (
-	columnsFetchTimeout      = 2 * time.Second
-	columnsBatchFetchTimeout = 10 * time.Second
-)
+// columnsFetchTimeout bounds one catalog request. A batch fetch applies it per
+// request rather than to the batch as a whole: a single deadline over the whole
+// gather would scale with the number of tables, so on a large remote schema a
+// completion where every request was healthy would still be thrown away.
+const columnsFetchTimeout = 2 * time.Second
 
 // getOrFetchColumns returns cached columns synchronously, or fires an async
 // Cmd to fetch them. When a Cmd is returned, columns will arrive via columnsLoadedMsg.
@@ -355,18 +357,40 @@ func (m *model) getOrFetchColumns(tableName string) ([]string, tea.Cmd) {
 func (m *model) fetchAllColumnsCmd(tables []string) tea.Cmd {
 	adapter := m.activeDB()
 	gen := m.connGen
+	// At most one batch is ever outstanding: a new one supersedes whatever the
+	// old prefix was still asking for.
+	m.cancelColumnsFetch()
+	ctx, cancel := context.WithCancel(context.Background())
+	m.completion.fetchCancel = cancel
+	m.completion.fetchSeq++
+	seq := m.completion.fetchSeq
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), columnsBatchFetchTimeout)
 		defer cancel()
 		columns := make(map[string][]string, len(tables))
 		for _, t := range tables {
-			cols, err := adapter.Columns(ctx, t)
+			reqCtx, reqCancel := context.WithTimeout(ctx, columnsFetchTimeout)
+			cols, err := adapter.Columns(reqCtx, t)
+			reqCancel() // not deferred: the loop would hold one live ctx per table
 			if err != nil {
-				return allColumnsLoadedMsg{columns: columns, err: err, connGen: gen}
+				return allColumnsLoadedMsg{columns: columns, err: err, connGen: gen, seq: seq}
 			}
 			columns[t] = cols
 		}
-		return allColumnsLoadedMsg{columns: columns, connGen: gen}
+		return allColumnsLoadedMsg{columns: columns, connGen: gen, seq: seq}
+	}
+}
+
+// cancelColumnsFetch abandons an outstanding batch fetch. Without it the loop
+// keeps querying the catalog for every missing table after the completion that
+// asked for them is gone — the prefix check only runs once the batch returns,
+// so on a large remote schema an abandoned Tab costs a request per table.
+//
+// The tables fetched before the cancellation still arrive and are still cached:
+// the next Tab has that much less to do.
+func (m *model) cancelColumnsFetch() {
+	if m.completion.fetchCancel != nil {
+		m.completion.fetchCancel()
+		m.completion.fetchCancel = nil
 	}
 }
 

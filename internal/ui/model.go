@@ -107,6 +107,7 @@ type allColumnsLoadedMsg struct {
 	columns map[string][]string
 	err     error
 	connGen uint64
+	seq     uint64 // completion.fetchSeq when the batch was started
 }
 
 type model struct {
@@ -447,6 +448,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dbPath = db.MaskDSN(m.connMgr.ActiveDSN())
 		}
 		m.rawDSN = m.connMgr.ActiveDSN()
+		m.cancelColumnsFetch()
 		m.completion.colCache = nil
 		m.completion.colOrder = nil
 		m.sidebar.tables = nil
@@ -516,6 +518,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.sidebar.tables = msg.tables
+		m.cancelColumnsFetch()
 		m.completion.colCache = nil
 		m.completion.colOrder = nil // invalidate column cache
 		if m.sidebar.cursor >= len(msg.tables) {
@@ -534,6 +537,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case allColumnsLoadedMsg:
 		if msg.connGen != m.connGen {
 			return m, nil // stale fetch from previous connection
+		}
+		if msg.seq != m.completion.fetchSeq {
+			// A batch a newer one superseded. Cancelling makes it return
+			// early with an error, and letting that reach the branches below
+			// would clear the pendingPrefix the newer batch is waiting on.
+			return m, nil
 		}
 		for table, cols := range msg.columns {
 			m.colCachePut(table, cols)
