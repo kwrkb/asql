@@ -61,6 +61,11 @@ func TestMaskDSN(t *testing.T) {
 		{"upper-case query param password masked", "postgres://user@host/db?PASSWORD=secret", "postgres://user@host/db?PASSWORD=%2A%2A%2A"},
 		{"mixed-case query param password masked", "postgres://user@host/db?Password=secret&sslmode=require", "postgres://user@host/db?Password=%2A%2A%2A&sslmode=require"},
 		{"no password unchanged", "postgres://user@host/db", "postgres://user@host/db"},
+		// The over-masking below is confined to DSNs url.Parse rejects. A
+		// well-formed DSN with an '@' in the database name — which is what the
+		// profile overlay and status bar actually render — keeps its host,
+		// because it never reaches the malformed branch.
+		{"well-formed URL with '@' in the path keeps its host", "mysql://user:secret@db.internal:3306/analytics@staging", "mysql://user:%2A%2A%2A@db.internal:3306/analytics@staging"},
 		{"malformed URL best-effort", "postgres://user:secret@host:5432/db%zz", "postgres://user:***@host:5432/db%zz"},
 		// net/url reads userinfo up to the *last* '@', so the password here is
 		// "sec@ret". Masking only to the first '@' would print "ret@host" back.
