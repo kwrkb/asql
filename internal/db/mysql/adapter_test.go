@@ -219,11 +219,14 @@ func TestBuildConfig_ParseErrorRedactsPassword(t *testing.T) {
 		// "sec@ret" and the failure is the port. The masked DSN must not carry
 		// the tail of the password either.
 		{"at-sign in the password", "mysql://alice:sec@ret@127.0.0.1:bad/prod", []string{"sec@ret", "ret@"}},
+		// A literal '/' in the password. url.Parse rejects it, so it reaches
+		// no other branch, and a mask bounded at '/' could not cover it.
+		{"slash in the password", "mysql://alice:se/cret@127.0.0.1:bad/prod", []string{"se/cret", "cret"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := buildConfig(tc.dsn)
 			if err == nil {
-				t.Fatal("buildConfig() expected an error for an invalid percent escape, got nil")
+				t.Fatal("buildConfig() expected an error for an unparseable URL, got nil")
 			}
 			msg := err.Error()
 			for _, secret := range tc.secrets {
