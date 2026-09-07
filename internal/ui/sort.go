@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"cmp"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +27,17 @@ const (
 // them before computing min/max — must use this rather than smartCompare, or a
 // value whose text is literally "NULL" gets ordered as though it were one.
 func compareValues(a, b string) int {
+	// Integers are compared as integers. Going through float64 folds every
+	// integer past 2^53 onto a neighbour, so 9007199254740993 and
+	// 9007199254740992 compared equal: the sort left them in query order and
+	// the column min and max came out the same value, while the display
+	// string — the database's own int64 — still showed the difference.
+	ai, aErr := strconv.ParseInt(a, 10, 64)
+	bi, bErr := strconv.ParseInt(b, 10, 64)
+	if aErr == nil && bErr == nil {
+		return cmp.Compare(ai, bi)
+	}
+
 	af, aErr := strconv.ParseFloat(a, 64)
 	bf, bErr := strconv.ParseFloat(b, 64)
 	if aErr == nil && bErr == nil {
@@ -33,9 +46,17 @@ func compareValues(a, b string) int {
 			return -1
 		case af > bf:
 			return 1
-		default:
-			return 0
 		}
+		// Equal as float64 is not equal: a BIGINT UNSIGNED past int64, a
+		// DECIMAL with more digits than a double keeps, or an integer against
+		// a fraction, all round to the same double. Only ties pay for the
+		// exact comparison, which is what keeps it off the common path.
+		if ar, ok := new(big.Rat).SetString(a); ok {
+			if br, ok := new(big.Rat).SetString(b); ok {
+				return ar.Cmp(br)
+			}
+		}
+		return 0 // NaN or Inf: no exact form, and they were equal as floats
 	}
 
 	// Timestamps are compared as instants rather than as text. Lexical order

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -175,5 +176,53 @@ func TestCompareValuesOrdersTimestampsChronologically(t *testing.T) {
 	// lexical path rather than comparing as equal.
 	if got := compareValues("2024-ab-cd", "2024-ab-ce"); got >= 0 {
 		t.Errorf("compareValues on unparseable date-shaped text = %d, want < 0", got)
+	}
+}
+
+// Integers past 2^53 lose their low bits in float64, which is what the
+// comparison used to go through. The database's int64 and the display string
+// both kept the difference; only the ordering lost it.
+func TestCompareValuesOrdersIntegersExactly(t *testing.T) {
+	const (
+		lo = "9007199254740992" // 2^53
+		hi = "9007199254740993" // 2^53 + 1, not representable as float64
+	)
+	lf, _ := strconv.ParseFloat(lo, 64)
+	hf, _ := strconv.ParseFloat(hi, 64)
+	if lf != hf {
+		t.Fatal("premise gone: these two now differ as float64")
+	}
+
+	tests := []struct {
+		name string
+		a, b string
+		want int
+	}{
+		{"int64 past 2^53", hi, lo, 1},
+		{"int64 past 2^53, reversed", lo, hi, -1},
+		{"int64 extremes", "-9223372036854775808", "9223372036854775807", -1},
+		{"uint64 past int64 (BIGINT UNSIGNED)", "18446744073709551615", "18446744073709551614", 1},
+		{"decimal with more digits than a double keeps", "0.30000000000000000001", "0.3", 1},
+		{"integer against a fraction that rounds onto it", hi, "9007199254740992.5", 1},
+		{"equal integers", hi, hi, 0},
+		{"same value, integer and decimal form", "42", "42.0", 0},
+		{"ordinary floats still order as floats", "1.5", "2.25", -1},
+		{"NaN ties without an exact form", "NaN", "NaN", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := compareValues(tt.a, tt.b)
+			if (tt.want < 0 && got >= 0) || (tt.want > 0 && got <= 0) || (tt.want == 0 && got != 0) {
+				t.Errorf("compareValues(%q, %q) = %d, want sign %d", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+
+	rows := [][]string{{hi}, {lo}}
+	if asc := sortedRows(rows, 0, sortAsc); asc[0][0] != lo {
+		t.Errorf("ascending sort put %q first, want %q", asc[0][0], lo)
+	}
+	if desc := sortedRows(rows, 0, sortDesc); desc[0][0] != hi {
+		t.Errorf("descending sort put %q first, want %q", desc[0][0], hi)
 	}
 }

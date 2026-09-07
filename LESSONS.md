@@ -1425,6 +1425,34 @@ shape check が効かなくなったとき。
 
 ---
 
+## 2026-09-07: 数値比較は「整数は整数のまま、float64 で同点のときだけ厳密に」
+
+`SELECT 9007199254740993 AS n UNION ALL SELECT 9007199254740992` を昇順にしても並ばず、
+Stats の Min/Max がともに `9007199254740993` になる（Issue #105 の項目5）。
+`compareValues` が両方を float64 に落としてから比べるため、2^53 を超える整数は隣と同値になる。
+SQLite の int64 も表示文字列も差を保っており、比較の段階だけで失われていた。
+
+**却下した案**: (a) `db.Kind`（`KindInt`）を `compareValues` に渡して整数列だけ `ParseInt` に分岐する。
+(b) 数値はすべて `math/big.Rat` で比べる。
+
+**決め手**:
+- (a) は 2026-09-05 の「タイムスタンプ」エントリで却下した形と同じ。`compareValues` は
+  値そのものでパースできるかを見る構造で、`sortedRows` の呼び出し元は `Kinds` を持ち回っていない。
+  `ParseInt` は値だけで判定でき、整数列の判定に型情報は要らない
+- (b) はコストが常時かかる。実測（同じ 2 値の比較 1 回、arm64）:
+  `ParseInt` ×2 = 45 ns / 0 alloc、`ParseFloat` ×2 = 81 ns / 0 alloc、
+  `big.Rat.SetString` ×2 + `Cmp` = 449 ns / 240 B / 14 allocs。
+  ソートは比較 O(n log n) 回なので 10 倍の差と alloc は避ける
+- 採った形: `ParseInt` が両方通れば `cmp.Compare` で厳密に。通らなければ従来どおり float64、
+  **float64 で同点のときだけ** `big.Rat` で決める。同点は BIGINT UNSIGNED（int64 超）、
+  double が保持しない桁の DECIMAL、整数と小数の丸め衝突のいずれかで、通常経路は払わない
+- `Kinds` の枝を足さなかったので、結果テーブルのソートと列統計の min/max が同時に直る
+
+**覆す条件**: 同点が多い列（同じ値の連続）で `big.Rat` の割り当てが体感できるようになったとき。
+そのときは「文字列が同一なら 0」の早期 return を同点判定の前に置く。
+
+---
+
 ## 2026-09-07: `LeadingKeyword` の境界は空白ではなく識別子文字の終わり
 
 `SELECT(1)` / `SELECT/* comment */ 1` / `VALUES(1)` を SQLite で実行すると、エラーなし・Rows 空・
