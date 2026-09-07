@@ -117,6 +117,61 @@ func TestOpen_ErrorPaths(t *testing.T) {
 	}
 }
 
+// A url.Parse failure must not leak the password. Two places carry it:
+// url.Error embeds the raw URL, and its cause embeds the offending escape
+// sequence — which can be the whole password. withParam runs before any
+// connection is attempted, so `asql --readonly <bad postgres URL>` reaches this
+// on stderr, and the profile switch reaches it in the TUI status line.
+func TestWithParam_ParseErrorRedactsPassword(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		dsn     string
+		secrets []string
+	}{
+		// The plain report of the issue: a bad port, and the whole password
+		// printed back inside the url.Error's copy of the URL.
+		{"bad port", "postgres://alice:review-secret@localhost:bad/db", []string{"review-secret"}},
+		// The escape is part of a longer password: the URL carries "p%ss" and
+		// the cause carries "%ss", and "%ss" alone is most of the secret.
+		{"escape inside the password", "postgres://alice:p%ss@127.0.0.1:5432/prod", []string{"p%ss", "%ss"}},
+		// The escape *is* the password: redacting only the URL leaves it whole
+		// in the cause.
+		{"escape is the password", "postgres://alice:%ss@127.0.0.1:5432/prod", []string{"%ss"}},
+		// net/url reads userinfo up to the last '@', so the password is
+		// "sec@ret" and the failure is the port. The masked DSN must not carry
+		// the tail of the password either.
+		{"at-sign in the password", "postgres://alice:sec@ret@127.0.0.1:bad/prod", []string{"sec@ret", "ret@"}},
+		// A literal '/' in the password. url.Parse rejects it, so it reaches
+		// no other branch, and a mask bounded at '/' could not cover it.
+		{"slash in the password", "postgres://alice:se/cret@127.0.0.1:bad/prod", []string{"se/cret", "cret"}},
+		// The password is a query parameter rather than userinfo.
+		{"password as a query parameter", "postgres://alice@127.0.0.1:bad/prod?password=review-secret", []string{"review-secret"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			check := func(via string, err error) {
+				if err == nil {
+					t.Fatalf("%s() expected an error for an unparseable URL, got nil", via)
+				}
+				msg := err.Error()
+				for _, secret := range tc.secrets {
+					if strings.Contains(msg, secret) {
+						t.Errorf("%s() error leaks %q: %q", via, secret, msg)
+					}
+				}
+				if !strings.Contains(msg, "***") {
+					t.Errorf("%s() error does not show the DSN masked: %q", via, msg)
+				}
+			}
+			_, err := withParam(tc.dsn, "default_transaction_read_only", "on")
+			check("withParam", err)
+			// OpenReadonly is the real entry point and must not re-wrap the
+			// error back into something that carries the raw DSN.
+			_, err = OpenReadonly(tc.dsn)
+			check("OpenReadonly", err)
+		})
+	}
+}
+
 func TestIntegration(t *testing.T) {
 	dsn := os.Getenv("ASQL_POSTGRES_DSN")
 	if dsn == "" {
