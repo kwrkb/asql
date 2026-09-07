@@ -1276,6 +1276,102 @@ shape check が効かなくなったとき。
 
 ---
 
+## 2026-09-07: DSN パースエラーの秘匿ヘルパーは複製せず `internal/db` に上げた
+
+`withParam`（PostgreSQL readonly）の `fmt.Errorf("parsing PostgreSQL URL: %w", err)` が
+`--readonly` 起動時とプロファイル切替時にパスワードを平文で出す（Issue #105 の項目1）。
+#93 で MySQL 側に入れた `parseCause` + `MaskDSN` の形をそのまま適用する場面。
+
+**却下した案**: `mysql/adapter.go` の非公開 `parseCause` を `postgres/adapter.go` へコピーする
+（差分が postgres 1ファイルに閉じ、mysql の既存テストに触れない）。
+
+**決め手**:
+- `parseCause` が列挙しているのは「入力を引用しないと分かっている `url.Parse` の失敗種別」であり、
+  `net/url` が新しい cause 型を足したら**両方**を直さないと片側だけ漏れる。
+  実測: 修正前の `OpenReadonly("postgres://alice:review-secret@localhost:bad/db")` は
+  `parsing PostgreSQL URL: parse "postgres://alice:review-secret@localhost:bad/db": invalid port ":bad" after host`
+  を返す。`url.Parse` の cause は `*url.Error` / `url.EscapeError` / `url.InvalidHostError` /
+  無名の `errors.errorString`（invalid port）と4種あり、`errors.errorString` は型で判別できないため
+  「知らない cause は `invalid URL` に潰す」既定が唯一の防御線になっている
+- `MaskDSN` は既に `internal/db` にあり、mysql / postgres の両アダプタが `internal/db` を import 済み。
+  共有先を新設する必要がなく、循環依存も発生しない（`go build ./...` で確認）
+- 採った形: `db.URLParseCause(err) string` を `MaskDSN` の隣に置き、mysql の非公開版を削除。
+  `internal/db/open_test.go` に cause 4種の直接テスト、両アダプタに「秘密が出ない」回帰テストを置いた
+
+**覆す条件**: MySQL と PostgreSQL で出したい cause の粒度が分かれたとき
+（例: 片方だけドライバ固有のエラーを名前で出したくなった場合）は、共有ヘルパーを
+「既知種別の判定」だけに絞り、文言の選択を呼び出し側へ戻す。
+
+## 2026-09-07: MaskDSN の malformed 経路は「マッチしなければ素通し」をやめ、過剰マスク側へ倒した
+
+上の #105 項目1 の修正で `MaskDSN` が**エラー文言の唯一の防御線**になった。
+`url.Parse` が失敗した DSN しかこの関数のフォールバックに来ないため、
+パターンが外れた入力は生の資格情報がそのまま stderr / TUI に出る。
+
+**却下した案**: (a) `rePasswordInDSN` の `([^/]*)` を `([^@]*)` に緩める。
+(b) フォールバックはそのままにし、postgres 側で「マスクできなかったら DSN を出さない」と分岐する。
+
+**決め手**:
+- (a) は #93（`0c5fc1d`）が意図して入れた `/` 境界を壊す。`/` 境界の役目は
+  「パス中の `@` までマスク範囲が伸びるのを止める」こと。実測: `[^@]*` に戻すと
+  `mysql://user:sec@ret@host:bad/db`（パスワードは `sec@ret`）が
+  `mysql://user:***@ret@host:bad/db` になり、パスワードの後半が出る。既存テスト
+  `malformed URL with '@' in the password` が赤になる
+- 一方で `/` 境界のせいでマッチ自体が起きない入力を実測で3種確認した。修正前の出力:
+  - `postgres://alice:se/cret@localhost:bad/db` → **無変換**（パスワードに生の `/`。
+    `url.Parse` が拒否する形なのでこのフォールバックにしか現れない）
+  - `postgres://alice:se/cr@et@localhost:bad/db` → **無変換**
+  - `postgres://alice@localhost:bad/db?password=secret` → **無変換**
+    （パース成功経路は `url.Values` で `password=` を隠すが、失敗経路には RawQuery がない）
+- (b) は呼び出し側ごとに同じ判断を書くことになり、`MaskDSN` の他の利用者
+  （ステータスバー・プロファイル表示）には効かない
+- 採った形: `maskMalformedDSN` に3段構え。境界付きパターン → 外れたら
+  **文字列末尾の最後の `@` まで**取る貪欲パターン → 最後に `password=` パラメータを
+  テキストで潰す。貪欲側はパス中の `@` でホスト名まで隠しうる（過剰マスク）が、
+  **隠れたホストは読みにくいエラー、出たパスワードは漏洩した資格情報**なので
+  倒す方向はこちらで固定した
+
+**覆す条件**: エラー文言からホスト名が消えて障害切り分けが実際に困ったとき。
+その場合も「素通し」には戻さず、スキーム + ホストだけを別途復元して足す。
+
+## 2026-09-07: 上2件を自己レビューで覆した — マスクは「境界を当てる」のをやめて最後の `@` まで一律に伸ばす
+
+直前の2エントリの形（`URLParseCause` を公開 + `rePasswordInDSN` → 貪欲フォールバックの2段）を
+`/simplify` の4観点レビューが2つの実測で覆した。**上のエントリは当時の判断としてそのまま残す。**
+
+**却下した案**: (a) 境界付きパターンを一次、貪欲パターンを二次にする2段構え（直前に採用した形）。
+(b) パースエラーを起こさない index ベースの実装（`://` を探し、authority を最初の `/` `?` `#` で
+区切り、その中の最後の `@` まで）に置き換える。
+
+**決め手**:
+- (a) の2段構えは「一次が**マッチしなかった**とき」しか二次に落ちない。**短すぎるマッチを検出できない**。
+  実測: `postgres://alice:s@e:bad/cret@host/db`（`url.Parse` は invalid port で失敗）は
+  `[^/]*` が最初の `/` の手前で `s@` までしか取れず、
+  `postgres://alice:***@e:bad/cret@host/db` を返して `e:bad/cret` を出していた。
+  自分が入れたばかりの防御に同じクラスの穴が残っていた
+- (b) は実装して8ケースで検証したところ、`postgres://alice:se/cret@localhost:bad/db` と
+  `postgres://alice:se/cr@et@localhost:bad/db` の2件が**無変換**になる。
+  拒否された DSN の `/` は「パス開始」か「パスワードの1バイト」か原理的に区別できないので、
+  index で authority を切っても `[^/]*` と同じ盲点をそのまま受け継ぐ。**綴り直しにしかならない**
+- 採った形: パターンは `(://[^:]*:)(.*)(@)` の**1本だけ**。文字列末尾の最後の `@` まで一律にマスクする。
+  代償は `mysql://user:secret@host:bad/db@x` が `mysql://user:***@x` になり、ホスト名が消えること
+  （#93 が入れたテストの期待値を過剰マスク側へ書き換えた）。
+  拒否された DSN には「どの `@` が userinfo の終わりか」を決める文法がもう無い以上、
+  **過剰マスクはエラーメッセージを失い、過少マスクは秘密を失う**という非対称で倒す方向を固定した
+- 同レビューで、パース**成功**側の `q.Get("password")` が大文字小文字を区別するため
+  `postgres://alice@host:5432/db?PASSWORD=secret` が**無変換**であることも実測。
+  こちらはプロファイル一覧（`internal/ui/profile.go:218`）とステータスバー（`model.go:438`）が
+  毎描画で通る経路で、画面に平文が出ていた。`isPasswordParam` を両側で共有して解消した
+- エラー生成そのものも `db.URLParseError(label, dsn, err)` に集約した。
+  「`%w` で包まない」という規則がアダプタ2箇所のコメントにしか無い状態を、
+  シグネチャ1本に移すため。`urlParseCause` は非公開に戻した
+
+**覆す条件**: エラーからホスト名が消えて障害切り分けが実際に困ったとき。
+その場合もマスク範囲は縮めず、スキームとホストを別途復元して付け足す
+（`url.Parse` が拒否した文字列から安全に取り出せる範囲で）。
+
+---
+
 ## 2026-09-07: ヒストグラムの bin 添字は「範囲を割る」のではなく「[0,1] に正規化してから掛ける」
 
 `computeHistogram([][]string{{"-1e308"}, {"1e308"}}, 0)` が amd64 で
