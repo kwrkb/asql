@@ -153,6 +153,23 @@ func TestComputeColumnStats_NumericMinMax(t *testing.T) {
 	}
 }
 
+// Min/Max go through compareValues too, so they must tell integers past
+// 2^53 apart the same way the sort does.
+func TestComputeColumnStats_MinMaxPastFloat64Precision(t *testing.T) {
+	result := db.QueryResult{
+		Columns:     []string{"n"},
+		ColumnTypes: []string{"INTEGER"},
+		Rows:        [][]string{{"9007199254740993"}, {"9007199254740992"}},
+	}
+	s := computeColumnStats(result)[0]
+	if s.Min != "9007199254740992" {
+		t.Errorf("Min = %q, want 9007199254740992", s.Min)
+	}
+	if s.Max != "9007199254740993" {
+		t.Errorf("Max = %q, want 9007199254740993", s.Max)
+	}
+}
+
 func newStatsModel() *model {
 	m := newTestModel()
 	m.lastResult = db.QueryResult{
