@@ -114,16 +114,7 @@ func computeHistogram(rows [][]string, colIdx int) histogramData {
 	}
 
 	numBuckets := max(min(len(values), maxHistogramBuckets), 2)
-
-	width := (maxVal - minVal) / float64(numBuckets)
-	counts := make([]int, numBuckets)
-	for _, v := range values {
-		idx := int((v - minVal) / width)
-		if idx >= numBuckets {
-			idx = numBuckets - 1
-		}
-		counts[idx]++
-	}
+	counts := bucketCounts(values, minVal, maxVal, numBuckets)
 
 	bars := renderSparklineBars(counts)
 	if bars == "" {
@@ -136,6 +127,42 @@ func computeHistogram(rows [][]string, colIdx int) histogramData {
 		Bars:  bars,
 		Label: label,
 	}
+}
+
+// bucketCounts places each value into one of numBuckets equal-width bins over
+// [minVal, maxVal]. minVal < maxVal and every value is finite and inside that
+// range; the caller has already filtered NaN/Inf and the degenerate ranges.
+//
+// The bin index is computed from a normalized position t in [0, 1] rather
+// than from (v - minVal) / width, because both of those intermediates can
+// leave float64 even when every input is finite: maxVal - minVal overflows to
+// +Inf for -1e308 and 1e308, and width underflows to 0 for 0 and 5e-324. Either
+// way the division produces NaN or Inf, and converting that to int is
+// implementation-defined in Go — amd64 yields math.MinInt64 and indexes the
+// slice with it, arm64 happens to yield 0 and silently piles the values into
+// the first bin.
+//
+// When the span overflows, both endpoints are halved before subtracting.
+// Halving a normal float64 is exact and the halved span always fits, so t stays
+// exact for the values that triggered the overflow. The span cannot be 0
+// otherwise: IEEE 754 subtraction of two distinct floats is never 0, even in
+// the subnormal range, so the 0 / 5e-324 case normalizes to t = 0 and t = 1.
+func bucketCounts(values []float64, minVal, maxVal float64, numBuckets int) []int {
+	scale := 1.0
+	span := maxVal - minVal
+	if math.IsInf(span, 0) {
+		scale = 0.5
+		span = maxVal*scale - minVal*scale
+	}
+
+	counts := make([]int, numBuckets)
+	for _, v := range values {
+		t := (v*scale - minVal*scale) / span
+		idx := int(t * float64(numBuckets))
+		// v == maxVal lands on t == 1, one past the last bin.
+		counts[max(0, min(idx, numBuckets-1))]++
+	}
+	return counts
 }
 
 // formatHistogramLabel returns a compact range label for the histogram.
