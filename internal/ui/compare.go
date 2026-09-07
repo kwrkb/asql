@@ -86,9 +86,13 @@ func (m *model) pinCurrentResult() *pinnedPane {
 	// displayRows and never back into result.Rows, so result.Kinds stays
 	// aligned with result.Rows. Anything reading Kinds here must index by
 	// result.Rows position, not by displayRows position.
+	//
+	// connName is where the result came from, not where the next query goes:
+	// a connection switch keeps lastResult but moves ActiveName, so labelling
+	// with the latter would file A's rows under B.
 	return &pinnedPane{
 		result:        m.lastResult,
-		connName:      m.connMgr.ActiveName(),
+		connName:      m.lastConn,
 		table:         tbl,
 		displayRows:   rows,
 		colWidths:     widths,
@@ -368,7 +372,10 @@ func (m *model) renderCompareView() string {
 		Background(appBackground).
 		Align(lipgloss.Center).
 		Render(fmt.Sprintf("[%s rows:%d]", leftLabel, leftRows))
-	rightLabel := sanitize(m.connMgr.ActiveName())
+	// Same rule as the pinned side: the label names the connection that
+	// produced lastResult. The status bar already shows where the next query
+	// will run.
+	rightLabel := sanitize(m.lastConn)
 	if rightLabel == "" {
 		rightLabel = "active"
 	}
