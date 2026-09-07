@@ -1,6 +1,10 @@
 package db
 
-import "testing"
+import (
+	"net/url"
+	"strings"
+	"testing"
+)
 
 func TestDetectType(t *testing.T) {
 	tests := []struct {
@@ -63,6 +67,40 @@ func TestMaskDSN(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := MaskDSN(tt.dsn); got != tt.want {
 				t.Errorf("MaskDSN(%q) = %q, want %q", tt.dsn, got, tt.want)
+			}
+		})
+	}
+}
+
+// URLParseCause must name the kind of failure and nothing else. Every cause
+// url.Parse produces embeds part of the input — url.EscapeError is the whole
+// password in a DSN like postgres://alice:%ss@host/db — so a caller that
+// printed the cause verbatim would leak it.
+func TestURLParseCause(t *testing.T) {
+	tests := []struct {
+		name    string
+		dsn     string
+		want    string
+		secrets []string
+	}{
+		{"invalid percent-escape", "postgres://alice:%ss@host/db", "invalid percent-escape", []string{"%ss", "alice"}},
+		{"invalid port", "postgres://alice:secret@host:bad/db", "invalid URL", []string{"secret", "bad"}},
+		{"invalid character in host", "postgres://alice:secret@ho|st/db", "invalid character in host", []string{"secret", "|"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := url.Parse(tt.dsn)
+			if err == nil {
+				t.Fatalf("url.Parse(%q) expected an error, got nil", tt.dsn)
+			}
+			got := URLParseCause(err)
+			if got != tt.want {
+				t.Errorf("URLParseCause() = %q, want %q", got, tt.want)
+			}
+			for _, secret := range tt.secrets {
+				if strings.Contains(got, secret) {
+					t.Errorf("URLParseCause() quotes the input back (%q): %q", secret, got)
+				}
 			}
 		})
 	}

@@ -1273,3 +1273,31 @@ shape check が効かなくなったとき。
 同一スレッドで開いて有効化する呼び出しには正しい API のため。ただし doc コメントに
 「UI の switch 経路では使うな、それがこの分割の理由だ」と明記した。
 一般化: **「古い完了を捨てる」ガードは、捨てられる側が何も commit していないときだけ正しい。**
+
+---
+
+## 2026-09-07: DSN パースエラーの秘匿ヘルパーは複製せず `internal/db` に上げた
+
+`withParam`（PostgreSQL readonly）の `fmt.Errorf("parsing PostgreSQL URL: %w", err)` が
+`--readonly` 起動時とプロファイル切替時にパスワードを平文で出す（Issue #105 の項目1）。
+#93 で MySQL 側に入れた `parseCause` + `MaskDSN` の形をそのまま適用する場面。
+
+**却下した案**: `mysql/adapter.go` の非公開 `parseCause` を `postgres/adapter.go` へコピーする
+（差分が postgres 1ファイルに閉じ、mysql の既存テストに触れない）。
+
+**決め手**:
+- `parseCause` が列挙しているのは「入力を引用しないと分かっている `url.Parse` の失敗種別」であり、
+  `net/url` が新しい cause 型を足したら**両方**を直さないと片側だけ漏れる。
+  実測: 修正前の `OpenReadonly("postgres://alice:review-secret@localhost:bad/db")` は
+  `parsing PostgreSQL URL: parse "postgres://alice:review-secret@localhost:bad/db": invalid port ":bad" after host`
+  を返す。`url.Parse` の cause は `*url.Error` / `url.EscapeError` / `url.InvalidHostError` /
+  無名の `errors.errorString`（invalid port）と4種あり、`errors.errorString` は型で判別できないため
+  「知らない cause は `invalid URL` に潰す」既定が唯一の防御線になっている
+- `MaskDSN` は既に `internal/db` にあり、mysql / postgres の両アダプタが `internal/db` を import 済み。
+  共有先を新設する必要がなく、循環依存も発生しない（`go build ./...` で確認）
+- 採った形: `db.URLParseCause(err) string` を `MaskDSN` の隣に置き、mysql の非公開版を削除。
+  `internal/db/open_test.go` に cause 4種の直接テスト、両アダプタに「秘密が出ない」回帰テストを置いた
+
+**覆す条件**: MySQL と PostgreSQL で出したい cause の粒度が分かれたとき
+（例: 片方だけドライバ固有のエラーを名前で出したくなった場合）は、共有ヘルパーを
+「既知種別の判定」だけに絞り、文言の選択を呼び出し側へ戻す。

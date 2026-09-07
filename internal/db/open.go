@@ -1,6 +1,7 @@
 package db
 
 import (
+	"errors"
 	"net/url"
 	"regexp"
 	"strings"
@@ -41,6 +42,32 @@ func MaskDSN(dsn string) string {
 		return dsn
 	}
 	return u.String()
+}
+
+// URLParseCause names the kind of url.Parse failure without quoting any of the
+// DSN back. Both halves of a url.Parse failure carry the input: url.Error
+// embeds the raw URL, and its cause embeds a fragment of it — url.EscapeError
+// holds the offending "%xx" sequence, which is the whole password in a DSN like
+// postgres://alice:%ss@host/db. The causes that embed input do so unpredictably
+// — url.Parse reads userinfo greedily, so which bytes land in an escape or port
+// error is not something the DSN's shape predicts — which is why this describes
+// the known kinds and says nothing more for the rest, rather than allow-listing
+// causes believed to be safe to print verbatim.
+//
+// Callers report the DSN through MaskDSN and this cause instead of wrapping the
+// original error, so the raw error cannot travel to a caller that prints it.
+func URLParseCause(err error) string {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		err = ue.Err
+	}
+	switch err.(type) {
+	case url.EscapeError:
+		return "invalid percent-escape"
+	case url.InvalidHostError:
+		return "invalid character in host"
+	}
+	return "invalid URL"
 }
 
 // DetectType returns the database type string for a given DSN.
