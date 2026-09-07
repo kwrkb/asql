@@ -264,6 +264,23 @@ func (m *model) triggerCompletion() tea.Cmd {
 	return nil
 }
 
+// resumeCompletion re-runs the completion an async column fetch interrupted,
+// provided the cursor is still on the same prefix, and then trims the cache.
+// The trim comes last on purpose: the completion must see every entry the
+// fetch delivered, even when there are more of them than the cache keeps.
+func (m *model) resumeCompletion() tea.Cmd {
+	defer m.colCacheTrim()
+	if m.mode != insertMode || m.completion.pendingPrefix == "" {
+		return nil
+	}
+	prefix, _ := wordAtCursor(m.textarea.Value(), m.textarea.Line(), m.cursorRuneCol())
+	if prefix != m.completion.pendingPrefix {
+		m.completion.pendingPrefix = ""
+		return nil
+	}
+	return m.triggerCompletion()
+}
+
 // acceptCompletion inserts the currently selected completion candidate.
 func (m *model) acceptCompletion() {
 	if !m.completion.active || len(m.completion.items) == 0 {
@@ -291,18 +308,30 @@ func (m *model) insertCompletion(selected string, prefix string) {
 
 // closeCompletion hides the completion popup.
 func (m *model) closeCompletion() {
+	m.cancelColumnsFetch()
 	m.completion.active = false
 	m.completion.items = nil
 	m.completion.cursor = 0
 	m.completion.prefix = ""
 }
 
+// maxColCacheSize bounds the column cache between completions. It is not a
+// bound on what one completion may hold: colCacheTrim runs after the
+// completion that loaded the entries, so an all-tables gather on a schema
+// larger than this still sees every table at once. Trimming before would
+// evict the first table while the last one is fetched, and the re-scan would
+// start over — a fetch loop that never produces a candidate.
+const maxColCacheSize = 64
+
+// columnsFetchTimeout bounds one catalog request. A batch fetch applies it per
+// request rather than to the batch as a whole: a single deadline over the whole
+// gather would scale with the number of tables, so on a large remote schema a
+// completion where every request was healthy would still be thrown away.
+const columnsFetchTimeout = 2 * time.Second
+
 // getOrFetchColumns returns cached columns synchronously, or fires an async
 // Cmd to fetch them. When a Cmd is returned, columns will arrive via columnsLoadedMsg.
 func (m *model) getOrFetchColumns(tableName string) ([]string, tea.Cmd) {
-	if m.completion.colCache == nil {
-		m.completion.colCache = make(map[string][]string)
-	}
 	if cols, ok := m.completion.colCache[tableName]; ok {
 		m.colCacheTouch(tableName)
 		return cols, nil
@@ -311,10 +340,78 @@ func (m *model) getOrFetchColumns(tableName string) ([]string, tea.Cmd) {
 	adapter := m.activeDB()
 	gen := m.connGen
 	return nil, func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), columnsFetchTimeout)
 		defer cancel()
 		cols, err := adapter.Columns(ctx, tableName)
 		return columnsLoadedMsg{table: tableName, columns: cols, err: err, connGen: gen}
+	}
+}
+
+// fetchAllColumnsCmd fetches the columns of every table in tables in one Cmd
+// and delivers them together as an allColumnsLoadedMsg. One round trip per
+// completion, however many tables are missing; a per-table Cmd would need
+// every fetch to survive in the cache until the last one landed.
+//
+// On the first error the tables fetched so far are still delivered, so a
+// retry only has to cover the rest.
+func (m *model) fetchAllColumnsCmd(tables []string) tea.Cmd {
+	adapter := m.activeDB()
+	gen := m.connGen
+	// At most one batch is ever outstanding: a new one supersedes whatever the
+	// old prefix was still asking for.
+	m.cancelColumnsFetch()
+	ctx, cancel := context.WithCancel(context.Background())
+	m.completion.fetchCancel = cancel
+	m.completion.fetchSeq++
+	seq := m.completion.fetchSeq
+	return func() tea.Msg {
+		defer cancel()
+		columns := make(map[string][]string, len(tables))
+		for _, t := range tables {
+			reqCtx, reqCancel := context.WithTimeout(ctx, columnsFetchTimeout)
+			cols, err := adapter.Columns(reqCtx, t)
+			reqCancel() // not deferred: the loop would hold one live ctx per table
+			if err != nil {
+				return allColumnsLoadedMsg{columns: columns, err: err, connGen: gen, seq: seq}
+			}
+			columns[t] = cols
+		}
+		return allColumnsLoadedMsg{columns: columns, connGen: gen, seq: seq}
+	}
+}
+
+// cancelColumnsFetch abandons an outstanding batch fetch. Without it the loop
+// keeps querying the catalog for every missing table after the completion that
+// asked for them is gone — the prefix check only runs once the batch returns,
+// so on a large remote schema an abandoned Tab costs a request per table.
+//
+// The tables fetched before the cancellation still arrive and are still cached:
+// the next Tab has that much less to do.
+func (m *model) cancelColumnsFetch() {
+	if m.completion.fetchCancel != nil {
+		m.completion.fetchCancel()
+		m.completion.fetchCancel = nil
+	}
+}
+
+// colCachePut stores one table's columns as the most recently used entry.
+// It never evicts; call colCacheTrim once the completion that needed the
+// entry has run.
+func (m *model) colCachePut(tableName string, cols []string) {
+	if m.completion.colCache == nil {
+		m.completion.colCache = make(map[string][]string)
+	}
+	m.completion.colCache[tableName] = cols
+	m.colCacheTouch(tableName)
+}
+
+// colCacheTrim evicts least recently used entries until the cache is back
+// within maxColCacheSize.
+func (m *model) colCacheTrim() {
+	for len(m.completion.colCache) > maxColCacheSize && len(m.completion.colOrder) > 0 {
+		evict := m.completion.colOrder[0]
+		m.completion.colOrder = m.completion.colOrder[1:]
+		delete(m.completion.colCache, evict)
 	}
 }
 
@@ -330,16 +427,23 @@ func (m *model) colCacheTouch(tableName string) {
 }
 
 // allColumns gathers columns from all known tables, filtered by prefix.
-// Returns a cmd if any table's columns need async fetching.
+// Returns a cmd if any table's columns need async fetching; the cmd fetches
+// every missing table at once and re-triggers the completion through
+// allColumnsLoadedMsg.
 func (m *model) allColumns(prefix string) ([]string, tea.Cmd) {
 	var all []string
+	var missing []string
 	for _, t := range m.sidebar.tables {
-		cols, cmd := m.getOrFetchColumns(t)
-		if cmd != nil {
-			// Start fetching; re-trigger will happen on columnsLoadedMsg
-			return nil, cmd
+		cols, ok := m.completion.colCache[t]
+		if !ok {
+			missing = append(missing, t)
+			continue
 		}
+		m.colCacheTouch(t)
 		all = append(all, filterByPrefix(cols, prefix)...)
+	}
+	if len(missing) > 0 {
+		return nil, m.fetchAllColumnsCmd(missing)
 	}
 	return dedup(all), nil
 }

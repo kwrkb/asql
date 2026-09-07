@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"database/sql"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -66,6 +67,15 @@ type completionState struct {
 	colCache      map[string][]string
 	colOrder      []string // LRU order: most recently used at end
 	pendingPrefix string   // prefix when async fetch was initiated (empty = no pending)
+	// fetchCancel abandons the outstanding batch column fetch, if any. See
+	// cancelColumnsFetch.
+	fetchCancel context.CancelFunc
+	// fetchSeq identifies the current batch column fetch. A cancelled batch
+	// still returns a message, so without this an abandoned batch's late
+	// arrival would clear the pendingPrefix that a newer batch is relying on
+	// and the completion the user is waiting for would silently produce
+	// nothing.
+	fetchSeq uint64
 }
 
 // sidebarState holds state for the table-list sidebar (SIDEBAR mode).

@@ -100,6 +100,16 @@ type columnsLoadedMsg struct {
 	connGen uint64 // connection generation when fetch was initiated
 }
 
+// allColumnsLoadedMsg carries the columns of every table one completion was
+// missing (see fetchAllColumnsCmd). On err, columns holds the tables fetched
+// before the failure.
+type allColumnsLoadedMsg struct {
+	columns map[string][]string
+	err     error
+	connGen uint64
+	seq     uint64 // completion.fetchSeq when the batch was started
+}
+
 type model struct {
 	// Connection
 	connMgr  *connManager
@@ -438,6 +448,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dbPath = db.MaskDSN(m.connMgr.ActiveDSN())
 		}
 		m.rawDSN = m.connMgr.ActiveDSN()
+		m.cancelColumnsFetch()
 		m.completion.colCache = nil
 		m.completion.colOrder = nil
 		m.sidebar.tables = nil
@@ -507,6 +518,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.sidebar.tables = msg.tables
+		m.cancelColumnsFetch()
 		m.completion.colCache = nil
 		m.completion.colOrder = nil // invalidate column cache
 		if m.sidebar.cursor >= len(msg.tables) {
@@ -517,28 +529,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.connGen != m.connGen {
 			return m, nil // stale fetch from previous connection
 		}
-		if msg.err == nil && msg.columns != nil {
-			if m.completion.colCache == nil {
-				m.completion.colCache = make(map[string][]string)
-			}
-			const maxColCacheSize = 64
-			if len(m.completion.colCache) >= maxColCacheSize && len(m.completion.colOrder) > 0 {
-				evict := m.completion.colOrder[0]
-				m.completion.colOrder = m.completion.colOrder[1:]
-				delete(m.completion.colCache, evict)
-			}
-			m.completion.colCache[msg.table] = msg.columns
-			m.completion.colOrder = append(m.completion.colOrder, msg.table)
-			// Re-trigger completion only if cursor context still matches
-			if m.mode == insertMode && m.completion.pendingPrefix != "" {
-				prefix, _ := wordAtCursor(m.textarea.Value(), m.textarea.Line(), m.cursorRuneCol())
-				if prefix == m.completion.pendingPrefix {
-					return m, m.triggerCompletion()
-				}
-				m.completion.pendingPrefix = ""
-			}
+		if msg.err != nil || msg.columns == nil {
+			return m, nil
 		}
-		return m, nil
+		m.colCachePut(msg.table, msg.columns)
+		return m, m.resumeCompletion()
+	case allColumnsLoadedMsg:
+		if msg.connGen != m.connGen {
+			return m, nil // stale fetch from previous connection
+		}
+		if msg.seq != m.completion.fetchSeq {
+			// A batch a newer one superseded. Cancelling makes it return
+			// early with an error, and letting that reach the branches below
+			// would clear the pendingPrefix the newer batch is waiting on.
+			return m, nil
+		}
+		for table, cols := range msg.columns {
+			m.colCachePut(table, cols)
+		}
+		if msg.err != nil {
+			// The gather is incomplete; resuming would fetch the rest and
+			// hit the same error. The next Tab starts over from what landed.
+			m.completion.pendingPrefix = ""
+			m.colCacheTrim()
+			return m, nil
+		}
+		return m, m.resumeCompletion()
 	case statsComputedMsg:
 		if msg.seq != m.statsSt.seq {
 			return m, nil // stale stats result — discard
