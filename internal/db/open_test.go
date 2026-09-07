@@ -1,6 +1,7 @@
 package db
 
 import (
+	"errors"
 	"net/url"
 	"strings"
 	"testing"
@@ -54,17 +55,28 @@ func TestMaskDSN(t *testing.T) {
 		{"sqlite file unchanged", "sqlite.db", "sqlite.db"},
 		{"query param password masked", "postgres://user@host/db?password=secret", "postgres://user@host/db?password=%2A%2A%2A"},
 		{"both userinfo and query param", "mysql://user:pass@host/db?password=secret", "mysql://user:%2A%2A%2A@host/db?password=%2A%2A%2A"},
+		// The key is compared case-insensitively. A DSN url.Parse accepts is
+		// what the status bar and the profile overlay render, so a spelling the
+		// parsed branch skipped was a password on screen.
+		{"upper-case query param password masked", "postgres://user@host/db?PASSWORD=secret", "postgres://user@host/db?PASSWORD=%2A%2A%2A"},
+		{"mixed-case query param password masked", "postgres://user@host/db?Password=secret&sslmode=require", "postgres://user@host/db?Password=%2A%2A%2A&sslmode=require"},
 		{"no password unchanged", "postgres://user@host/db", "postgres://user@host/db"},
 		{"malformed URL best-effort", "postgres://user:secret@host:5432/db%zz", "postgres://user:***@host:5432/db%zz"},
 		// net/url reads userinfo up to the *last* '@', so the password here is
 		// "sec@ret". Masking only to the first '@' would print "ret@host" back.
 		{"malformed URL with '@' in the password", "mysql://user:sec@ret@host:bad/db", "mysql://user:***@host:bad/db"},
-		// The bound at '/' keeps the match inside the authority: an '@' in the
-		// path must not extend the masked span.
-		{"malformed URL with '@' in the path", "mysql://user:secret@host:bad/db@x", "mysql://user:***@host:bad/db@x"},
-		// A literal '/' in the password puts it out of reach of the bound at
-		// '/', and the whole pattern then fails to match. Before the fallback
-		// to the last '@' this returned the DSN with the password intact.
+		// An '@' in the path extends the masked span to it, hiding the host.
+		// That is the accepted cost of masking to the last '@': a rejected DSN
+		// has no grammar left that says which '@' ends the userinfo, and
+		// over-masking loses an error message, under-masking loses a secret.
+		{"malformed URL with '@' in the path", "mysql://user:secret@host:bad/db@x", "mysql://user:***@x"},
+		// A password holding both '@' and '/' used to match a span too *short*
+		// to cover it — "e:bad/cret" was printed — because the earlier pattern
+		// stopped at the first '/' and matched anyway, so no fallback ran.
+		{"malformed URL with '@' before '/' in the password", "postgres://alice:s@e:bad/cret@host/db", "postgres://alice:***@host/db"},
+		// A literal '/' in the password. url.Parse rejects it, so it only ever
+		// reaches this branch, and a pattern bounded at '/' could not match it
+		// at all — the DSN came back with the password intact.
 		{"malformed URL with '/' in the password", "postgres://alice:se/cret@localhost:bad/db", "postgres://alice:***@localhost:bad/db"},
 		{"malformed URL with '/' and '@' in the password", "postgres://alice:se/cr@et@localhost:bad/db", "postgres://alice:***@localhost:bad/db"},
 		// The parsed path masks a password= parameter; the malformed path has
@@ -84,20 +96,38 @@ func TestMaskDSN(t *testing.T) {
 	}
 }
 
-// URLParseCause must name the kind of failure and nothing else. Every cause
-// url.Parse produces embeds part of the input — url.EscapeError is the whole
-// password in a DSN like postgres://alice:%ss@host/db — so a caller that
-// printed the cause verbatim would leak it.
-func TestURLParseCause(t *testing.T) {
+// URLParseError must name the kind of failure and show the DSN masked, and
+// must never quote the input back. Every cause url.Parse produces embeds part
+// of the input — url.EscapeError is the whole password in a DSN like
+// postgres://alice:%ss@host/db — so a caller that printed the cause verbatim
+// would leak it.
+func TestURLParseError(t *testing.T) {
 	tests := []struct {
 		name    string
 		dsn     string
-		want    string
+		wantMsg string
 		secrets []string
 	}{
-		{"invalid percent-escape", "postgres://alice:%ss@host/db", "invalid percent-escape", []string{"%ss", "alice"}},
-		{"invalid port", "postgres://alice:secret@host:bad/db", "invalid URL", []string{"secret", "bad"}},
-		{"invalid character in host", "postgres://alice:secret@ho|st/db", "invalid character in host", []string{"secret", "|"}},
+		{
+			"invalid percent-escape",
+			"postgres://alice:%ss@host/db",
+			"parsing PostgreSQL URL postgres://alice:***@host/db: invalid percent-escape",
+			[]string{"%ss"},
+		},
+		{
+			// The invalid-port cause is an unnamed errors.errorString, so the
+			// default arm is what keeps it from being printed.
+			"invalid port",
+			"postgres://alice:secret@host:bad/db",
+			"parsing PostgreSQL URL postgres://alice:***@host:bad/db: invalid URL",
+			[]string{"secret"},
+		},
+		{
+			"invalid character in host",
+			"postgres://alice:secret@ho|st/db",
+			"parsing PostgreSQL URL postgres://alice:***@ho|st/db: invalid character in host",
+			[]string{"secret"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -105,15 +135,29 @@ func TestURLParseCause(t *testing.T) {
 			if err == nil {
 				t.Fatalf("url.Parse(%q) expected an error, got nil", tt.dsn)
 			}
-			got := URLParseCause(err)
-			if got != tt.want {
-				t.Errorf("URLParseCause() = %q, want %q", got, tt.want)
+			got := URLParseError("PostgreSQL", tt.dsn, err).Error()
+			if got != tt.wantMsg {
+				t.Errorf("URLParseError() = %q, want %q", got, tt.wantMsg)
 			}
 			for _, secret := range tt.secrets {
 				if strings.Contains(got, secret) {
-					t.Errorf("URLParseCause() quotes the input back (%q): %q", secret, got)
+					t.Errorf("URLParseError() leaks %q: %q", secret, got)
 				}
 			}
 		})
+	}
+}
+
+// The returned error must not carry the original as a cause: a caller that
+// unwrapped it would get url.Error's copy of the raw DSN back.
+func TestURLParseErrorDropsTheCause(t *testing.T) {
+	dsn := "postgres://alice:review-secret@localhost:bad/db"
+	_, cause := url.Parse(dsn)
+	err := URLParseError("PostgreSQL", dsn, cause)
+	if errors.Unwrap(err) != nil {
+		t.Errorf("URLParseError() wraps a cause that can be unwrapped and printed: %v", errors.Unwrap(err))
+	}
+	if strings.Contains(err.Error(), "review-secret") {
+		t.Errorf("URLParseError() leaks the password: %q", err.Error())
 	}
 }

@@ -148,34 +148,26 @@ func TestWithParam_ParseErrorRedactsPassword(t *testing.T) {
 		{"password as a query parameter", "postgres://alice@127.0.0.1:bad/prod?password=review-secret", []string{"review-secret"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, call := range []struct {
-				via string
-				err error
-			}{
-				{"withParam", func() error {
-					_, err := withParam(tc.dsn, "default_transaction_read_only", "on")
-					return err
-				}()},
-				// OpenReadonly is the real entry point and must not re-wrap the
-				// error back into something that carries the raw DSN.
-				{"OpenReadonly", func() error {
-					_, err := OpenReadonly(tc.dsn)
-					return err
-				}()},
-			} {
-				if call.err == nil {
-					t.Fatalf("%s() expected an error for an unparseable URL, got nil", call.via)
+			check := func(via string, err error) {
+				if err == nil {
+					t.Fatalf("%s() expected an error for an unparseable URL, got nil", via)
 				}
-				msg := call.err.Error()
+				msg := err.Error()
 				for _, secret := range tc.secrets {
 					if strings.Contains(msg, secret) {
-						t.Errorf("%s() error leaks %q: %q", call.via, secret, msg)
+						t.Errorf("%s() error leaks %q: %q", via, secret, msg)
 					}
 				}
 				if !strings.Contains(msg, "***") {
-					t.Errorf("%s() error does not show the DSN masked: %q", call.via, msg)
+					t.Errorf("%s() error does not show the DSN masked: %q", via, msg)
 				}
 			}
+			_, err := withParam(tc.dsn, "default_transaction_read_only", "on")
+			check("withParam", err)
+			// OpenReadonly is the real entry point and must not re-wrap the
+			// error back into something that carries the raw DSN.
+			_, err = OpenReadonly(tc.dsn)
+			check("OpenReadonly", err)
 		})
 	}
 }

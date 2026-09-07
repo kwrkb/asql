@@ -2,44 +2,64 @@ package db
 
 import (
 	"errors"
+	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
 )
 
-// rePasswordInDSN masks the password in a DSN url.Parse could not read. The
-// password group stops at '/' rather than at '@' so it can backtrack to the
-// *last* '@' before the path — net/url reads userinfo greedily, so in
-// "mysql://user:sec@ret@host/db" the password is "sec@ret", and stopping at
-// the first '@' would print "ret@host" back. Bounding it at '/' keeps the
-// match from running past the authority into an '@' in the path.
-var rePasswordInDSN = regexp.MustCompile(`(://[^:]*:)([^/]*)(@)`)
-
-// rePasswordToLastAt is the fallback for a password rePasswordInDSN cannot
-// reach. Its bound at '/' is what stops an '@' in the *path* from extending the
-// masked span, but that same bound means a password containing a literal '/' —
-// which url.Parse rejects, so it only ever shows up here — leaves the pattern
-// unmatched and the DSN printed raw. This one runs to the *last* '@' in the
-// string instead. It can over-mask (an '@' in the path swallows the host), and
-// that is the direction to fail in: a hidden host is a worse error message, a
+// rePasswordInDSN masks the password in a DSN url.Parse could not read: from
+// the first ':' after "://" — the delimiter that starts the password — to the
+// *last* '@' in the string.
+//
+// Running to the last '@' rather than stopping at the authority is deliberate.
+// net/url reads userinfo greedily, so in "mysql://user:sec@ret@host/db" the
+// password really is "sec@ret" and a shorter span prints "ret@host" back. There
+// is no bound that is right for every rejected DSN, because a rejected DSN has
+// no grammar left to appeal to: a '/' in it is irreducibly ambiguous between
+// path-start and password byte, so any bound at '/' both misses a password
+// containing one and, worse, can match a span too *short* to cover the secret.
+//
+// So it over-masks instead: an '@' in the path swallows the host, and
+// "mysql://user:secret@host:bad/db@x" masks down to "mysql://user:***@x". That
+// is the direction to fail in — a hidden host is a worse error message, a
 // printed password is a leaked credential.
-var rePasswordToLastAt = regexp.MustCompile(`(://[^:]*:)(.*)(@)`)
+var rePasswordInDSN = regexp.MustCompile(`(://[^:]*:)(.*)(@)`)
 
-// rePasswordParam masks a password passed as a query parameter. The parsed path
-// below does this through url.Values; on a DSN url.Parse rejected there is no
-// RawQuery to read, so it is done textually.
-var rePasswordParam = regexp.MustCompile(`([?&](?i:password)=)([^&]*)`)
+// isPasswordParam reports whether a query-parameter key names a password. Both
+// halves of MaskDSN consult it, so a key one half masks cannot be a key the
+// other half prints. It is case-insensitive because the value is a secret
+// whether or not the driver ends up honouring the spelling.
+func isPasswordParam(key string) bool {
+	return strings.EqualFold(key, "password")
+}
+
+// maskPasswordParams masks password query parameters in a DSN url.Parse
+// rejected. The parsed path does this through url.Values; here there is no
+// RawQuery to read, so the query is split textually.
+func maskPasswordParams(dsn string) string {
+	i := strings.IndexByte(dsn, '?')
+	if i < 0 {
+		return dsn
+	}
+	params := strings.Split(dsn[i+1:], "&")
+	for j, p := range params {
+		eq := strings.IndexByte(p, '=')
+		if eq < 0 || !isPasswordParam(p[:eq]) {
+			continue
+		}
+		params[j] = p[:eq+1] + "***"
+	}
+	return dsn[:i+1] + strings.Join(params, "&")
+}
 
 // maskMalformedDSN is the best effort for a DSN url.Parse could not read. It is
 // not a fallback for display alone: every DSN reported in a url.Parse *error*
-// arrives here by construction, so an unmatched pattern here means the raw
-// credential reaches stderr and the TUI.
+// arrives here by construction, and a stored profile reaches the status bar and
+// the profile overlay through here too, so anything left unmatched is a raw
+// credential on screen.
 func maskMalformedDSN(dsn string) string {
-	masked := rePasswordInDSN.ReplaceAllString(dsn, "${1}***${3}")
-	if masked == dsn {
-		masked = rePasswordToLastAt.ReplaceAllString(dsn, "${1}***${3}")
-	}
-	return rePasswordParam.ReplaceAllString(masked, "${1}***")
+	return maskPasswordParams(rePasswordInDSN.ReplaceAllString(dsn, "${1}***${3}"))
 }
 
 // MaskDSN returns a display-safe version of the DSN with passwords masked.
@@ -59,8 +79,14 @@ func MaskDSN(dsn string) string {
 		}
 	}
 	q := u.Query()
-	if q.Get("password") != "" {
-		q.Set("password", "***")
+	maskedParam := false
+	for key := range q {
+		if isPasswordParam(key) && q.Get(key) != "" {
+			q.Set(key, "***")
+			maskedParam = true
+		}
+	}
+	if maskedParam {
 		u.RawQuery = q.Encode()
 		masked = true
 	}
@@ -70,19 +96,34 @@ func MaskDSN(dsn string) string {
 	return u.String()
 }
 
-// URLParseCause names the kind of url.Parse failure without quoting any of the
-// DSN back. Both halves of a url.Parse failure carry the input: url.Error
-// embeds the raw URL, and its cause embeds a fragment of it — url.EscapeError
-// holds the offending "%xx" sequence, which is the whole password in a DSN like
-// postgres://alice:%ss@host/db. The causes that embed input do so unpredictably
-// — url.Parse reads userinfo greedily, so which bytes land in an escape or port
-// error is not something the DSN's shape predicts — which is why this describes
-// the known kinds and says nothing more for the rest, rather than allow-listing
-// causes believed to be safe to print verbatim.
+// URLParseError reports a url.Parse failure for a DSN without leaking it.
 //
-// Callers report the DSN through MaskDSN and this cause instead of wrapping the
-// original error, so the raw error cannot travel to a caller that prints it.
-func URLParseCause(err error) string {
+// Neither half of a url.Parse failure is safe to print. url.Error embeds the
+// raw URL, and its cause embeds a fragment of it — url.EscapeError holds the
+// offending "%xx" sequence, which is the whole password in a DSN like
+// postgres://alice:%ss@host/db. These errors reach stderr and the TUI, so this
+// reports the DSN masked, reduces the cause to the kind of failure, and drops
+// the original error rather than wrapping it, so it cannot travel to a caller
+// that prints it.
+//
+// It exists so that rule lives in one signature rather than in a comment beside
+// every adapter's url.Parse call: a caller cannot reach for %w without noticing
+// it is stepping around this.
+//
+// label names the DSN's flavour for the message, e.g. "MySQL" or "PostgreSQL".
+func URLParseError(label, dsn string, err error) error {
+	return fmt.Errorf("parsing %s URL %s: %s", label, MaskDSN(dsn), urlParseCause(err))
+}
+
+// urlParseCause names the kind of url.Parse failure without quoting any of the
+// DSN back. The causes that embed input do so unpredictably — url.Parse reads
+// userinfo greedily, so which bytes land in an escape or port error is not
+// something the DSN's shape predicts — which is why this describes the known
+// kinds and says nothing more for the rest, rather than allow-listing causes
+// believed to be safe to print verbatim. The invalid-port failure in particular
+// arrives as an unnamed errors.errorString that no type switch can match, so
+// the default is what covers it.
+func urlParseCause(err error) string {
 	var ue *url.Error
 	if errors.As(err, &ue) {
 		err = ue.Err

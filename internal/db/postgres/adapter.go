@@ -109,12 +109,9 @@ func openReadonly(dsn, parameter string) (*Adapter, error) {
 func withParam(dsn, name, value string) (string, error) {
 	u, err := url.Parse(dsn)
 	if err != nil {
-		// Neither half of a url.Parse failure is safe to print here, and this
-		// error reaches both stderr and the TUI connection-switch display. So
-		// the DSN is reported masked, the cause is reduced to the kind of
-		// failure, and the original error is dropped rather than wrapped so it
-		// cannot travel to a caller that prints it. See db.URLParseCause.
-		return "", fmt.Errorf("parsing PostgreSQL URL %s: %s", db.MaskDSN(dsn), db.URLParseCause(err))
+		// Not wrapped: url.Parse's error embeds the raw DSN and this reaches
+		// both stderr and the TUI connection-switch display. See db.URLParseError.
+		return "", db.URLParseError("PostgreSQL", dsn, err)
 	}
 	q := u.Query()
 	q.Set(name, value)

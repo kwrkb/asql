@@ -226,7 +226,7 @@ func TestBuildConfig_ParseErrorRedactsPassword(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := buildConfig(tc.dsn)
 			if err == nil {
-				t.Fatal("buildConfig() expected an error for an invalid percent escape, got nil")
+				t.Fatal("buildConfig() expected an error for an unparseable URL, got nil")
 			}
 			msg := err.Error()
 			for _, secret := range tc.secrets {

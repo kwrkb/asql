@@ -281,14 +281,9 @@ func buildConfig(dsn string) (*gomysql.Config, error) {
 
 	u, err := url.Parse(dsn)
 	if err != nil {
-		// Neither half of a url.Parse failure is safe to print here, and this
-		// error reaches both stderr and the TUI. url.Error carries the raw DSN,
-		// and its cause carries a fragment of it: url.EscapeError holds the
-		// offending "%xx" sequence, which is the whole password in a DSN like
-		// mysql://alice:%ss@host/db. So the DSN is reported masked, the cause
-		// is reduced to the kind of failure, and the original error is dropped
-		// rather than wrapped so it cannot travel to a caller that prints it.
-		return nil, fmt.Errorf("parsing MySQL URL %s: %s", db.MaskDSN(dsn), db.URLParseCause(err))
+		// Not wrapped: url.Parse's error embeds the raw DSN and this reaches
+		// both stderr and the TUI. See db.URLParseError.
+		return nil, db.URLParseError("MySQL", dsn, err)
 	}
 
 	host := u.Host
