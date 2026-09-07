@@ -56,12 +56,7 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case "c":
 			if m.pinned != nil {
-				// Toggle off
-				m.pinned = nil
-				m.comparePane = 0
-				m.table.SetStyles(focusedTableStyles())
-				m.setStatus("Compare closed", false)
-				m.viewportDirty = true
+				m.closeCompare("Compare closed")
 				m.resize()
 			} else {
 				if len(m.lastResult.Columns) == 0 {
@@ -73,7 +68,7 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					break
 				}
 				m.pinned = m.pinCurrentResult()
-				m.comparePane = 1 // focus on right (active) pane
+				m.focusComparePane(1) // start on the right (active) pane
 				m.setStatus(m.compareStatusSummary()+" — switch connection and re-execute", false)
 				m.resize()
 			}
@@ -148,17 +143,7 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyTab:
 		if m.pinned != nil {
-			if m.comparePane == 0 {
-				m.comparePane = 1
-				m.pinned.table.SetStyles(unfocusedTableStyles())
-				m.table.SetStyles(focusedTableStyles())
-			} else {
-				m.comparePane = 0
-				m.pinned.table.SetStyles(focusedTableStyles())
-				m.table.SetStyles(unfocusedTableStyles())
-			}
-			m.pinned.viewportDirty = true
-			m.viewportDirty = true
+			m.focusComparePane(1 - m.comparePane)
 		}
 	case tea.KeyCtrlS:
 		return m.enterSnippetNamingMode()
