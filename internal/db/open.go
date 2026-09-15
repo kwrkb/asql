@@ -195,7 +195,11 @@ func DisplayName(dsn string) string {
 func extractHost(dsn string) string {
 	u, err := url.Parse(dsn)
 	if err != nil || u.Host == "" {
-		return dsn
+		// A DSN without a host still connects — pgx resolves it to a Unix socket
+		// and go-sql-driver to 127.0.0.1 — so this is a display path for a live
+		// connection, not only for a broken one. Show it masked rather than
+		// "localhost", which would misstate how the connection was made.
+		return MaskDSN(dsn)
 	}
 	host := u.Hostname()
 	if host == "" {

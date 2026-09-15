@@ -35,6 +35,9 @@ func TestDisplayName(t *testing.T) {
 		{"mysql://user:pass@myhost:3306/mydb", "myhost"},
 		{"postgres://user:pass@pghost:5432/pgdb", "pghost"},
 		{"postgres://user@localhost/db", "localhost"},
+		{"postgres://alice:secret@/db", "postgres://alice:%2A%2A%2A@/db"},
+		{"mysql://alice:secret@/db", "mysql://alice:%2A%2A%2A@/db"},
+		{"postgres://alice:secret@/db?host=%2Fvar%2Frun%2Fpostgresql", "postgres://alice:%2A%2A%2A@/db?host=%2Fvar%2Frun%2Fpostgresql"},
 	}
 	for _, tt := range tests {
 		if got := DisplayName(tt.dsn); got != tt.want {

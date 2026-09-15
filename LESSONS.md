@@ -1480,3 +1480,23 @@ readonly では同じ字句判定で `SELECT(1) is not allowed` と拒否され�
 - 新たに拒否されるものはない。許可される集合が増えるのは上の 1 クラスだけで、書き込みは含まれない
 
 **覆す条件**: 許可キーワードの直後に非識別子文字を置いて書き込む構文が方言に現れたとき。
+
+---
+
+## 2026-09-15: ホストなし DSN の表示名は `localhost` ではなくマスク済み DSN
+
+`DisplayName("postgres://alice:secret@/db")` が生の DSN を返し、ステータスバーと compare ペインの
+ラベルにパスワードが出ていた（Issue #113）。`extractHost` は `url.Parse` 成功・`u.Host == ""` のとき
+`return dsn` へ落ちていた。
+
+**却下した案**: ホスト空の DSN を `localhost` と表示する（既存の `u.Hostname() == ""` 分岐に寄せる）。
+
+**決め手**:
+- ホストなし DSN は接続に成功する経路で、pgx はホスト空を Unix ソケットに、go-sql-driver は
+  `127.0.0.1:3306` に解決する。`?host=/var/run/postgresql` のようにソケットを明示した DSN も同じ分岐に来る
+- `localhost` 表示はこのソケット接続を TCP の localhost と区別できなくする。`MaskDSN(dsn)` なら
+  接続方法（`?host=` を含む）を残したまま資格情報だけ隠れる
+- 修正前の実測: 追加した 3 ケースすべてで `DisplayName` が `secret` を含む文字列を返して FAIL
+
+**覆す条件**: ステータスバーの幅の都合でマスク済み DSN 全体が表示の邪魔になると実利用で観察されたとき
+（その場合もソケットパスを残す短縮表示を検討し、`localhost` には倒さない）。
