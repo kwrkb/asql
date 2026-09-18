@@ -53,7 +53,10 @@ func (m model) updateSidebar(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m model) renderSidebar() string {
 	height := m.height - 1 // exclude status bar
-	w := sidebarWidth
+	// The right border sits outside lipgloss's Width, so the content gets one
+	// cell less for the whole sidebar to take exactly sidebarWidth, the amount
+	// contentWidth and fullContentWidth leave for it.
+	w := sidebarWidth - 1
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
