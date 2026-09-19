@@ -374,28 +374,14 @@ func (m *model) renderCompareView() string {
 	if leftLabel == "" {
 		leftLabel = "pinned"
 	}
-	leftPanel := lipgloss.NewStyle().
-		Width(max(paneWidth, 0)).
-		Height(max(paneHeight, 0)).
-		Background(panelBackground).
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(leftBorderColor).
-		Padding(0, 1).
-		Render(m.pinned.table.View())
+	leftPanel := framedPanel(m.pinned.table.View(), paneWidth, paneHeight, leftBorderColor)
 
 	// Right pane (active)
 	rightBorderColor := unfocusedBorder
 	if m.comparePane == 1 {
 		rightBorderColor = focusedBorder
 	}
-	rightPanel := lipgloss.NewStyle().
-		Width(max(paneWidth, 0)).
-		Height(max(paneHeight, 0)).
-		Background(panelBackground).
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(rightBorderColor).
-		Padding(0, 1).
-		Render(m.table.View())
+	rightPanel := framedPanel(m.table.View(), paneWidth, paneHeight, rightBorderColor)
 
 	// Label above each pane
 	leftRows, rightRows := m.compareRowCounts()

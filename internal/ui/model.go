@@ -733,7 +733,7 @@ func (m *model) resize() {
 	fullWidth := m.fullContentWidth()
 	contentWidth := m.contentWidth() // half if compare active
 
-	m.textarea.SetWidth(max(fullWidth-4, 20))
+	m.textarea.SetWidth(max(fullWidth, 20)) // SetWidth already counts the border
 	m.textarea.SetHeight(max(editorHeight-2, 1))
 
 	if m.pinned != nil {
@@ -760,8 +760,7 @@ func (m *model) resize() {
 }
 
 func (m *model) editorHeight() int {
-	// Account for 1 status bar row and 2 JoinVertical newlines
-	available := max(m.height-3, 0)
+	available := m.bodyHeight()
 	if available <= 0 {
 		return 0
 	}
@@ -779,8 +778,16 @@ func (m *model) editorHeight() int {
 	return h
 }
 
+// bodyHeight is the height shared by the editor and the results pane: the
+// terminal minus the one-row status bar. JoinVertical adds no rows of its own —
+// the newlines it inserts only separate the blocks — so nothing else is
+// subtracted; reserving rows for them left the bottom of the screen blank.
+func (m *model) bodyHeight() int {
+	return max(m.height-1, 0)
+}
+
 func (m *model) resultsHeight() int {
-	available := max(m.height-3, 0)
+	available := m.bodyHeight()
 	if available <= 0 {
 		return 0
 	}

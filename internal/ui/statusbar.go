@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kwrkb/asql/internal/db/readonly"
 )
@@ -141,12 +142,23 @@ func (m model) renderStatusBar() string {
 	center := dbLabelStyle.Render("["+m.statusConnectionLabel()+"]") + m.pathStyle.Render(m.dbPath)
 	middle := msgStyle.Render(sanitize(m.statusText))
 	pos := posStyle.Render(m.statusPositionInfo())
-	right := hintStyle.Render(m.statusHints())
 
 	leftPart := lipgloss.JoinHorizontal(lipgloss.Left, modeStr, center, middle)
+	// The hints are the least important part, so they give way first: cut
+	// the text before hintStyle pads it, so the padding survives the cut.
+	hintRoom := m.width - lipgloss.Width(leftPart) - lipgloss.Width(pos) - hintStyle.GetHorizontalFrameSize()
+	right := ""
+	if hints := truncateCells(m.statusHints(), hintRoom); hints != "" {
+		right = hintStyle.Render(hints)
+	}
+
 	rightPart := lipgloss.JoinHorizontal(lipgloss.Right, pos, right)
 	gap := max(m.width-lipgloss.Width(leftPart)-lipgloss.Width(rightPart), 0)
-	bar := leftPart + strings.Repeat(" ", gap) + rightPart
+	// The bar must stay one row: Width wraps anything longer, and the extra
+	// rows push the bottom of the screen out of the MaxHeight crop in View.
+	// A long DSN or message can overflow even with no hints left, so the
+	// whole bar is cut to the terminal width as well.
+	bar := ansi.Truncate(leftPart+strings.Repeat(" ", gap)+rightPart, m.width, "…")
 
 	return lipgloss.NewStyle().
 		Width(m.width).

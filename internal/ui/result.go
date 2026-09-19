@@ -55,15 +55,7 @@ func (m *model) visibleColumnRange() (int, int) {
 func (m *model) syncViewport() {
 	if len(m.lastResult.Columns) == 0 || len(m.cachedColWidths) == 0 {
 		// No windowing needed for message-only results
-		panel := lipgloss.NewStyle().
-			Width(max(m.contentWidth(), 0)).
-			Height(max(m.resultsHeight(), 0)).
-			Background(panelBackground).
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(panelBorder).
-			Padding(0, 1).
-			Render(m.table.View())
-		m.viewport.SetContent(panel)
+		m.viewport.SetContent(framedPanel(m.table.View(), m.contentWidth(), m.resultsHeight(), panelBorder))
 		return
 	}
 
@@ -128,15 +120,24 @@ func (m *model) syncViewport() {
 		m.viewportDirty = false
 	}
 
-	panel := lipgloss.NewStyle().
-		Width(max(m.contentWidth(), 0)).
-		Height(max(m.resultsHeight(), 0)).
+	m.viewport.SetContent(framedPanel(m.table.View(), m.contentWidth(), m.resultsHeight(), panelBorder))
+}
+
+// framedPanel renders content in a bordered result panel that occupies w×h
+// cells, border included. lipgloss v1 sizes Width and Height without the
+// border, so passing w and h straight through renders a panel two cells wider
+// and taller than asked: the viewport then clips its right and bottom edges,
+// and in compare mode the second pane runs off the screen.
+func framedPanel(content string, w, h int, border lipgloss.TerminalColor) string {
+	style := lipgloss.NewStyle().
 		Background(panelBackground).
 		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(panelBorder).
-		Padding(0, 1).
-		Render(m.table.View())
-	m.viewport.SetContent(panel)
+		BorderForeground(border).
+		Padding(0, 1)
+	return style.
+		Width(max(w-style.GetHorizontalBorderSize(), 0)).
+		Height(max(h-style.GetVerticalBorderSize(), 0)).
+		Render(content)
 }
 
 func (m *model) applyResult(result db.QueryResult) {

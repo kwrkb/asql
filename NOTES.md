@@ -46,7 +46,7 @@
 | `normal.go` / `insert.go` / `sidebar.go` | 主要 3 モードのキーハンドリング |
 | `ai.go` / `export.go` / `detail.go` / `snippet.go` / `profile.go` / `history_search.go` / `stats.go` | 各オーバーレイモード |
 | `query.go` | クエリ実行コマンド（上記エントリポイント） |
-| `result.go` | 結果の反映・列幅計算・ソート・ビューポート同期 |
+| `result.go` | 結果の反映・列幅計算・ソート・ビューポート同期・`framedPanel`（枠込みで w×h に収める結果パネル。compare も使う） |
 | `compare.go` | 横並び比較と差分ハイライト |
 | `connmgr.go` | 複数接続の保持と切替（`Switch` / `Register` / `CloseAll`）。bring DB は `Register` 経由で `opener.Open` を通らない |
 | `bring.go` | `b` で持ち寄り、`J` でローカル bring DB へ切替 |
