@@ -25,7 +25,7 @@ go build
 # テスト
 go test ./...
 
-# E2E テスト（VHS）— 実行前に e2e/README.md を必ず読むこと
+# E2E テスト（VHS）— 実行前に e2e/README.md を読む（前提ツール vhs/ttyd/ffmpeg と、tape 構文のハマりどころがまとまっている）
 bash e2e/run.sh
 
 # 静的解析
@@ -76,7 +76,7 @@ GITHUB_TOKEN=$(gh auth token) goreleaser release --clean
 | ファイル | 役割 | 更新のルール |
 |---|---|---|
 | `VISION.md` | **正典**。目的・スコープ・非スコープ・Decision Rule・現在のフェーズ | **更新はユーザー承認必須** |
-| `PLAN.md` | フェーズ境界と現在地**だけ** | 手順分解は書かない（TodoWrite を使う）。個別の機能要望・バグは **GitHub Issue** |
+| `PLAN.md` | フェーズ境界と現在地**だけ** | 手順分解は書かない（作業中の手順はセッション内で管理する）。個別の機能要望・バグは **GitHub Issue** |
 | `HISTORY.md` | 完了したタスクの永続記録 | PLAN.md から落ちた完了項目はここへ移す |
 | `LESSONS.md` | 判断の記録 | **追記専用**。過去を書き換えない。1 エントリ = 却下した案 / 決め手（観測事実のみ）/ 覆す条件。冒頭の「書き方」を参照 |
 | `NOTES.md` | 内部構造の索引 | **揮発・鮮度非保証**。コードが常に正しい。気づいた時点で直してよい（承認不要） |
