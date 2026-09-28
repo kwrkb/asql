@@ -515,3 +515,30 @@ func TestStats_RenderOverlayAlignsHeaderWithRows(t *testing.T) {
 		t.Errorf("header NULL%% ends at cell %d, the value at %d", got, want)
 	}
 }
+
+func TestNewResultResetsStatsAndDetail(t *testing.T) {
+	m := newTestModel()
+	m.lastResult = db.QueryResult{Columns: []string{"a", "b", "c"}, Rows: [][]string{{"1", "2", "3"}}}
+	m.mode = statsMode
+	m.statsSt = statsState{cursor: 2, scroll: 1, stats: []columnStat{{}}, loading: true, seq: 5}
+	m.detail = detailState{fieldCursor: 2, scroll: 1}
+	m.querySeq = 1
+
+	next, _ := m.Update(queryExecutedMsg{seq: 1, query: "SELECT a FROM t", result: db.QueryResult{
+		Columns: []string{"a"}, Rows: [][]string{{"1"}},
+	}})
+	got := next.(model)
+
+	if got.statsSt.stats != nil || got.statsSt.loading || got.statsSt.cursor != 0 {
+		t.Errorf("stats not reset: %+v", got.statsSt)
+	}
+	if got.statsSt.seq == 5 {
+		t.Error("stats seq not bumped, an in-flight computation would still be accepted")
+	}
+	if got.mode != normalMode {
+		t.Errorf("mode = %v, want normalMode", got.mode)
+	}
+	if got.detail.fieldCursor != 0 || got.detail.scroll != 0 {
+		t.Errorf("detail not clamped: %+v", got.detail)
+	}
+}

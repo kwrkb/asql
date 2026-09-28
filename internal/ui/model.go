@@ -589,6 +589,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.colCursor = 0
 		m.colOffset = 0
 		m.applyResult(msg.result)
+		m.resetResultOverlays()
 		m.syncCompareTables()
 		if m.pinned != nil {
 			m.setStatus(m.compareStatusSummary(), false)
@@ -801,4 +802,23 @@ func (m *model) resultsHeight() int {
 func (m *model) setStatus(text string, isError bool) {
 	m.statusText = text
 	m.statusError = isError
+}
+
+// resetResultOverlays drops what the STATS and DETAIL overlays derived from
+// the previous result. A query can finish while one of them is open, and
+// without this the overlay would show old column stats under the new row
+// count, or a field cursor past the end of a narrower result.
+func (m *model) resetResultOverlays() {
+	m.statsSt.seq++ // also discards a stats computation still in flight
+	m.statsSt.stats = nil
+	m.statsSt.loading = false
+	m.statsSt.cursor = 0
+	m.statsSt.scroll = 0
+	if m.mode == statsMode {
+		m.mode = normalMode
+	}
+	if n := len(m.lastResult.Columns); m.detail.fieldCursor >= n {
+		m.detail.fieldCursor = max(n-1, 0)
+		m.detail.scroll = min(m.detail.scroll, m.detail.fieldCursor)
+	}
 }
