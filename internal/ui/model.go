@@ -817,6 +817,9 @@ func (m *model) resetResultOverlays() {
 	if m.mode == statsMode {
 		m.mode = normalMode
 	}
+	if m.mode == detailMode && len(m.lastResult.Rows) == 0 {
+		m.mode = normalMode // nothing left to show; DETAIL would render blank
+	}
 	if n := len(m.lastResult.Columns); m.detail.fieldCursor >= n {
 		m.detail.fieldCursor = max(n-1, 0)
 		m.detail.scroll = min(m.detail.scroll, m.detail.fieldCursor)

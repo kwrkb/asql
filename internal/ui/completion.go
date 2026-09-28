@@ -292,7 +292,9 @@ func (m *model) acceptCompletion() {
 	m.closeCompletion()
 }
 
-// insertCompletion replaces the prefix with the selected item.
+// insertCompletion replaces the prefix with the selected item. The textarea
+// must be focused: the typed text is removed with synthetic Backspace keys,
+// which a blurred textarea ignores.
 func (m *model) insertCompletion(selected string, prefix string) {
 	// For "tablename.col" prefix, only replace after the dot
 	typed := prefix

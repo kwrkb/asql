@@ -542,3 +542,17 @@ func TestNewResultResetsStatsAndDetail(t *testing.T) {
 		t.Errorf("detail not clamped: %+v", got.detail)
 	}
 }
+
+func TestEmptyResultLeavesDetailMode(t *testing.T) {
+	m := newTestModel()
+	m.lastResult = db.QueryResult{Columns: []string{"a"}, Rows: [][]string{{"1"}}}
+	m.mode = detailMode
+	m.querySeq = 1
+
+	next, _ := m.Update(queryExecutedMsg{seq: 1, query: "SELECT a FROM t WHERE 0", result: db.QueryResult{
+		Columns: []string{"a"},
+	}})
+	if got := next.(model); got.mode != normalMode {
+		t.Errorf("mode = %v, want normalMode", got.mode)
+	}
+}
