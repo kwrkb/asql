@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -291,19 +292,26 @@ func (m *model) acceptCompletion() {
 	m.closeCompletion()
 }
 
-// insertCompletion replaces the prefix with the selected item.
+// insertCompletion replaces the prefix with the selected item. The textarea
+// must be focused: the typed text is removed with synthetic Backspace keys,
+// which a blurred textarea ignores.
 func (m *model) insertCompletion(selected string, prefix string) {
 	// For "tablename.col" prefix, only replace after the dot
-	suffix := selected
+	typed := prefix
 	if dotIdx := strings.LastIndex(prefix, "."); dotIdx >= 0 {
-		afterDot := prefix[dotIdx+1:]
-		if len(afterDot) <= len(suffix) {
-			suffix = suffix[len(afterDot):]
-		}
-	} else if len(prefix) <= len(suffix) {
-		suffix = suffix[len(prefix):]
+		typed = prefix[dotIdx+1:]
 	}
-	m.textarea.InsertString(suffix)
+	// Matching is case-insensitive, so the typed text may spell the item
+	// differently (US → users). Delete it and insert the item's own spelling
+	// rather than appending the tail, which would leave "USers".
+	if !strings.HasPrefix(selected, typed) {
+		for range utf8.RuneCountInString(typed) {
+			m.textarea, _ = m.textarea.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+		}
+		m.textarea.InsertString(selected)
+		return
+	}
+	m.textarea.InsertString(selected[len(typed):])
 }
 
 // closeCompletion hides the completion popup.

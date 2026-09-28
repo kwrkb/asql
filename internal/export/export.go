@@ -5,9 +5,10 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"time"
+
+	"github.com/kwrkb/asql/internal/fsutil"
 )
 
 // FormatCSV formats query results as CSV.
@@ -139,7 +140,7 @@ func SaveCSVFile(headers []string, rows [][]string) (string, error) {
 		return "", err
 	}
 	filename := fmt.Sprintf("result_%s.csv", time.Now().Format("20060102_150405.000"))
-	if err := os.WriteFile(filename, []byte(content), 0600); err != nil {
+	if err := fsutil.AtomicWrite(filename, []byte(content), 0o600); err != nil {
 		return "", fmt.Errorf("writing file %s: %w", filename, err)
 	}
 	return filename, nil

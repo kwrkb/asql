@@ -135,3 +135,29 @@ func TestDedup(t *testing.T) {
 		t.Errorf("dedup returned %d items, want 3: %v", len(got), got)
 	}
 }
+
+func TestInsertCompletionReplacesTypedCase(t *testing.T) {
+	tests := []struct {
+		name     string
+		typed    string
+		selected string
+		prefix   string
+		want     string
+	}{
+		{"same case appends tail", "SELECT * FROM us", "users", "us", "SELECT * FROM users"},
+		{"upper prefix takes item spelling", "SELECT * FROM US", "users", "US", "SELECT * FROM users"},
+		{"dot completion", "SELECT users.NA", "name", "users.NA", "SELECT users.name"},
+		{"non-ASCII", "SELECT * FROM ÜB", "übung", "ÜB", "SELECT * FROM übung"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newTestModel()
+			m.textarea.Focus() // Update ignores keys while blurred
+			m.textarea.SetValue(tt.typed)
+			m.insertCompletion(tt.selected, tt.prefix)
+			if got := m.textarea.Value(); got != tt.want {
+				t.Errorf("value = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
