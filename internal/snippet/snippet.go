@@ -74,4 +74,3 @@ func Save(snippets []Snippet) error {
 	}
 	return nil
 }
-
