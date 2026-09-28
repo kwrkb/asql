@@ -164,7 +164,7 @@ copy a result into it and `J` to join there.
 
 ## Compare Mode
 
-![compare demo](docs/compare-demo.gif)
+[Compare demo recording script](docs/compare-demo.tape)
 
 > Spot the diff between prod and staging in 3 seconds — right in your terminal.
 
