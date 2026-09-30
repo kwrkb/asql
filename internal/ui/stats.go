@@ -261,7 +261,7 @@ func (m model) renderWithStatsOverlay(background string) string {
 		Padding(1, 2).
 		Width(modalWidth).
 		Background(panelBackground).
-		Render(b.String())
+		Render(clampLines(b.String(), contentWidth))
 
 	return overlayModal(m.width, background, modal)
 }

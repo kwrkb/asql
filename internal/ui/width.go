@@ -31,3 +31,17 @@ func truncateCells(s string, w int) string {
 	}
 	return ansi.Truncate(s, w, "…")
 }
+
+// clampLines cuts every line of s to at most w cells. A modal whose rows are
+// assembled from several fixed budgets can still run past its wrap width on
+// long values, and lipgloss would then wrap the row onto a second line and
+// throw off every height calculation made from the row count.
+func clampLines(s string, w int) string {
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		if ansi.StringWidth(ln) > w {
+			lines[i] = truncateCells(ln, w)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
