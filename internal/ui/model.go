@@ -150,17 +150,18 @@ type model struct {
 	historyDraft string   // input saved before navigating history
 
 	// Result table
-	sortCol         int
-	sortDir         sortOrder
-	colCursor       int         // column cursor in NORMAL mode
-	colOffset       int         // first visible column index for horizontal windowing
-	cachedColWidths []int       // cached column widths (recomputed only when result changes)
-	displayRows     []table.Row // sorted rows for windowing source
-	lastVisStart    int         // cached visible range start for rebuild optimization
-	lastVisEnd      int         // cached visible range end for rebuild optimization
-	lastColCursor   int         // colCursor at last rebuild (header highlight follows it)
-	lastHighlight   bool        // whether the header highlight was drawn at last rebuild
-	viewportDirty   bool        // forces column/row rebuild on next syncViewport
+	sortCol          int
+	sortDir          sortOrder
+	colCursor        int         // column cursor in NORMAL mode
+	colOffset        int         // first visible column index for horizontal windowing
+	cachedColWidths  []int       // cached column widths (recomputed only when result changes)
+	cachedCellWidths []int       // widest cell per column of lastResult; a sort reuses it
+	displayRows      []table.Row // sorted rows for windowing source
+	lastVisStart     int         // cached visible range start for rebuild optimization
+	lastVisEnd       int         // cached visible range end for rebuild optimization
+	lastColCursor    int         // colCursor at last rebuild (header highlight follows it)
+	lastHighlight    bool        // whether the header highlight was drawn at last rebuild
+	viewportDirty    bool        // forces column/row rebuild on next syncViewport
 
 	// Compare
 	pinned      *pinnedPane // nil = side-by-side OFF

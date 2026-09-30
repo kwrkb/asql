@@ -142,18 +142,32 @@ func framedPanel(content string, w, h int, border lipgloss.TerminalColor) string
 
 func (m *model) applyResult(result db.QueryResult) {
 	m.lastResult = result
+	m.cachedCellWidths = make([]int, len(result.Columns))
+	for i := range result.Columns {
+		m.cachedCellWidths[i] = cellsWidth(result.Rows, i)
+	}
 	m.applyResultWithSort(result)
 }
 
 func columnWidth(title string, rows [][]string, idx int) int {
-	width := lipgloss.Width(title)
+	return clampColumnWidth(max(lipgloss.Width(title), cellsWidth(rows, idx)))
+}
+
+// cellsWidth is the widest cell of column idx. Sorting reorders the rows
+// without changing it, so applyResult measures it once per result and a sort
+// reuses it rather than re-measuring every cell.
+func cellsWidth(rows [][]string, idx int) int {
+	width := 0
 	for _, row := range rows {
 		if idx >= len(row) {
 			continue
 		}
 		width = max(width, lipgloss.Width(row[idx]))
 	}
+	return width
+}
 
+func clampColumnWidth(width int) int {
 	if width < 12 {
 		return 12
 	}
@@ -215,6 +229,13 @@ func (m *model) applyResultWithSort(result db.QueryResult) {
 	}
 
 	// Compute column widths
+	if len(m.cachedCellWidths) != len(result.Columns) {
+		// lastResult was set without applyResult; measure it now.
+		m.cachedCellWidths = make([]int, len(result.Columns))
+		for i := range result.Columns {
+			m.cachedCellWidths[i] = cellsWidth(result.Rows, i)
+		}
+	}
 	m.cachedColWidths = make([]int, len(result.Columns))
 	for i, title := range result.Columns {
 		header := sanitize(title)
@@ -225,7 +246,13 @@ func (m *model) applyResultWithSort(result db.QueryResult) {
 		if i == m.sortCol && m.sortDir != sortNone {
 			header += sortIndicator(m.sortDir)
 		}
-		m.cachedColWidths[i] = columnWidth(header, result.Rows, i)
+		// Only the header changes under a sort (its ▲/▼ indicator); the
+		// cells are the same set in a new order.
+		cells := 0
+		if i < len(m.cachedCellWidths) {
+			cells = m.cachedCellWidths[i]
+		}
+		m.cachedColWidths[i] = clampColumnWidth(max(lipgloss.Width(header), cells))
 	}
 
 	// Save displayRows for windowing
