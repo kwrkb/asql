@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -9,6 +10,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kwrkb/asql/internal/db"
 	"github.com/kwrkb/asql/internal/ui/table"
@@ -692,5 +695,78 @@ func TestStaleSwitchDoesNotMoveTheActiveConnection(t *testing.T) {
 	}
 	if got := sm.statusText; !strings.Contains(got, "newer") {
 		t.Errorf("status = %q, no longer describes the connection queries run against", got)
+	}
+}
+
+// Issue #90 item 12(a): the render adjusted m.detail.scroll on a value
+// receiver, so the adjustment was thrown away every frame and the model never
+// knew where the view was.
+func TestDetailMode_ScrollIsKeptInTheModel(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 24
+	cols := make([]string, 20)
+	row := make([]string, 20)
+	for i := range cols {
+		cols[i] = fmt.Sprintf("col%02d", i)
+		row[i] = fmt.Sprintf("v%02d", i)
+	}
+	m.applyResult(db.QueryResult{Columns: cols, Rows: [][]string{row}})
+	m.mode = detailMode
+
+	for range 15 {
+		next, _ := m.updateDetail(runeMsg("j"))
+		nm := next.(model)
+		m = &nm
+	}
+	if m.detail.fieldCursor != 15 {
+		t.Fatalf("fieldCursor = %d, want 15", m.detail.fieldCursor)
+	}
+	if m.detail.scroll == 0 {
+		t.Error("detail.scroll is still 0 with the cursor on field 15 of 20: the scroll adjustment was discarded")
+	}
+	if view := ansi.Strip(m.renderWithDetailOverlay("")); !strings.Contains(view, "col15") {
+		t.Errorf("the cursor field is not on screen:\n%s", view)
+	}
+}
+
+// Issue #90 item 12(b): the layout assumed one line per value, but the value
+// style wraps long values. The fields then ran past the modal height and the
+// bottom fields and the lower border were cut off the screen.
+func TestDetailMode_LongValuesFitTheScreen(t *testing.T) {
+	long := strings.Repeat("lorem ipsum ", 60)
+	for _, cursor := range []int{0, 3, 5} {
+		t.Run(fmt.Sprintf("cursor%d", cursor), func(t *testing.T) {
+			m := newTestModel()
+			m.width, m.height = 80, 20
+			m.applyResult(db.QueryResult{
+				Columns: []string{"a", "b", "c", "d", "e", "f"},
+				Rows:    [][]string{{long, "short", long, "x", long, "y"}},
+			})
+			m.mode = detailMode
+			for range cursor {
+				next, _ := m.updateDetail(runeMsg("j"))
+				nm := next.(model)
+				m = &nm
+			}
+
+			view := m.renderWithDetailOverlay("")
+			if h := lipgloss.Height(view); h > m.height {
+				t.Errorf("modal is %d lines on a %d-line screen", h, m.height)
+			}
+			lines := strings.Split(ansi.Strip(view), "\n")
+			if !strings.Contains(lines[len(lines)-1], "╰") {
+				t.Errorf("the lower border is missing:\n%s", ansi.Strip(view))
+			}
+			label := string(rune('a' + cursor))
+			found := false
+			for _, ln := range lines {
+				if strings.TrimSpace(strings.Trim(strings.TrimSpace(ln), "│")) == label {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("the cursor field %q is not on screen:\n%s", label, ansi.Strip(view))
+			}
+		})
 	}
 }
