@@ -538,6 +538,9 @@ func TestNewResultResetsStatsAndDetail(t *testing.T) {
 	if got.mode != normalMode {
 		t.Errorf("mode = %v, want normalMode", got.mode)
 	}
+	if !got.lastHighlight {
+		t.Error("viewport rebuilt without the NORMAL-mode header highlight")
+	}
 	if got.detail.fieldCursor != 0 || got.detail.scroll != 0 {
 		t.Errorf("detail not clamped: %+v", got.detail)
 	}
@@ -552,7 +555,11 @@ func TestEmptyResultLeavesDetailMode(t *testing.T) {
 	next, _ := m.Update(queryExecutedMsg{seq: 1, query: "SELECT a FROM t WHERE 0", result: db.QueryResult{
 		Columns: []string{"a"},
 	}})
-	if got := next.(model); got.mode != normalMode {
+	got := next.(model)
+	if got.mode != normalMode {
 		t.Errorf("mode = %v, want normalMode", got.mode)
+	}
+	if !got.lastHighlight {
+		t.Error("viewport rebuilt without the NORMAL-mode header highlight")
 	}
 }

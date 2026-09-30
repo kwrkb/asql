@@ -588,8 +588,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sortCol = 0
 		m.colCursor = 0
 		m.colOffset = 0
-		m.applyResult(msg.result)
+		// Reset the overlays first: leaving STATS or DETAIL flips the mode back
+		// to NORMAL, and applyResult's viewport rebuild reads the mode to decide
+		// whether to draw the column-header highlight.
 		m.resetResultOverlays()
+		m.applyResult(msg.result)
 		m.syncCompareTables()
 		if m.pinned != nil {
 			m.setStatus(m.compareStatusSummary(), false)
