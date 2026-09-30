@@ -47,7 +47,12 @@ type sortKey struct {
 func newSortKey(s string) sortKey {
 	k := sortKey{s: s}
 	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		// float64(i) is what ParseFloat would return — both round to the
+		// nearest double — so an integer skips the second parse. It still
+		// needs the float form for a comparison against a fraction.
 		k.i, k.isInt = i, true
+		k.f, k.isFloat = float64(i), true
+		return k
 	}
 	if f, err := strconv.ParseFloat(s, 64); err == nil {
 		k.f, k.isFloat = f, true
@@ -114,7 +119,9 @@ func parseTimestamp(s string) (time.Time, bool) {
 }
 
 // smartCompare compares two display strings, ordering the NULL sentinel after
-// every other value.
+// every other value — the result table's rule, which sortedRows applies
+// itself on its pre-parsed keys. Only the tests call this now: it pins that
+// rule down in one comparable function.
 //
 // It matches on the display string, so a value whose text is literally "NULL"
 // sorts with the real NULLs. That is intended for the result table, where the
