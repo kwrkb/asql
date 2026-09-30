@@ -2,6 +2,14 @@
 
 これまでに完了した主要な機能・マイルストーンの記録。
 
+## 未リリース（v0.12.2 以降）
+**PR**: #117
+**実装**: #116 のレビュー指摘 1 件の修正。機能追加なし。
+
+**UI の整合性（#117）**: #116 で入れた「新しい結果で STATS/DETAIL を閉じる」処理が、viewport を再構築する `applyResult` の後に走っていたため、STATS 表示中にクエリが完了したとき・DETAIL 表示中に空の結果が返ったときに、選択中カラムのヘッダーハイライトがない状態のまま次の入力まで残っていた。`resetResultOverlays` を `applyResult` の前に移した（`m.lastResult` はこの時点で更新済み）。`TestNewResultResetsStatsAndDetail` / `TestEmptyResultLeavesDetailMode` でハイライトの描画を assert。
+
+---
+
 ## v0.12.2 — メンテナンス期 第 3 巡（toolchain・依存更新と #90 の一部）
 **PR**: #116
 **実装**: go 1.26.8 と直接依存 5 件（sqlite / pgx / mysql / x/ansi / runewidth）の更新、Issue #90 の 12 件のうち 5 件の修正。機能追加なし。
