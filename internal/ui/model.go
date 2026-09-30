@@ -17,6 +17,7 @@ import (
 	"github.com/kwrkb/asql/internal/ai"
 	"github.com/kwrkb/asql/internal/db"
 	"github.com/kwrkb/asql/internal/db/bring"
+	"github.com/kwrkb/asql/internal/db/readonly"
 	"github.com/kwrkb/asql/internal/profile"
 	"github.com/kwrkb/asql/internal/snippet"
 	"github.com/kwrkb/asql/internal/ui/table"
@@ -596,6 +597,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncCompareTables()
 		if m.pinned != nil {
 			m.setStatus(m.compareStatusSummary(), false)
+		}
+		// Only a statement that may change the catalog reloads the table
+		// list. The reload is a catalog query on every SELECT otherwise, and
+		// its arrival drops the completion column cache. The readonly
+		// classifier is the test because it refuses whatever it cannot prove
+		// read-only — unknown keywords, multiple statements, data-modifying
+		// CTEs, SELECT INTO — so doubt still reloads.
+		if readonly.Check(msg.query) == nil {
+			return m, nil
 		}
 		return m, loadTablesCmd(m.activeDB(), m.connGen)
 	}

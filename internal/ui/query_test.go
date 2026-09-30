@@ -90,3 +90,35 @@ func TestTablesLoaded_DiscardsStaleError(t *testing.T) {
 		t.Errorf("tables = %v, want [b_orders]", afterA.sidebar.tables)
 	}
 }
+
+// TestQueryExecuted_ReloadsTablesOnlyWhenCatalogMayChange: a read-only
+// statement cannot add or drop a table, so reloading the list after it only
+// costs a catalog round-trip on a remote database — and the reload's arrival
+// throws away the completion column cache, which Tab then fetches again.
+func TestQueryExecuted_ReloadsTablesOnlyWhenCatalogMayChange(t *testing.T) {
+	tests := []struct {
+		query      string
+		wantReload bool
+	}{
+		{"SELECT * FROM users", false},
+		{"WITH x AS (SELECT 1) SELECT * FROM x", false},
+		{"EXPLAIN SELECT 1", false},
+		{"CREATE TABLE t (id INT)", true},
+		{"DROP TABLE t", true},
+		{"INSERT INTO t VALUES (1)", true},
+		{"SELECT 1; DROP TABLE t", true},
+		{"WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.query, func(t *testing.T) {
+			m := newTestModel()
+			m.querySeq = 1
+			_, cmd := m.Update(queryExecutedMsg{seq: 1, query: tt.query, result: db.QueryResult{
+				Columns: []string{"a"}, Rows: [][]string{{"1"}},
+			}})
+			if got := cmd != nil; got != tt.wantReload {
+				t.Errorf("reload = %v, want %v", got, tt.wantReload)
+			}
+		})
+	}
+}
