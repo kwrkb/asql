@@ -35,6 +35,12 @@ func (m *model) prepareAndExecuteQuery(query string) tea.Cmd {
 			m.queryHistory = m.queryHistory[1:]
 		}
 	}
+	// A query run from the editor's own text leaves nothing pending. One run
+	// while navigating history keeps the draft: Ctrl+P will skip saving over
+	// it (see updateInsert), so Ctrl+N can still bring it back.
+	if m.historyIdx == -1 {
+		m.historyDraft = ""
+	}
 	m.historyIdx = -1
 	ctx, cancel := context.WithCancel(context.Background())
 	m.querySeq++
