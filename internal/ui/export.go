@@ -45,9 +45,21 @@ func (m model) updateExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// exportSource returns what the user is looking at: the focused compare pane,
+// in its on-screen sort order. The result's own rows would ignore both — an
+// `s` sort, and a pinned pane that has focus. The rows are re-sorted here
+// rather than read from displayRows, which holds a "(no rows)" sentinel for
+// an empty result that must not reach the file.
+func (m *model) exportSource() (headers []string, rows [][]string) {
+	if m.pinned != nil && m.comparePane == 0 {
+		p := m.pinned
+		return p.result.Columns, sortedRows(p.result.Rows, p.sortCol, p.sortDir)
+	}
+	return m.lastResult.Columns, sortedRows(m.lastResult.Rows, m.sortCol, m.sortDir)
+}
+
 func (m *model) executeExport() {
-	headers := m.lastResult.Columns
-	rows := m.lastResult.Rows
+	headers, rows := m.exportSource()
 
 	defer func() { m.mode = normalMode }()
 
