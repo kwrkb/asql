@@ -32,6 +32,12 @@ type aiState struct {
 	spinner spinner.Model
 	loading bool
 	err     string
+	// cancel and seq belong to the AI request alone. Sharing the query's
+	// queryCancel/querySeq meant submitting a prompt silently killed a
+	// running query, and a query started while the AI was thinking
+	// discarded the AI's answer.
+	cancel context.CancelFunc
+	seq    uint64
 }
 
 // snippetState holds state for the saved-query overlay (SNIPPET mode).

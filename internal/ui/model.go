@@ -344,6 +344,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		if msg.Type == tea.KeyCtrlC {
+			cancelled := m.cancelAI()
 			if m.queryCancel != nil {
 				m.queryCancel()
 				m.queryCancel = nil
@@ -351,7 +352,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// posted its message with a matching seq and a nil error; bump
 				// the seq so it is discarded instead of overwriting "Cancelled".
 				m.querySeq++
-				m.aiSt.loading = false
+				cancelled = true
+			}
+			if cancelled {
 				m.blurActiveInput()
 				m.mode = normalMode
 				m.setStatus("Cancelled", false)
@@ -387,10 +390,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateStats(msg)
 		}
 	case aiResponseMsg:
-		if msg.seq != m.querySeq {
+		if msg.seq != m.aiSt.seq {
 			return m, nil
 		}
-		m.queryCancel = nil
+		m.aiSt.cancel = nil
 		m.aiSt.loading = false
 		if msg.err != nil {
 			if errors.Is(msg.err, context.Canceled) {
@@ -431,11 +434,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// adapter is about to change under it, and its result would otherwise
 		// render as if it came from the new connection. The status message
 		// below says so instead of dropping it silently.
-		cancelled := false
+		// An AI request goes too: it is generating against the old
+		// connection's schema.
+		cancelled := m.cancelAI()
 		if m.queryCancel != nil {
 			m.queryCancel()
 			m.queryCancel = nil
-			m.aiSt.loading = false
 			cancelled = true
 		}
 		m.querySeq++ // invalidate stale query results
