@@ -246,3 +246,25 @@ func TestInsert_ExecutingHistoryEntryKeepsDraft(t *testing.T) {
 		t.Errorf("editor = %q, want SELECT 3 (the draft was already restored once)", got)
 	}
 }
+
+// An empty editor is a draft too: after running a history entry, Ctrl+P must
+// not take the empty draft for "none saved" and replace it with the query.
+func TestInsert_ExecutingHistoryEntryKeepsEmptyDraft(t *testing.T) {
+	m := newInsertModel()
+	m.queryHistory = []string{"SELECT 1", "SELECT 2"}
+
+	step := func(k tea.KeyType) {
+		t.Helper()
+		updated, _ := m.Update(tea.KeyMsg{Type: k})
+		*m = updated.(model)
+	}
+
+	step(tea.KeyCtrlP) // SELECT 2, empty draft saved
+	step(tea.KeyCtrlP) // SELECT 1
+	step(tea.KeyCtrlJ) // run SELECT 1
+	step(tea.KeyCtrlP)
+	step(tea.KeyCtrlN)
+	if got := m.textarea.Value(); got != "" {
+		t.Errorf("editor = %q, want the empty draft back", got)
+	}
+}

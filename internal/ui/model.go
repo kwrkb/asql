@@ -148,6 +148,7 @@ type model struct {
 	queryHistory []string // executed queries (newest at end)
 	historyIdx   int      // -1 = new input, 0..n = history position
 	historyDraft string   // input saved before navigating history
+	draftPending bool     // historyDraft holds a saved draft (it may be "")
 
 	// Result table
 	sortCol          int

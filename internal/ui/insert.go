@@ -64,6 +64,7 @@ func (m model) updateInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.textarea.SetValue("")
 		m.historyIdx = -1
 		m.historyDraft = ""
+		m.draftPending = false
 		return m, nil
 	case tea.KeyCtrlP:
 		if len(m.queryHistory) == 0 {
@@ -74,8 +75,9 @@ func (m model) updateInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// editor then still holds that entry, now the newest one, and
 			// saving it would overwrite the only copy of the draft.
 			value := m.textarea.Value()
-			if m.historyDraft == "" || value != m.queryHistory[len(m.queryHistory)-1] {
+			if !m.draftPending || value != m.queryHistory[len(m.queryHistory)-1] {
 				m.historyDraft = value
+				m.draftPending = true
 			}
 			m.historyIdx = len(m.queryHistory) - 1
 		} else if m.historyIdx > 0 {
@@ -94,6 +96,7 @@ func (m model) updateInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.historyIdx = -1
 			m.textarea.SetValue(m.historyDraft)
 			m.historyDraft = "" // back in the editor; nothing pending
+			m.draftPending = false
 		}
 		return m, nil
 	}

@@ -40,6 +40,7 @@ func (m *model) prepareAndExecuteQuery(query string) tea.Cmd {
 	// it (see updateInsert), so Ctrl+N can still bring it back.
 	if m.historyIdx == -1 {
 		m.historyDraft = ""
+		m.draftPending = false
 	}
 	m.historyIdx = -1
 	ctx, cancel := context.WithCancel(context.Background())
