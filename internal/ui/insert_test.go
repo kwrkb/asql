@@ -209,3 +209,62 @@ func TestInsert_CompletionCtrlPMovesUp(t *testing.T) {
 		t.Errorf("cursor = %d, want 1", result.completion.cursor)
 	}
 }
+
+// Issue #90 item 2: running a history entry while navigating used to reset
+// historyIdx without keeping the draft reachable, and the next Ctrl+P saved
+// the executed query over it — the unexecuted draft was gone for good.
+func TestInsert_ExecutingHistoryEntryKeepsDraft(t *testing.T) {
+	m := newInsertModel()
+	m.queryHistory = []string{"SELECT 1", "SELECT 2"}
+	m.textarea.SetValue("SELECT draft")
+
+	step := func(k tea.KeyType) {
+		t.Helper()
+		updated, _ := m.Update(tea.KeyMsg{Type: k})
+		*m = updated.(model)
+	}
+
+	step(tea.KeyCtrlP) // SELECT 2, draft saved
+	step(tea.KeyCtrlP) // SELECT 1
+	step(tea.KeyCtrlJ) // run SELECT 1: it becomes the newest entry
+	if m.textarea.Value() != "SELECT 1" {
+		t.Fatalf("editor = %q after executing, want SELECT 1", m.textarea.Value())
+	}
+	step(tea.KeyCtrlP) // back into history
+	step(tea.KeyCtrlN) // and out again, to the draft
+	if got := m.textarea.Value(); got != "SELECT draft" {
+		t.Errorf("editor = %q, want the unexecuted draft back", got)
+	}
+
+	// Once the draft is back in the editor it is no longer pending: running a
+	// new query from it must not resurrect it later.
+	m.textarea.SetValue("SELECT 3")
+	step(tea.KeyCtrlJ)
+	step(tea.KeyCtrlP)
+	step(tea.KeyCtrlN)
+	if got := m.textarea.Value(); got != "SELECT 3" {
+		t.Errorf("editor = %q, want SELECT 3 (the draft was already restored once)", got)
+	}
+}
+
+// An empty editor is a draft too: after running a history entry, Ctrl+P must
+// not take the empty draft for "none saved" and replace it with the query.
+func TestInsert_ExecutingHistoryEntryKeepsEmptyDraft(t *testing.T) {
+	m := newInsertModel()
+	m.queryHistory = []string{"SELECT 1", "SELECT 2"}
+
+	step := func(k tea.KeyType) {
+		t.Helper()
+		updated, _ := m.Update(tea.KeyMsg{Type: k})
+		*m = updated.(model)
+	}
+
+	step(tea.KeyCtrlP) // SELECT 2, empty draft saved
+	step(tea.KeyCtrlP) // SELECT 1
+	step(tea.KeyCtrlJ) // run SELECT 1
+	step(tea.KeyCtrlP)
+	step(tea.KeyCtrlN)
+	if got := m.textarea.Value(); got != "" {
+		t.Errorf("editor = %q, want the empty draft back", got)
+	}
+}

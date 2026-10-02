@@ -93,3 +93,48 @@ func TestExport_EscReturnsToNormal(t *testing.T) {
 		t.Errorf("expected normalMode, got %q", rm.mode)
 	}
 }
+
+// Issue #90 item 5: export wrote m.lastResult as the query returned it, not
+// what the screen showed — an `s` sort was ignored, and so was a focused
+// pinned pane in compare mode.
+func TestExportSource_FollowsSortAndFocusedPane(t *testing.T) {
+	m := newTestModel()
+	m.applyResult(db.QueryResult{
+		Columns: []string{"n"},
+		Rows:    [][]string{{"2"}, {"10"}, {"1"}},
+	})
+	m.colCursor = 0
+	m.toggleSort() // ascending
+
+	headers, rows := m.exportSource()
+	if len(headers) != 1 || headers[0] != "n" {
+		t.Fatalf("headers = %v", headers)
+	}
+	if got := []string{rows[0][0], rows[1][0], rows[2][0]}; got[0] != "1" || got[1] != "2" || got[2] != "10" {
+		t.Errorf("rows = %v, want the displayed ascending order 1, 2, 10", got)
+	}
+
+	// Pin it, then run a query whose result has other columns.
+	m.pinned = m.pinCurrentResult()
+	m.applyResult(db.QueryResult{Columns: []string{"other"}, Rows: [][]string{{"x"}}})
+	m.focusComparePane(0)
+	headers, rows = m.exportSource()
+	if headers[0] != "n" || rows[0][0] != "1" {
+		t.Errorf("with the pinned pane focused, got headers %v rows %v; want the pinned, sorted result", headers, rows)
+	}
+
+	m.focusComparePane(1)
+	if headers, _ = m.exportSource(); headers[0] != "other" {
+		t.Errorf("with the active pane focused, headers = %v, want [other]", headers)
+	}
+}
+
+// An empty result exports its header alone: the "(no rows)" sentinel shown
+// on screen is not data.
+func TestExportSource_EmptyResultHasNoSentinel(t *testing.T) {
+	m := newTestModel()
+	m.applyResult(db.QueryResult{Columns: []string{"id"}, Rows: [][]string{}})
+	if _, rows := m.exportSource(); len(rows) != 0 {
+		t.Errorf("rows = %v, want none", rows)
+	}
+}

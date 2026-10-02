@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -9,6 +10,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kwrkb/asql/internal/db"
 	"github.com/kwrkb/asql/internal/ui/table"
@@ -402,40 +405,60 @@ func TestDetailMode_ShowsSortedRow(t *testing.T) {
 // message with a matching seq and nil error, so the seq must be bumped on
 // every cancel path or the "Cancelled" state gets silently overwritten.
 func TestCancelDiscardsCompletedResponse(t *testing.T) {
-	t.Run("Ctrl+C bumps querySeq so a stale AI response is dropped", func(t *testing.T) {
+	t.Run("Ctrl+C bumps the AI seq so a stale AI response is dropped", func(t *testing.T) {
+		m := newTestModel()
+		m.mode = aiMode
+		m.aiSt.loading = true
+		m.aiSt.seq = 5
+		m.aiSt.cancel = func() {}
+		m.textarea.SetValue("SELECT 1;")
+
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+		nm := next.(model)
+		if nm.aiSt.seq != 6 {
+			t.Fatalf("aiSt.seq = %d after Ctrl+C, want 6", nm.aiSt.seq)
+		}
+		if nm.mode != normalMode {
+			t.Errorf("mode = %v after Ctrl+C, want NORMAL", nm.mode)
+		}
+
+		next, _ = nm.Update(aiResponseMsg{seq: 5, sql: "SELECT 2;"})
+		nm = next.(model)
+		if nm.mode == insertMode {
+			t.Error("stale aiResponseMsg forced INSERT mode after cancel")
+		}
+		if got := nm.textarea.Value(); got != "SELECT 1;" {
+			t.Errorf("stale aiResponseMsg overwrote the editor: %q", got)
+		}
+	})
+
+	t.Run("Ctrl+C bumps querySeq so a stale query result is dropped", func(t *testing.T) {
 		m := newTestModel()
 		m.querySeq = 5
 		m.queryCancel = func() {}
-		m.textarea.SetValue("SELECT 1;")
 
 		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 		nm := next.(model)
 		if nm.querySeq != 6 {
 			t.Fatalf("querySeq = %d after Ctrl+C, want 6", nm.querySeq)
 		}
-
-		next, _ = nm.Update(aiResponseMsg{seq: 5, sql: "SELECT 2;"})
-		nm = next.(model)
-		if nm.mode == insertMode {
-			t.Error("stale aiResponseMsg forced INSERT mode after cancel")
-		}
-		if got := nm.textarea.Value(); got != "SELECT 1;" {
-			t.Errorf("stale aiResponseMsg overwrote the editor: %q", got)
+		if nm.statusText != "Cancelled" {
+			t.Errorf("status = %q, want Cancelled", nm.statusText)
 		}
 	})
 
-	t.Run("Esc during AI loading bumps querySeq", func(t *testing.T) {
+	t.Run("Esc during AI loading bumps the AI seq", func(t *testing.T) {
 		m := newTestModel()
 		m.mode = aiMode
 		m.aiSt.loading = true
-		m.querySeq = 5
-		m.queryCancel = func() {}
+		m.aiSt.seq = 5
+		m.aiSt.cancel = func() {}
 		m.textarea.SetValue("SELECT 1;")
 
 		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 		nm := next.(model)
-		if nm.querySeq != 6 {
-			t.Fatalf("querySeq = %d after Esc, want 6", nm.querySeq)
+		if nm.aiSt.seq != 6 {
+			t.Fatalf("aiSt.seq = %d after Esc, want 6", nm.aiSt.seq)
 		}
 
 		next, _ = nm.Update(aiResponseMsg{seq: 5, sql: "SELECT 2;"})
@@ -447,6 +470,47 @@ func TestCancelDiscardsCompletedResponse(t *testing.T) {
 			t.Errorf("stale aiResponseMsg overwrote the editor: %q", got)
 		}
 	})
+}
+
+// Issue #90 item 6: the AI request and the query each own their cancel and
+// seq. Submitting a prompt used to cancel the running query without a word,
+// and the query's seq bump then made its result look stale.
+func TestAIPromptLeavesRunningQueryAlone(t *testing.T) {
+	m := newTestModel()
+	m.aiSt.input = textinput.New()
+	m.aiSt.input.SetValue("count users")
+	m.mode = aiMode
+	queryCancelled := false
+	m.queryCancel = func() { queryCancelled = true }
+	m.querySeq = 3
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	nm := next.(model)
+	if queryCancelled {
+		t.Error("submitting an AI prompt cancelled the running query")
+	}
+	if nm.querySeq != 3 {
+		t.Errorf("querySeq = %d, want 3 (the running query's result must still apply)", nm.querySeq)
+	}
+	if !nm.aiSt.loading || nm.aiSt.cancel == nil {
+		t.Fatal("AI request did not start")
+	}
+
+	// The query's result lands while the AI is still thinking.
+	next, _ = nm.Update(queryExecutedMsg{seq: 3, query: "SELECT 1", result: db.QueryResult{
+		Columns: []string{"a"}, Rows: [][]string{{"1"}},
+	}})
+	nm = next.(model)
+	if len(nm.lastResult.Columns) != 1 {
+		t.Error("the running query's result was discarded")
+	}
+
+	// And the AI's answer still lands after it.
+	next, _ = nm.Update(aiResponseMsg{seq: nm.aiSt.seq, sql: "SELECT count(*) FROM users;"})
+	nm = next.(model)
+	if got := nm.textarea.Value(); got != "SELECT count(*) FROM users;" {
+		t.Errorf("AI response was dropped: editor = %q", got)
+	}
 }
 
 // The completion popup must not grow the view past the terminal height: it
@@ -631,5 +695,78 @@ func TestStaleSwitchDoesNotMoveTheActiveConnection(t *testing.T) {
 	}
 	if got := sm.statusText; !strings.Contains(got, "newer") {
 		t.Errorf("status = %q, no longer describes the connection queries run against", got)
+	}
+}
+
+// Issue #90 item 12(a): the render adjusted m.detail.scroll on a value
+// receiver, so the adjustment was thrown away every frame and the model never
+// knew where the view was.
+func TestDetailMode_ScrollIsKeptInTheModel(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 24
+	cols := make([]string, 20)
+	row := make([]string, 20)
+	for i := range cols {
+		cols[i] = fmt.Sprintf("col%02d", i)
+		row[i] = fmt.Sprintf("v%02d", i)
+	}
+	m.applyResult(db.QueryResult{Columns: cols, Rows: [][]string{row}})
+	m.mode = detailMode
+
+	for range 15 {
+		next, _ := m.updateDetail(runeMsg("j"))
+		nm := next.(model)
+		m = &nm
+	}
+	if m.detail.fieldCursor != 15 {
+		t.Fatalf("fieldCursor = %d, want 15", m.detail.fieldCursor)
+	}
+	if m.detail.scroll == 0 {
+		t.Error("detail.scroll is still 0 with the cursor on field 15 of 20: the scroll adjustment was discarded")
+	}
+	if view := ansi.Strip(m.renderWithDetailOverlay("")); !strings.Contains(view, "col15") {
+		t.Errorf("the cursor field is not on screen:\n%s", view)
+	}
+}
+
+// Issue #90 item 12(b): the layout assumed one line per value, but the value
+// style wraps long values. The fields then ran past the modal height and the
+// bottom fields and the lower border were cut off the screen.
+func TestDetailMode_LongValuesFitTheScreen(t *testing.T) {
+	long := strings.Repeat("lorem ipsum ", 60)
+	for _, cursor := range []int{0, 3, 5} {
+		t.Run(fmt.Sprintf("cursor%d", cursor), func(t *testing.T) {
+			m := newTestModel()
+			m.width, m.height = 80, 20
+			m.applyResult(db.QueryResult{
+				Columns: []string{"a", "b", "c", "d", "e", "f"},
+				Rows:    [][]string{{long, "short", long, "x", long, "y"}},
+			})
+			m.mode = detailMode
+			for range cursor {
+				next, _ := m.updateDetail(runeMsg("j"))
+				nm := next.(model)
+				m = &nm
+			}
+
+			view := m.renderWithDetailOverlay("")
+			if h := lipgloss.Height(view); h > m.height {
+				t.Errorf("modal is %d lines on a %d-line screen", h, m.height)
+			}
+			lines := strings.Split(ansi.Strip(view), "\n")
+			if !strings.Contains(lines[len(lines)-1], "╰") {
+				t.Errorf("the lower border is missing:\n%s", ansi.Strip(view))
+			}
+			label := string(rune('a' + cursor))
+			found := false
+			for _, ln := range lines {
+				if strings.TrimSpace(strings.Trim(strings.TrimSpace(ln), "│")) == label {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("the cursor field %q is not on screen:\n%s", label, ansi.Strip(view))
+			}
+		})
 	}
 }

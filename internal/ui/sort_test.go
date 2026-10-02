@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -224,5 +225,16 @@ func TestCompareValuesOrdersIntegersExactly(t *testing.T) {
 	}
 	if desc := sortedRows(rows, 0, sortDesc); desc[0][0] != hi {
 		t.Errorf("descending sort put %q first, want %q", desc[0][0], hi)
+	}
+}
+
+func BenchmarkSortedRows10k(b *testing.B) {
+	rows := make([][]string, 10000)
+	for i := range rows {
+		rows[i] = []string{strconv.Itoa((i * 7919) % 10007), fmt.Sprintf("%d.5", (i*31)%977)}
+	}
+	b.ResetTimer()
+	for b.Loop() {
+		sortedRows(rows, 1, sortAsc)
 	}
 }

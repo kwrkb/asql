@@ -18,15 +18,7 @@ const aiRequestTimeout = 30 * time.Second
 func (m model) updateAI(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.aiSt.loading {
 		if msg.Type == tea.KeyEsc {
-			if m.queryCancel != nil {
-				m.queryCancel()
-				m.queryCancel = nil
-			}
-			// Discard a response that completed just before the cancel: its
-			// aiResponseMsg carries the old seq and would otherwise overwrite
-			// the editor and force INSERT mode after "Cancelled".
-			m.querySeq++
-			m.aiSt.loading = false
+			m.cancelAI()
 			m.aiSt.input.Blur()
 			m.mode = normalMode
 			m.setStatus("Cancelled", false)
@@ -46,19 +38,31 @@ func (m model) updateAI(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if prompt == "" {
 			return m, nil
 		}
-		if m.queryCancel != nil {
-			m.queryCancel()
-		}
+		m.cancelAI()
 		ctx, cancel := context.WithCancel(context.Background())
-		m.querySeq++
-		m.queryCancel = cancel
+		m.aiSt.cancel = cancel
 		m.aiSt.loading = true
 		m.aiSt.err = ""
-		return m, tea.Batch(m.aiSt.spinner.Tick, generateSQLCmd(ctx, m.aiSt.client, m.activeDB(), prompt, m.querySeq))
+		return m, tea.Batch(m.aiSt.spinner.Tick, generateSQLCmd(ctx, m.aiSt.client, m.activeDB(), prompt, m.aiSt.seq))
 	}
 	var cmd tea.Cmd
 	m.aiSt.input, cmd = m.aiSt.input.Update(msg)
 	return m, cmd
+}
+
+// cancelAI stops an in-flight AI request and reports whether there was one.
+// The seq bump runs either way: it also discards a response that completed
+// just before the cancel, whose aiResponseMsg would otherwise overwrite the
+// editor and force INSERT mode after "Cancelled".
+func (m *model) cancelAI() bool {
+	m.aiSt.seq++
+	m.aiSt.loading = false
+	if m.aiSt.cancel == nil {
+		return false
+	}
+	m.aiSt.cancel()
+	m.aiSt.cancel = nil
+	return true
 }
 
 func generateSQLCmd(parent context.Context, client *ai.Client, adapter db.DBAdapter, prompt string, seq uint64) tea.Cmd {

@@ -44,27 +44,87 @@ func (m model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// The scroll is settled here, not in the render: View has a value
+	// receiver, so a render that moved it would lose the move every frame.
+	m.detail.scroll = m.detailScroll()
 	m.syncViewport()
 	return m, nil
 }
 
-func (m model) renderWithDetailOverlay(background string) string {
-	modalWidth := calcModalWidth(m.width, 72)
-	// boxStyle below applies a rounded border (adds 2 rows) on top of Height(modalHeight).
-	// Cap modalHeight to m.height-2 so the rendered modal never overflows the screen.
-	modalHeight := max(m.height-2, 1)
+// detailContentWidth is the value column's width inside the modal: the width
+// minus the border (2) and the horizontal padding (4).
+func (m model) detailContentWidth() int {
+	return max(calcModalWidth(m.width, 72)-6, 10)
+}
 
-	// Use displayRows (full columns) instead of m.table.Rows() (windowed)
+// detailModalHeight is the modal's height without its border. Capping it at
+// m.height-2 keeps the bordered modal on the screen.
+func (m model) detailModalHeight() int {
+	return max(m.height-2, 1)
+}
+
+// detailFieldsHeight is how many lines the fields may take: the modal height
+// minus the vertical padding (2) and the title with its margin (2).
+func (m model) detailFieldsHeight() int {
+	return max(m.detailModalHeight()-4, 2)
+}
+
+// detailRow is the row the overlay shows, from displayRows (full columns, in
+// display order) rather than m.table.Rows() (windowed columns).
+func (m model) detailRow() (row []string, idx, total int, ok bool) {
 	sourceRows := m.displayRows
 	if len(sourceRows) == 0 {
 		sourceRows = m.table.Rows()
 	}
-	rowIdx := m.table.Cursor()
-	totalRows := len(sourceRows)
-	if rowIdx < 0 || rowIdx >= totalRows {
+	idx = m.table.Cursor()
+	if idx < 0 || idx >= len(sourceRows) {
+		return nil, idx, len(sourceRows), false
+	}
+	return sourceRows[idx], idx, len(sourceRows), true
+}
+
+// detailValueLines renders field i's value at the value column's width.
+// A long value wraps, so a field is one label line plus as many lines as its
+// value takes — not a fixed height.
+func (m model) detailValueLines(row []string, i int, selected bool) []string {
+	val := ""
+	if i < len(row) {
+		val = sanitize(row[i])
+	}
+	style := lipgloss.NewStyle().Foreground(textColor).Width(m.detailContentWidth())
+	if selected {
+		style = style.Background(lipgloss.Color("#1E293B"))
+	}
+	return strings.Split(style.Render(val), "\n")
+}
+
+// detailScroll returns the first field to draw so that the cursor field is on
+// screen, measured with the fields' real heights. It starts from the stored
+// scroll so the view does not jump while the cursor moves within it.
+func (m model) detailScroll() int {
+	row, _, _, ok := m.detailRow()
+	cursor := m.detail.fieldCursor
+	scroll := min(m.detail.scroll, cursor)
+	if !ok {
+		return max(scroll, 0)
+	}
+	budget := m.detailFieldsHeight()
+	used := 0
+	for i := scroll; i <= cursor; i++ {
+		used += 1 + len(m.detailValueLines(row, i, i == cursor))
+	}
+	for used > budget && scroll < cursor {
+		used -= 1 + len(m.detailValueLines(row, scroll, false))
+		scroll++
+	}
+	return max(scroll, 0)
+}
+
+func (m model) renderWithDetailOverlay(background string) string {
+	row, rowIdx, totalRows, ok := m.detailRow()
+	if !ok {
 		return background
 	}
-	row := sourceRows[rowIdx]
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -74,72 +134,50 @@ func (m model) renderWithDetailOverlay(background string) string {
 	labelStyle := lipgloss.NewStyle().
 		Foreground(mutedTextColor)
 
-	valueStyle := lipgloss.NewStyle().
-		Foreground(textColor).
-		Width(max(modalWidth-6, 10))
-
 	selectedLabelStyle := lipgloss.NewStyle().
 		Foreground(accentColor).
 		Bold(true)
 
-	selectedValueStyle := lipgloss.NewStyle().
-		Foreground(textColor).
-		Background(lipgloss.Color("#1E293B")).
-		Width(max(modalWidth-6, 10))
-
 	title := titleStyle.Render(fmt.Sprintf("Row %d/%d", rowIdx+1, totalRows))
 
-	// Calculate scroll offset so cursor stays visible
-	// contentHeight: total modal height minus borders(2), padding(2), and title area(2)
-	contentHeight := max(modalHeight-6, 1)
-	linesPerField := 3 // label line + value line + separator
-	maxVisibleFields := max(contentHeight/linesPerField, 1)
-	if m.detail.fieldCursor >= m.detail.scroll+maxVisibleFields {
-		m.detail.scroll = m.detail.fieldCursor - maxVisibleFields + 1
-	}
-	if m.detail.fieldCursor < m.detail.scroll {
-		m.detail.scroll = m.detail.fieldCursor
-	}
-
-	var b strings.Builder
-	linesRendered := 0
-	for i := m.detail.scroll; i < len(m.lastResult.Columns); i++ {
-		if linesRendered+linesPerField > contentHeight {
-			break
-		}
-
+	// detailScroll is pure, so calling it here only covers a stored scroll
+	// that a resize left stale; updateDetail is what keeps it.
+	budget := m.detailFieldsHeight()
+	var lines []string
+	for i := m.detailScroll(); i < len(m.lastResult.Columns); i++ {
 		colName := sanitize(m.lastResult.Columns[i])
 		colType := ""
 		if i < len(m.lastResult.ColumnTypes) && m.lastResult.ColumnTypes[i] != "" {
 			colType = " " + dbutil.ShortenTypeName(sanitize(m.lastResult.ColumnTypes[i]))
 		}
-
-		val := ""
-		if i < len(row) {
-			val = sanitize(row[i])
+		selected := i == m.detail.fieldCursor
+		label := labelStyle.Render(colName + colType)
+		if selected {
+			label = selectedLabelStyle.Render(colName + colType)
 		}
+		value := m.detailValueLines(row, i, selected)
 
-		if i == m.detail.fieldCursor {
-			b.WriteString(selectedLabelStyle.Render(colName + colType))
-			b.WriteByte('\n')
-			b.WriteString(selectedValueStyle.Render(val))
-		} else {
-			b.WriteString(labelStyle.Render(colName + colType))
-			b.WriteByte('\n')
-			b.WriteString(valueStyle.Render(val))
+		room := budget - len(lines)
+		if 1+len(value) > room {
+			if len(lines) > 0 {
+				break
+			}
+			// The first field alone is taller than the modal: show as much
+			// of its value as fits rather than nothing.
+			value = value[:max(room-1, 0)]
 		}
-		b.WriteByte('\n')
-		linesRendered += linesPerField
+		lines = append(lines, truncateCells(label, m.detailContentWidth()))
+		lines = append(lines, value...)
 	}
 
-	content := title + "\n" + strings.TrimRight(b.String(), "\n")
+	content := title + "\n" + strings.Join(lines, "\n")
 
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(accentColor).
 		Padding(1, 2).
-		Width(modalWidth).
-		Height(modalHeight).
+		Width(calcModalWidth(m.width, 72)).
+		Height(m.detailModalHeight()).
 		Background(panelBackground)
 
 	modal := boxStyle.Render(content)

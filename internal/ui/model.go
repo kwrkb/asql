@@ -17,6 +17,7 @@ import (
 	"github.com/kwrkb/asql/internal/ai"
 	"github.com/kwrkb/asql/internal/db"
 	"github.com/kwrkb/asql/internal/db/bring"
+	"github.com/kwrkb/asql/internal/db/readonly"
 	"github.com/kwrkb/asql/internal/profile"
 	"github.com/kwrkb/asql/internal/snippet"
 	"github.com/kwrkb/asql/internal/ui/table"
@@ -147,19 +148,21 @@ type model struct {
 	queryHistory []string // executed queries (newest at end)
 	historyIdx   int      // -1 = new input, 0..n = history position
 	historyDraft string   // input saved before navigating history
+	draftPending bool     // historyDraft holds a saved draft (it may be "")
 
 	// Result table
-	sortCol         int
-	sortDir         sortOrder
-	colCursor       int         // column cursor in NORMAL mode
-	colOffset       int         // first visible column index for horizontal windowing
-	cachedColWidths []int       // cached column widths (recomputed only when result changes)
-	displayRows     []table.Row // sorted rows for windowing source
-	lastVisStart    int         // cached visible range start for rebuild optimization
-	lastVisEnd      int         // cached visible range end for rebuild optimization
-	lastColCursor   int         // colCursor at last rebuild (header highlight follows it)
-	lastHighlight   bool        // whether the header highlight was drawn at last rebuild
-	viewportDirty   bool        // forces column/row rebuild on next syncViewport
+	sortCol          int
+	sortDir          sortOrder
+	colCursor        int         // column cursor in NORMAL mode
+	colOffset        int         // first visible column index for horizontal windowing
+	cachedColWidths  []int       // cached column widths (recomputed only when result changes)
+	cachedCellWidths []int       // widest cell per column of lastResult; a sort reuses it
+	displayRows      []table.Row // sorted rows for windowing source
+	lastVisStart     int         // cached visible range start for rebuild optimization
+	lastVisEnd       int         // cached visible range end for rebuild optimization
+	lastColCursor    int         // colCursor at last rebuild (header highlight follows it)
+	lastHighlight    bool        // whether the header highlight was drawn at last rebuild
+	viewportDirty    bool        // forces column/row rebuild on next syncViewport
 
 	// Compare
 	pinned      *pinnedPane // nil = side-by-side OFF
@@ -343,6 +346,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		if msg.Type == tea.KeyCtrlC {
+			cancelled := m.cancelAI()
 			if m.queryCancel != nil {
 				m.queryCancel()
 				m.queryCancel = nil
@@ -350,7 +354,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// posted its message with a matching seq and a nil error; bump
 				// the seq so it is discarded instead of overwriting "Cancelled".
 				m.querySeq++
-				m.aiSt.loading = false
+				cancelled = true
+			}
+			if cancelled {
 				m.blurActiveInput()
 				m.mode = normalMode
 				m.setStatus("Cancelled", false)
@@ -386,10 +392,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateStats(msg)
 		}
 	case aiResponseMsg:
-		if msg.seq != m.querySeq {
+		if msg.seq != m.aiSt.seq {
 			return m, nil
 		}
-		m.queryCancel = nil
+		m.aiSt.cancel = nil
 		m.aiSt.loading = false
 		if msg.err != nil {
 			if errors.Is(msg.err, context.Canceled) {
@@ -430,11 +436,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// adapter is about to change under it, and its result would otherwise
 		// render as if it came from the new connection. The status message
 		// below says so instead of dropping it silently.
-		cancelled := false
+		// An AI request goes too: it is generating against the old
+		// connection's schema.
+		cancelled := m.cancelAI()
 		if m.queryCancel != nil {
 			m.queryCancel()
 			m.queryCancel = nil
-			m.aiSt.loading = false
 			cancelled = true
 		}
 		m.querySeq++ // invalidate stale query results
@@ -596,6 +603,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncCompareTables()
 		if m.pinned != nil {
 			m.setStatus(m.compareStatusSummary(), false)
+		}
+		// Only a statement that may change the catalog reloads the table
+		// list. The reload is a catalog query on every SELECT otherwise, and
+		// its arrival drops the completion column cache. The readonly
+		// classifier is the test because it refuses whatever it cannot prove
+		// read-only — unknown keywords, multiple statements, data-modifying
+		// CTEs, SELECT INTO — so doubt still reloads.
+		if readonly.Check(msg.query) == nil {
+			return m, nil
 		}
 		return m, loadTablesCmd(m.activeDB(), m.connGen)
 	}

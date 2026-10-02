@@ -16,6 +16,7 @@ func (m model) updateHistorySearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.textarea.SetValue(m.queryHistory[idx])
 			m.historyIdx = -1
 			m.historyDraft = ""
+			m.draftPending = false
 		}
 		m.histSearch.results = nil
 		m.histSearch.cursor = 0

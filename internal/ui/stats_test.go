@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kwrkb/asql/internal/db"
@@ -561,5 +562,43 @@ func TestEmptyResultLeavesDetailMode(t *testing.T) {
 	}
 	if !got.lastHighlight {
 		t.Error("viewport rebuilt without the NORMAL-mode header highlight")
+	}
+}
+
+// Issue #90 item 11: a row's width was a hand-counted budget that could reach
+// 84 cells against a 72-cell wrap width. lipgloss wrapped the long row onto a
+// second line, statsMaxVisible's height arithmetic no longer matched, and the
+// bottom of the modal was cut off.
+func TestStats_RenderOverlayLongValuesDoNotWrap(t *testing.T) {
+	long := strings.Repeat("x", 40)
+	m := newTestModel()
+	m.width, m.height = 120, 40
+	m.lastResult = db.QueryResult{
+		Columns:     []string{"a_rather_long_column_name_" + long, "id"},
+		ColumnTypes: []string{"CHARACTER VARYING(255)", "DOUBLE PRECISION"},
+		Rows: [][]string{
+			{"aaaaaaaaaaaaaaaaaaaaaaaa" + long, "-123456789012.25"},
+			{"zzzzzzzzzzzzzzzzzzzzzzzz" + long, "987654321098.75"},
+		},
+	}
+	m.mode = statsMode
+	m.statsSt.stats = computeColumnStats(m.lastResult)
+
+	for cursor := range m.statsSt.stats {
+		m.statsSt.cursor = cursor
+		s := m.statsSt.stats[cursor]
+		extra := 0
+		if s.Sparkline.Bars != "" || s.Sparkline.Skipped {
+			extra++
+		}
+		if s.Histogram.Bars != "" || s.Histogram.Skipped {
+			extra++
+		}
+		// border(2) + padding(2) + title + separator + header + one line per
+		// stat + the cursor row's sparkline/histogram lines.
+		want := 4 + 3 + len(m.statsSt.stats) + extra
+		if got := lipgloss.Height(m.renderWithStatsOverlay("")); got != want {
+			t.Errorf("cursor %d: modal is %d lines, want %d — a line wrapped", cursor, got, want)
+		}
 	}
 }

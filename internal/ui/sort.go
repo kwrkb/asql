@@ -27,32 +27,67 @@ const (
 // them before computing min/max — must use this rather than smartCompare, or a
 // value whose text is literally "NULL" gets ordered as though it were one.
 func compareValues(a, b string) int {
+	return compareKeys(newSortKey(a), newSortKey(b))
+}
+
+// sortKey is a cell value parsed once for every way compareKeys may compare
+// it. Parsing inside the comparator repeated the work for every comparison —
+// on the order of n·log n ParseInt/ParseFloat calls per column sort, run in
+// the key handler.
+type sortKey struct {
+	s       string
+	i       int64
+	f       float64
+	t       time.Time
+	isInt   bool
+	isFloat bool
+	isTime  bool
+}
+
+func newSortKey(s string) sortKey {
+	k := sortKey{s: s}
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		// float64(i) is what ParseFloat would return — both round to the
+		// nearest double — so an integer skips the second parse. It still
+		// needs the float form for a comparison against a fraction.
+		k.i, k.isInt = i, true
+		k.f, k.isFloat = float64(i), true
+		return k
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		k.f, k.isFloat = f, true
+	}
+	if !k.isFloat {
+		k.t, k.isTime = parseTimestamp(s)
+	}
+	return k
+}
+
+// compareKeys decides pair by pair, so a column mixing numbers and text
+// orders each pair the way the two values allow.
+func compareKeys(a, b sortKey) int {
 	// Integers are compared as integers. Going through float64 folds every
 	// integer past 2^53 onto a neighbour, so 9007199254740993 and
 	// 9007199254740992 compared equal: the sort left them in query order and
 	// the column min and max came out the same value, while the display
 	// string — the database's own int64 — still showed the difference.
-	ai, aErr := strconv.ParseInt(a, 10, 64)
-	bi, bErr := strconv.ParseInt(b, 10, 64)
-	if aErr == nil && bErr == nil {
-		return cmp.Compare(ai, bi)
+	if a.isInt && b.isInt {
+		return cmp.Compare(a.i, b.i)
 	}
 
-	af, aErr := strconv.ParseFloat(a, 64)
-	bf, bErr := strconv.ParseFloat(b, 64)
-	if aErr == nil && bErr == nil {
+	if a.isFloat && b.isFloat {
 		switch {
-		case af < bf:
+		case a.f < b.f:
 			return -1
-		case af > bf:
+		case a.f > b.f:
 			return 1
 		}
 		// Equal as float64 is not equal: a BIGINT UNSIGNED past int64, a
 		// DECIMAL with more digits than a double keeps, or an integer against
 		// a fraction, all round to the same double. Only ties pay for the
 		// exact comparison, which is what keeps it off the common path.
-		if ar, ok := new(big.Rat).SetString(a); ok {
-			if br, ok := new(big.Rat).SetString(b); ok {
+		if ar, ok := new(big.Rat).SetString(a.s); ok {
+			if br, ok := new(big.Rat).SetString(b.s); ok {
 				return ar.Cmp(br)
 			}
 		}
@@ -66,13 +101,11 @@ func compareValues(a, b string) int {
 	// whole second, so "…:00Z" and "…:00.1Z" put '.' (0x2E) against 'Z'
 	// (0x5A) and sort the later value first — in the result table and in the
 	// column min/max alike.
-	if at, ok := parseTimestamp(a); ok {
-		if bt, ok := parseTimestamp(b); ok {
-			return at.Compare(bt)
-		}
+	if a.isTime && b.isTime {
+		return a.t.Compare(b.t)
 	}
 
-	return strings.Compare(a, b)
+	return strings.Compare(a.s, b.s)
 }
 
 // parseTimestamp is parseDate behind a shape check, so an ordinary text column
@@ -86,7 +119,9 @@ func parseTimestamp(s string) (time.Time, bool) {
 }
 
 // smartCompare compares two display strings, ordering the NULL sentinel after
-// every other value.
+// every other value — the result table's rule, which sortedRows applies
+// itself on its pre-parsed keys. Only the tests call this now: it pins that
+// rule down in one comparable function.
 //
 // It matches on the display string, so a value whose text is literally "NULL"
 // sorts with the real NULLs. That is intended for the result table, where the
@@ -115,39 +150,43 @@ func sortedRows(rows [][]string, col int, dir sortOrder) [][]string {
 		return rows
 	}
 
-	indices := make([]int, len(rows))
-	for i := range indices {
-		indices[i] = i
+	// Decorate: parse each cell once, not once per comparison.
+	type decorated struct {
+		idx  int
+		null bool
+		key  sortKey
+	}
+	keys := make([]decorated, len(rows))
+	for i, row := range rows {
+		var v string
+		if col < len(row) {
+			v = row[col]
+		}
+		keys[i] = decorated{idx: i, null: v == db.NullSentinel}
+		if !keys[i].null {
+			keys[i].key = newSortKey(v)
+		}
 	}
 
-	sort.SliceStable(indices, func(i, j int) bool {
-		ai, bi := indices[i], indices[j]
-		var a, b string
-		if col < len(rows[ai]) {
-			a = rows[ai][col]
-		}
-		if col < len(rows[bi]) {
-			b = rows[bi][col]
-		}
+	sort.SliceStable(keys, func(i, j int) bool {
+		a, b := keys[i], keys[j]
 		// NULL always sorts last, regardless of direction.
-		aNULL := a == db.NullSentinel
-		bNULL := b == db.NullSentinel
-		if aNULL != bNULL {
-			return bNULL
+		if a.null != b.null {
+			return b.null
 		}
-		if aNULL && bNULL {
+		if a.null {
 			return false
 		}
-		cmp := smartCompare(a, b)
+		c := compareKeys(a.key, b.key)
 		if dir == sortDesc {
-			cmp = -cmp
+			c = -c
 		}
-		return cmp < 0
+		return c < 0
 	})
 
 	result := make([][]string, len(rows))
-	for i, idx := range indices {
-		result[i] = rows[idx]
+	for i, k := range keys {
+		result[i] = rows[k.idx]
 	}
 	return result
 }
