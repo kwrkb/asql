@@ -74,6 +74,7 @@ type tablesLoadedMsg struct {
 	tables  []string
 	err     error
 	connGen uint64 // connection generation when the load was initiated
+	seq     uint64 // sidebar.loadSeq when the load was initiated
 }
 
 type aiResponseMsg struct {
@@ -317,7 +318,9 @@ func (m *model) activeDB() db.DBAdapter {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(textarea.Blink, loadTablesCmd(m.connMgr.Active(), m.connGen))
+	// Init has a value receiver, so it cannot bump loadSeq: the first load
+	// takes the zero seq, which no other load has used yet.
+	return tea.Batch(textarea.Blink, loadTablesCmd(m.connMgr.Active(), m.connGen, m.sidebar.loadSeq))
 }
 
 func (m *model) blurActiveInput() {
@@ -478,10 +481,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.reExecute {
 			query := strings.TrimSpace(m.textarea.Value())
 			if query != "" {
-				return m, tea.Batch(loadTablesCmd(m.connMgr.Active(), m.connGen), m.prepareAndExecuteQuery(query))
+				return m, tea.Batch(m.reloadTables(), m.prepareAndExecuteQuery(query))
 			}
 		}
-		return m, loadTablesCmd(m.connMgr.Active(), m.connGen)
+		return m, m.reloadTables()
 	case bringDoneMsg:
 		if msg.err != nil {
 			// Table names are never reused, even on failure: tableSeq is a
@@ -514,12 +517,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// When the bring DB is not active, a later J reloads both anyway.
 		if m.connMgr.ActiveDSN() == bringDSN {
 			m.dbPath = m.bringLabel()
-			return m, loadTablesCmd(m.connMgr.Active(), m.connGen)
+			return m, m.reloadTables()
 		}
 		return m, nil
 	case tablesLoadedMsg:
 		if msg.connGen != m.connGen {
 			return m, nil // stale load from a previous connection
+		}
+		if msg.seq != m.sidebar.loadSeq {
+			return m, nil // superseded by a newer load on this connection
 		}
 		if msg.err != nil {
 			m.sidebar.loadFailed = true
@@ -618,7 +624,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.sidebar.loadFailed && readonly.Check(msg.query) == nil {
 			return m, nil
 		}
-		return m, loadTablesCmd(m.activeDB(), m.connGen)
+		return m, m.reloadTables()
 	}
 
 	var cmd tea.Cmd

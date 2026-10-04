@@ -11,14 +11,24 @@ import (
 // loadTablesCmd fetches the table list for adapter. gen is the connection
 // generation at the time the load starts; it travels with the result so a load
 // that finishes after a connection switch can be discarded instead of
-// overwriting the new connection's sidebar and completion candidates.
-func loadTablesCmd(adapter db.DBAdapter, gen uint64) tea.Cmd {
+// overwriting the new connection's sidebar and completion candidates. seq
+// does the same for loads on one connection that overlap (see reloadTables).
+func loadTablesCmd(adapter db.DBAdapter, gen, seq uint64) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 		defer cancel()
 		tables, err := adapter.Tables(ctx)
-		return tablesLoadedMsg{tables: tables, err: err, connGen: gen}
+		return tablesLoadedMsg{tables: tables, err: err, connGen: gen, seq: seq}
 	}
+}
+
+// reloadTables starts a table-list load that supersedes any still in flight.
+// Two loads can overlap — two queries finishing while a retry is out — and
+// the older one may land last: a late failure would then put back the error
+// state the newer load had just cleared, and a late success stale tables.
+func (m *model) reloadTables() tea.Cmd {
+	m.sidebar.loadSeq++
+	return loadTablesCmd(m.activeDB(), m.connGen, m.sidebar.loadSeq)
 }
 
 // prepareAndExecuteQuery cancels any in-flight query, records the query in
