@@ -27,7 +27,7 @@ func (s *stubAdapter) QuoteIdentifier(name string) string     { return name }
 func (s *stubAdapter) Close() error                           { return nil }
 
 func TestLoadTablesCmd_CarriesConnGen(t *testing.T) {
-	cmd := loadTablesCmd(&stubAdapter{tables: []string{"a"}}, 7)
+	cmd := loadTablesCmd(&stubAdapter{tables: []string{"a"}}, 7, 0)
 	msg, ok := cmd().(tablesLoadedMsg)
 	if !ok {
 		t.Fatalf("got %T, want tablesLoadedMsg", cmd())
@@ -120,5 +120,67 @@ func TestQueryExecuted_ReloadsTablesOnlyWhenCatalogMayChange(t *testing.T) {
 				t.Errorf("reload = %v, want %v", got, tt.wantReload)
 			}
 		})
+	}
+}
+
+// TestQueryExecuted_RetriesTableLoadAfterFailure: a read-only query skips the
+// reload, so a table-list load that failed — say a timeout at connect — would
+// otherwise never be retried until a write or a connection switch, leaving the
+// sidebar and table-name completion empty.
+func TestQueryExecuted_RetriesTableLoadAfterFailure(t *testing.T) {
+	m := newTestModel()
+	updated, _ := m.Update(tablesLoadedMsg{err: context.DeadlineExceeded, connGen: m.connGen})
+	failed := updated.(model)
+
+	failed.querySeq = 1
+	updated, cmd := failed.Update(queryExecutedMsg{seq: 1, query: "SELECT 1", result: db.QueryResult{
+		Columns: []string{"a"}, Rows: [][]string{{"1"}},
+	}})
+	if cmd == nil {
+		t.Fatal("SELECT after a failed table load: no reload, want one")
+	}
+
+	retrying := updated.(model)
+	updated, _ = retrying.Update(tablesLoadedMsg{tables: []string{"users"}, connGen: m.connGen, seq: retrying.sidebar.loadSeq})
+	loaded := updated.(model)
+	loaded.querySeq = 2
+	if _, cmd := loaded.Update(queryExecutedMsg{seq: 2, query: "SELECT 1", result: db.QueryResult{
+		Columns: []string{"a"}, Rows: [][]string{{"1"}},
+	}}); cmd != nil {
+		t.Error("SELECT after a successful table load: reloaded, want no reload")
+	}
+}
+
+// TestTablesLoaded_DiscardsSupersededLoad: two queries finishing while a retry
+// is out start two loads on one connection. If the older one fails after the
+// newer one succeeded, it must not bring back the failure state and its error.
+func TestTablesLoaded_DiscardsSupersededLoad(t *testing.T) {
+	m := newTestModel()
+	updated, _ := m.Update(tablesLoadedMsg{err: context.DeadlineExceeded, connGen: m.connGen})
+	cur := updated.(model)
+
+	var seqs []uint64
+	for i := range 2 {
+		cur.querySeq = uint64(i + 1)
+		updated, cmd := cur.Update(queryExecutedMsg{seq: cur.querySeq, query: "SELECT 1", result: db.QueryResult{
+			Columns: []string{"a"}, Rows: [][]string{{"1"}},
+		}})
+		if cmd == nil {
+			t.Fatalf("query %d: no retry while the last load failed", i+1)
+		}
+		cur = updated.(model)
+		seqs = append(seqs, cur.sidebar.loadSeq)
+	}
+
+	updated, _ = cur.Update(tablesLoadedMsg{tables: []string{"users"}, connGen: cur.connGen, seq: seqs[1]})
+	cur = updated.(model)
+	updated, _ = cur.Update(tablesLoadedMsg{err: context.DeadlineExceeded, connGen: cur.connGen, seq: seqs[0]})
+	cur = updated.(model)
+
+	if cur.sidebar.loadFailed || cur.statusError {
+		t.Errorf("superseded failure applied: loadFailed=%v status=%q", cur.sidebar.loadFailed, cur.statusText)
+	}
+	if !slices.Equal(cur.sidebar.tables, []string{"users"}) {
+		t.Errorf("tables = %v, want [users]", cur.sidebar.tables)
 	}
 }

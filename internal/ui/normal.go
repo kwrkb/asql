@@ -32,7 +32,7 @@ func (m model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setStatus("Terminal too narrow for sidebar", true)
 			}
 		case "e":
-			if headers, _ := m.exportSource(); len(headers) == 0 {
+			if result, _, _ := m.exportPane(); len(result.Columns) == 0 {
 				m.setStatus("No query results to export", true)
 			} else {
 				m.mode = exportMode

@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/kwrkb/asql/internal/db"
 	"github.com/kwrkb/asql/internal/export"
 )
 
@@ -51,11 +52,17 @@ func (m model) updateExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // rather than read from displayRows, which holds a "(no rows)" sentinel for
 // an empty result that must not reach the file.
 func (m *model) exportSource() (headers []string, rows [][]string) {
-	if m.pinned != nil && m.comparePane == 0 {
-		p := m.pinned
-		return p.result.Columns, sortedRows(p.result.Rows, p.sortCol, p.sortDir)
+	result, col, dir := m.exportPane()
+	return result.Columns, sortedRows(result.Rows, col, dir)
+}
+
+// exportPane picks the pane exportSource reads, without sorting it — enough
+// to ask whether there is anything to export.
+func (m *model) exportPane() (result db.QueryResult, sortCol int, sortDir sortOrder) {
+	if p := m.pinned; p != nil && m.comparePane == 0 {
+		return p.result, p.sortCol, p.sortDir
 	}
-	return m.lastResult.Columns, sortedRows(m.lastResult.Rows, m.sortCol, m.sortDir)
+	return m.lastResult, m.sortCol, m.sortDir
 }
 
 func (m *model) executeExport() {
