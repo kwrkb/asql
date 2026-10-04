@@ -122,3 +122,30 @@ func TestQueryExecuted_ReloadsTablesOnlyWhenCatalogMayChange(t *testing.T) {
 		})
 	}
 }
+
+// TestQueryExecuted_RetriesTableLoadAfterFailure: a read-only query skips the
+// reload, so a table-list load that failed — say a timeout at connect — would
+// otherwise never be retried until a write or a connection switch, leaving the
+// sidebar and table-name completion empty.
+func TestQueryExecuted_RetriesTableLoadAfterFailure(t *testing.T) {
+	m := newTestModel()
+	updated, _ := m.Update(tablesLoadedMsg{err: context.DeadlineExceeded, connGen: m.connGen})
+	failed := updated.(model)
+
+	failed.querySeq = 1
+	updated, cmd := failed.Update(queryExecutedMsg{seq: 1, query: "SELECT 1", result: db.QueryResult{
+		Columns: []string{"a"}, Rows: [][]string{{"1"}},
+	}})
+	if cmd == nil {
+		t.Fatal("SELECT after a failed table load: no reload, want one")
+	}
+
+	updated, _ = updated.(model).Update(tablesLoadedMsg{tables: []string{"users"}, connGen: m.connGen})
+	loaded := updated.(model)
+	loaded.querySeq = 2
+	if _, cmd := loaded.Update(queryExecutedMsg{seq: 2, query: "SELECT 1", result: db.QueryResult{
+		Columns: []string{"a"}, Rows: [][]string{{"1"}},
+	}}); cmd != nil {
+		t.Error("SELECT after a successful table load: reloaded, want no reload")
+	}
+}

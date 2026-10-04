@@ -89,6 +89,11 @@ type sidebarState struct {
 	open   bool
 	tables []string
 	cursor int
+	// loadFailed records that the last table-list load for this connection
+	// failed. A read-only query does not reload the list, so without it a
+	// transient failure at connect would leave the sidebar and table-name
+	// completion empty until a write or a connection switch.
+	loadFailed bool
 }
 
 // sparklineData holds pre-computed sparkline information for a date/timestamp column.

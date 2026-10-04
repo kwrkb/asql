@@ -459,6 +459,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.completion.colCache = nil
 		m.completion.colOrder = nil
 		m.sidebar.tables = nil
+		m.sidebar.loadFailed = false // the load below starts over
 		var status string
 		if m.connMgr.ActiveDSN() == bringDSN {
 			// Name the provenance table on arrival: "which of these tables is
@@ -521,9 +522,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // stale load from a previous connection
 		}
 		if msg.err != nil {
+			m.sidebar.loadFailed = true
 			m.setStatus("Failed to load tables: "+msg.err.Error(), true)
 			return m, nil
 		}
+		m.sidebar.loadFailed = false
 		m.sidebar.tables = msg.tables
 		m.cancelColumnsFetch()
 		m.completion.colCache = nil
@@ -609,8 +612,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// its arrival drops the completion column cache. The readonly
 		// classifier is the test because it refuses whatever it cannot prove
 		// read-only — unknown keywords, multiple statements, data-modifying
-		// CTEs, SELECT INTO — so doubt still reloads.
-		if readonly.Check(msg.query) == nil {
+		// CTEs, SELECT INTO — so doubt still reloads. A list whose last load
+		// failed reloads after any query: the failure may have been transient,
+		// and there is no other way to retry it short of a write.
+		if !m.sidebar.loadFailed && readonly.Check(msg.query) == nil {
 			return m, nil
 		}
 		return m, loadTablesCmd(m.activeDB(), m.connGen)
