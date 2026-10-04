@@ -230,7 +230,10 @@ func (m *model) applyResultWithSort(result db.QueryResult) {
 
 	// Compute column widths
 	if len(m.cachedCellWidths) != len(result.Columns) {
-		// lastResult was set without applyResult; measure it now.
+		// lastResult was set without applyResult; measure it now. This
+		// catches only a change in column count — a same-width result set
+		// that way would keep the old widths — so a new result must go
+		// through applyResult.
 		m.cachedCellWidths = make([]int, len(result.Columns))
 		for i := range result.Columns {
 			m.cachedCellWidths[i] = cellsWidth(result.Rows, i)
