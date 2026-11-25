@@ -64,6 +64,13 @@ func TestMaskDSN(t *testing.T) {
 		{"upper-case query param password masked", "postgres://user@host/db?PASSWORD=secret", "postgres://user@host/db?PASSWORD=%2A%2A%2A"},
 		{"mixed-case query param password masked", "postgres://user@host/db?Password=secret&sslmode=require", "postgres://user@host/db?Password=%2A%2A%2A&sslmode=require"},
 		{"no password unchanged", "postgres://user@host/db", "postgres://user@host/db"},
+		// pgx reads sslpassword as the passphrase of an encrypted client key.
+		{"sslpassword param masked", "postgres://user@host/db?sslmode=verify-full&sslpassword=secret", "postgres://user@host/db?sslmode=verify-full&sslpassword=%2A%2A%2A"},
+		{"upper-case sslpassword param masked", "postgres://user@host/db?SSLPASSWORD=secret", "postgres://user@host/db?SSLPASSWORD=%2A%2A%2A"},
+		// A repeated key: the first value being empty must not hide a later
+		// one. Every value is replaced, so none of them survives.
+		{"repeated password param with empty first value", "postgres://user@host/db?password=&password=secret", "postgres://user@host/db?password=%2A%2A%2A"},
+		{"repeated password param", "postgres://user@host/db?password=a&password=b", "postgres://user@host/db?password=%2A%2A%2A"},
 		// The over-masking below is confined to DSNs url.Parse rejects. A
 		// well-formed DSN with an '@' in the database name — which is what the
 		// profile overlay and status bar actually render — keeps its host,
@@ -96,6 +103,8 @@ func TestMaskDSN(t *testing.T) {
 		// The parsed path masks a password= parameter; the malformed path has
 		// no RawQuery to read, so it has to do the same textually.
 		{"malformed URL with a password parameter", "postgres://alice@localhost:bad/db?password=secret", "postgres://alice@localhost:bad/db?password=***"},
+		{"malformed URL with an sslpassword parameter", "postgres://alice@localhost:bad/db?sslpassword=secret", "postgres://alice@localhost:bad/db?sslpassword=***"},
+		{"malformed URL with a repeated password parameter", "postgres://alice@localhost:bad/db?password=&password=secret", "postgres://alice@localhost:bad/db?password=***&password=***"},
 		{"malformed URL with an upper-case password parameter", "postgres://alice@localhost:bad/db?PASSWORD=secret&x=1", "postgres://alice@localhost:bad/db?PASSWORD=***&x=1"},
 		// Nothing that looks like a credential: the DSN must survive readable,
 		// or a bad-host error stops naming the host.

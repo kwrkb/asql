@@ -36,8 +36,23 @@ var rePasswordInDSN = regexp.MustCompile(`(?s)(://[^:]*:)(.*)(@)`)
 // halves of MaskDSN consult it, so a key one half masks cannot be a key the
 // other half prints. It is case-insensitive because the value is a secret
 // whether or not the driver ends up honouring the spelling.
+//
+// sslpassword is pgx's passphrase for an encrypted client key — pgx itself
+// treats it as a secret, so it is one here too.
 func isPasswordParam(key string) bool {
-	return strings.EqualFold(key, "password")
+	return strings.EqualFold(key, "password") || strings.EqualFold(key, "sslpassword")
+}
+
+// hasNonEmpty reports whether any of a repeated parameter's values is set.
+// Looking only at the first value (url.Values.Get) let
+// "?password=&password=secret" through with the secret intact.
+func hasNonEmpty(values []string) bool {
+	for _, v := range values {
+		if v != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // maskPasswordParams masks password query parameters in a DSN url.Parse
@@ -86,8 +101,8 @@ func MaskDSN(dsn string) string {
 	}
 	q := u.Query()
 	maskedParam := false
-	for key := range q {
-		if isPasswordParam(key) && q.Get(key) != "" {
+	for key, values := range q {
+		if isPasswordParam(key) && hasNonEmpty(values) {
 			q.Set(key, "***")
 			maskedParam = true
 		}
