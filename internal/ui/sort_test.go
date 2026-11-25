@@ -238,3 +238,64 @@ func BenchmarkSortedRows10k(b *testing.B) {
 		sortedRows(rows, 1, sortAsc)
 	}
 }
+
+// Comparing pair by pair — numerically when both parse, lexically otherwise —
+// made 2 < 10 < "1a" < 2 a cycle, so a mixed column's sort and its min/max
+// both depended on the order the rows arrived in. Every permutation must now
+// give the same answer.
+func TestCompareValuesIsATotalOrderOnMixedColumns(t *testing.T) {
+	values := []string{"2", "10", "1a", "NaN", "-1.5", "2024-01-15", "abc", "42", "42.0", "Inf"}
+
+	// Transitivity and antisymmetry over every triple.
+	for _, a := range values {
+		for _, b := range values {
+			if ab, ba := compareValues(a, b), compareValues(b, a); sign(ab) != -sign(ba) {
+				t.Errorf("compareValues(%q,%q)=%d but compareValues(%q,%q)=%d", a, b, ab, b, a, ba)
+			}
+			for _, c := range values {
+				if compareValues(a, b) <= 0 && compareValues(b, c) <= 0 && compareValues(a, c) > 0 {
+					t.Errorf("not transitive: %q <= %q <= %q but %q > %q", a, b, c, a, c)
+				}
+			}
+		}
+	}
+
+	want := []string{"-1.5", "2", "10", "42", "42.0", "Inf", "NaN", "2024-01-15", "1a", "abc"}
+	perms := [][]string{
+		{"1a", "2", "10"},
+		{"10", "1a", "2"},
+		{"2", "10", "1a"},
+	}
+	for _, p := range perms {
+		rows := make([][]string, len(p))
+		for i, v := range p {
+			rows[i] = []string{v}
+		}
+		got := sortedRows(rows, 0, sortAsc)
+		if got[0][0] != "2" || got[1][0] != "10" || got[2][0] != "1a" {
+			t.Errorf("sort of %v = %v, want [2 10 1a]", p, got)
+		}
+	}
+
+	rows := make([][]string, len(values))
+	for i, v := range values {
+		rows[i] = []string{v}
+	}
+	got := sortedRows(rows, 0, sortAsc)
+	for i := range want {
+		if got[i][0] != want[i] {
+			t.Errorf("sorted[%d] = %q, want %q (full: %v)", i, got[i][0], want[i], got)
+			break
+		}
+	}
+}
+
+func sign(n int) int {
+	switch {
+	case n < 0:
+		return -1
+	case n > 0:
+		return 1
+	}
+	return 0
+}

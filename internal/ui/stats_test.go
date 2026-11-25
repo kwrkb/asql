@@ -602,3 +602,32 @@ func TestStats_RenderOverlayLongValuesDoNotWrap(t *testing.T) {
 		}
 	}
 }
+
+// On a mixed column, min and max used to be whichever value the scan met first
+// in a comparison cycle. Every row order must now give the same answer,
+// including the representation chosen between equal values ("42" / "42.0").
+func TestComputeColumnStats_MinMaxIndependentOfRowOrder(t *testing.T) {
+	perms := [][]string{
+		{"2", "10", "1a", "42.0", "42"},
+		{"1a", "42", "2", "10", "42.0"},
+		{"42.0", "10", "42", "1a", "2"},
+	}
+	for _, p := range perms {
+		rows := make([][]string, len(p))
+		for i, v := range p {
+			rows[i] = []string{v}
+		}
+		st := computeColumnStats(db.QueryResult{Columns: []string{"v"}, Rows: rows})
+		if st[0].Min != "2" || st[0].Max != "1a" {
+			t.Errorf("rows %v: min=%q max=%q, want min=2 max=1a", p, st[0].Min, st[0].Max)
+		}
+	}
+
+	for _, p := range [][]string{{"42", "42.0"}, {"42.0", "42"}} {
+		rows := [][]string{{p[0]}, {p[1]}}
+		st := computeColumnStats(db.QueryResult{Columns: []string{"v"}, Rows: rows})
+		if st[0].Min != "42" || st[0].Max != "42.0" {
+			t.Errorf("rows %v: min=%q max=%q, want min=42 max=42.0", p, st[0].Min, st[0].Max)
+		}
+	}
+}
