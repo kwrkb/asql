@@ -81,7 +81,8 @@ GITHUB_TOKEN=$(gh auth token) goreleaser release --clean
 | `LESSONS.md` | 判断の記録 | **追記専用**。過去を書き換えない。1 エントリ = 却下した案 / 決め手（観測事実のみ）/ 覆す条件。冒頭の「書き方」を参照 |
 | `NOTES.md` | 内部構造の索引 | **揮発・鮮度非保証**。コードが常に正しい。気づいた時点で直してよい（承認不要） |
 | `docs/` | 設計文書（例: `readonly-design.md`） | 実装前のレビュー対象 |
-| `status/` | 品質監査スキルの出力先（`review.md` 等） | — |
+| `docs/ai-audit.md` | 品質監査スキルの出力先。指摘は GitHub Issue に切り出して管理する | — |
+| `status/review.md` | 旧形式の全体レビュー（2026-03-22、Phase 2 時点）。記録として残すだけで、新しい監査の出力先ではない | — |
 
 現在のフェーズは **メンテナンス期**（VISION.md の `Phase`）。
 新機能は Decision Rule を満たすだけでは足りず、「実利用で不足が観察された」ことを条件とする。
