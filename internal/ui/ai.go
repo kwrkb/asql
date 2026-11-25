@@ -102,7 +102,9 @@ func (m model) renderWithAIOverlay(background string) string {
 		content = titleStyle.Render("AI Assistant (Text-to-SQL)") + "\n" + m.aiSt.input.View()
 		if m.aiSt.err != "" {
 			errStyle := lipgloss.NewStyle().Foreground(errorColor).MarginTop(1)
-			content += "\n" + errStyle.Render(m.aiSt.err)
+			// The message carries text from the endpoint's error body, so it
+			// goes through the same sanitizer as the status bar.
+			content += "\n" + errStyle.Render(sanitize(m.aiSt.err))
 		}
 	}
 

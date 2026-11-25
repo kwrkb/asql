@@ -770,3 +770,16 @@ func TestDetailMode_LongValuesFitTheScreen(t *testing.T) {
 		})
 	}
 }
+
+// The AI error comes from the endpoint's response body, so it must reach the
+// terminal through sanitize like every other externally sourced string.
+func TestAIOverlayErrorIsSanitized(t *testing.T) {
+	m := newTestModel()
+	m.mode = aiMode
+	m.aiSt.input = textinput.New()
+	m.aiSt.err = "API error 400: bad\x1b]0;pwned\x07 \x1b[31mred"
+	out := m.renderWithAIOverlay("")
+	if strings.Contains(out, "\x1b]") || strings.Contains(out, "\x07") {
+		t.Errorf("AI error reached the terminal unsanitized: %q", out)
+	}
+}
