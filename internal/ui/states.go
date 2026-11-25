@@ -73,12 +73,12 @@ type histSearchState struct {
 
 // completionState holds state for tab-completion in INSERT mode.
 type completionState struct {
-	active        bool
-	items         []string
-	cursor        int
-	prefix        string
-	colCache      map[string][]string
-	colOrder      []string // LRU order: most recently used at end
+	active   bool
+	items    []string
+	cursor   int
+	prefix   string
+	colCache map[string][]string
+	colOrder []string // LRU order: most recently used at end
 	// pending marks a completion an async column fetch interrupted, and
 	// pendingPrefix is the prefix it was asked for. They are separate because
 	// "" is a legitimate prefix ("SELECT " then Tab), so the prefix alone
