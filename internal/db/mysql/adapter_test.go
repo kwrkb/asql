@@ -280,9 +280,9 @@ func TestOpen_ErrorPaths(t *testing.T) {
 }
 
 func TestIntegration(t *testing.T) {
-	dsn := os.Getenv("ASQL_MYSQL_DSN")
+	dsn := os.Getenv("ASQL_TEST_MYSQL_DSN")
 	if dsn == "" {
-		t.Skip("ASQL_MYSQL_DSN not set, skipping MySQL integration tests")
+		t.Skip("ASQL_TEST_MYSQL_DSN not set, skipping MySQL integration tests")
 	}
 
 	a, err := Open(dsn)

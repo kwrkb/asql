@@ -2,6 +2,7 @@ package ui
 
 import (
 	"cmp"
+	"math"
 	"math/big"
 	"sort"
 	"strconv"
@@ -19,9 +20,8 @@ const (
 	sortDesc
 )
 
-// compareValues orders two cell values with no NULL handling at all: they are
-// compared numerically when both parse as numbers, chronologically when both
-// parse as timestamps, and lexically otherwise.
+// compareValues orders two cell values with no NULL handling at all. See
+// compareKeys for the order.
 //
 // Callers that have already separated out the NULLs — computeColumnStats skips
 // them before computing min/max — must use this rather than smartCompare, or a
@@ -63,9 +63,56 @@ func newSortKey(s string) sortKey {
 	return k
 }
 
-// compareKeys decides pair by pair, so a column mixing numbers and text
-// orders each pair the way the two values allow.
+// Value classes, in the order a mixed column sorts them: numbers, then
+// timestamps, then everything else as text.
+const (
+	classNumber = iota
+	classTime
+	classText
+)
+
+func (k sortKey) class() int {
+	switch {
+	case k.isFloat:
+		return classNumber
+	case k.isTime:
+		return classTime
+	default:
+		return classText
+	}
+}
+
+// compareKeys is a total order over cell values: values of different classes
+// order by class, and only values of the same class are compared by content.
+//
+// Deciding pair by pair instead — numerically when both values parse,
+// lexically otherwise — is not an order at all on a mixed column: 2 < 10
+// numerically, "10" < "1a" and "1a" < "2" lexically, so the three form a cycle.
+// Sorting such a column then depended on the input order, and so did the
+// column min and max, which take the first winner the scan happens to meet.
 func compareKeys(a, b sortKey) int {
+	if c := cmp.Compare(a.class(), b.class()); c != 0 {
+		return c
+	}
+	switch a.class() {
+	case classNumber:
+		return compareNumbers(a, b)
+	case classTime:
+		// Timestamps are compared as instants rather than as text. Lexical
+		// order happens to be chronological for most date shapes, but not for
+		// the one the database hands back: dbutil formats time.Time with
+		// RFC3339Nano, which trims trailing zeros from the fraction and drops
+		// it entirely on a whole second, so "…:00Z" and "…:00.1Z" put '.'
+		// (0x2E) against 'Z' (0x5A) and sort the later value first — in the
+		// result table and in the column min/max alike.
+		return a.t.Compare(b.t)
+	default:
+		return strings.Compare(a.s, b.s)
+	}
+}
+
+// compareNumbers orders two values of classNumber.
+func compareNumbers(a, b sortKey) int {
 	// Integers are compared as integers. Going through float64 folds every
 	// integer past 2^53 onto a neighbour, so 9007199254740993 and
 	// 9007199254740992 compared equal: the sort left them in query order and
@@ -75,37 +122,35 @@ func compareKeys(a, b sortKey) int {
 		return cmp.Compare(a.i, b.i)
 	}
 
-	if a.isFloat && b.isFloat {
-		switch {
-		case a.f < b.f:
-			return -1
-		case a.f > b.f:
-			return 1
-		}
-		// Equal as float64 is not equal: a BIGINT UNSIGNED past int64, a
-		// DECIMAL with more digits than a double keeps, or an integer against
-		// a fraction, all round to the same double. Only ties pay for the
-		// exact comparison, which is what keeps it off the common path.
-		if ar, ok := new(big.Rat).SetString(a.s); ok {
-			if br, ok := new(big.Rat).SetString(b.s); ok {
-				return ar.Cmp(br)
-			}
-		}
-		return 0 // NaN or Inf: no exact form, and they were equal as floats
+	// NaN compares false against everything, which made it "equal" to every
+	// number and broke transitivity. It goes after all other numbers, as
+	// PostgreSQL orders it.
+	aNaN, bNaN := math.IsNaN(a.f), math.IsNaN(b.f)
+	switch {
+	case aNaN && bNaN:
+		return 0
+	case aNaN:
+		return 1
+	case bNaN:
+		return -1
 	}
 
-	// Timestamps are compared as instants rather than as text. Lexical order
-	// happens to be chronological for most date shapes, but not for the one
-	// the database hands back: dbutil formats time.Time with RFC3339Nano,
-	// which trims trailing zeros from the fraction and drops it entirely on a
-	// whole second, so "…:00Z" and "…:00.1Z" put '.' (0x2E) against 'Z'
-	// (0x5A) and sort the later value first — in the result table and in the
-	// column min/max alike.
-	if a.isTime && b.isTime {
-		return a.t.Compare(b.t)
+	switch {
+	case a.f < b.f:
+		return -1
+	case a.f > b.f:
+		return 1
 	}
-
-	return strings.Compare(a.s, b.s)
+	// Equal as float64 is not equal: a BIGINT UNSIGNED past int64, a DECIMAL
+	// with more digits than a double keeps, or an integer against a fraction,
+	// all round to the same double. Only ties pay for the exact comparison,
+	// which is what keeps it off the common path.
+	if ar, ok := new(big.Rat).SetString(a.s); ok {
+		if br, ok := new(big.Rat).SetString(b.s); ok {
+			return ar.Cmp(br)
+		}
+	}
+	return 0 // Inf: no exact form, and they were equal as floats
 }
 
 // parseTimestamp is parseDate behind a shape check, so an ordinary text column
@@ -146,8 +191,33 @@ func smartCompare(a, b string) int {
 // sortedRows returns a sorted copy of rows by the given column index and order.
 // The original slice is not modified.
 func sortedRows(rows [][]string, col int, dir sortOrder) [][]string {
-	if dir == sortNone || len(rows) == 0 {
+	order := sortedOrder(rows, col, dir)
+	if order == nil {
 		return rows
+	}
+	return permute(rows, order)
+}
+
+// permute returns s reordered so that element i is s[order[i]]. It returns nil
+// when s does not line up with order — a nil Kinds, for one — which is the
+// safe answer for data that has to stay parallel to the rows.
+func permute[T any](s []T, order []int) []T {
+	if len(s) != len(order) {
+		return nil
+	}
+	out := make([]T, len(order))
+	for i, j := range order {
+		out[i] = s[j]
+	}
+	return out
+}
+
+// sortedOrder returns the row indices of rows in sorted order, or nil when no
+// sort applies. Callers that carry data parallel to the rows (Kinds) apply the
+// same order to it with permute.
+func sortedOrder(rows [][]string, col int, dir sortOrder) []int {
+	if dir == sortNone || len(rows) == 0 {
+		return nil
 	}
 
 	// Decorate: parse each cell once, not once per comparison.
@@ -184,11 +254,11 @@ func sortedRows(rows [][]string, col int, dir sortOrder) [][]string {
 		return c < 0
 	})
 
-	result := make([][]string, len(rows))
+	order := make([]int, len(keys))
 	for i, k := range keys {
-		result[i] = rows[k.idx]
+		order[i] = k.idx
 	}
-	return result
+	return order
 }
 
 // sortIndicator returns the sort direction symbol for a column header.

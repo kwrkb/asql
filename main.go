@@ -195,6 +195,12 @@ func main() {
 
 	// --save-profile: save current DSN and continue
 	if saveProfileName != "" {
+		// profiles is empty when the file could not be read, so saving would
+		// replace profiles.yaml with just this one entry.
+		if profileErr != nil {
+			fmt.Fprintf(os.Stderr, "not saving profile %q: profiles.yaml could not be loaded; fix the file first\n", saveProfileName)
+			os.Exit(1)
+		}
 		newProfiles := profile.Upsert(profiles, profile.Profile{Name: saveProfileName, DSN: dbPath})
 		if err := profile.Save(newProfiles); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to save profile: %v\n", err)
@@ -244,7 +250,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "warning: failed to load snippets: %v\n", snippetErr)
 	}
 
-	m := ui.NewModel(adapter, displayDSN, dbPath, connName, aiClient, snippets, profiles, flags.readonly)
+	m := ui.NewModel(adapter, displayDSN, dbPath, connName, aiClient, snippets, profiles, flags.readonly).
+		WithLoadErrors(snippetErr, profileErr)
 	defer m.CloseAll()
 
 	program := tea.NewProgram(m, tea.WithAltScreen())

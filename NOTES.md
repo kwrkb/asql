@@ -78,4 +78,5 @@ v2 移行は bubbletea/lipgloss v2 を巻き込むため見合わない。詳細
 | `testdata/compose.yaml` | 統合テスト用の MySQL 8.4 / PostgreSQL 17。`docker compose -f testdata/compose.yaml up -d --wait` の後、`ASQL_TEST_MYSQL_DSN` / `ASQL_TEST_POSTGRES_DSN` を渡して `go test -tags integration ./internal/db/...`。環境変数がなければ skip するので `go test ./...` には影響しない。CI の `integration` ジョブも同じファイルを使う |
 | `docs/*.tape`, `docs/setup-demo-db.py` | README 用の VHS デモ録画 |
 | `e2e/` | VHS による E2E テスト（`run.sh` / `*.tape` / `setup-profiles.py`）。**実行前に `e2e/README.md` を必ず読む**。`vhs` / `ttyd` / `ffmpeg` が要る |
-| `status/` | 品質監査スキルの出力先（`review.md` 等） |
+| `docs/ai-audit.md` | 品質監査スキルの出力先（指摘は GitHub Issue へ） |
+| `status/review.md` | 旧形式の全体レビュー（2026-03-22）。新しい監査の出力先ではない |

@@ -69,9 +69,15 @@ func newAdapter(conn *sql.DB) (*Adapter, error) {
 		return nil, err
 	}
 
+	// One connection, never recycled. Much of what a SQLite session holds
+	// lives in the connection rather than the file — the whole database for
+	// ":memory:", and TEMP tables, ATTACHed databases and PRAGMA settings for
+	// a file — so a lifetime that closes it to "refresh" the pool silently
+	// throws that away. There is no server on the other end that could drop
+	// an idle connection, so nothing is gained by recycling it either.
 	conn.SetMaxOpenConns(1)
 	conn.SetMaxIdleConns(1)
-	conn.SetConnMaxLifetime(5 * time.Minute)
+	conn.SetConnMaxLifetime(0)
 
 	return &Adapter{conn: conn}, nil
 }

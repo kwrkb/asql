@@ -602,3 +602,55 @@ func TestStats_RenderOverlayLongValuesDoNotWrap(t *testing.T) {
 		}
 	}
 }
+
+// On a mixed column, min and max used to be whichever value the scan met first
+// in a comparison cycle. Every row order must now give the same answer,
+// including the representation chosen between equal values ("42" / "42.0").
+func TestComputeColumnStats_MinMaxIndependentOfRowOrder(t *testing.T) {
+	perms := [][]string{
+		{"2", "10", "1a", "42.0", "42"},
+		{"1a", "42", "2", "10", "42.0"},
+		{"42.0", "10", "42", "1a", "2"},
+	}
+	for _, p := range perms {
+		rows := make([][]string, len(p))
+		for i, v := range p {
+			rows[i] = []string{v}
+		}
+		st := computeColumnStats(db.QueryResult{Columns: []string{"v"}, Rows: rows})
+		if st[0].Min != "2" || st[0].Max != "1a" {
+			t.Errorf("rows %v: min=%q max=%q, want min=2 max=1a", p, st[0].Min, st[0].Max)
+		}
+	}
+
+	for _, p := range [][]string{{"42", "42.0"}, {"42.0", "42"}} {
+		rows := [][]string{{p[0]}, {p[1]}}
+		st := computeColumnStats(db.QueryResult{Columns: []string{"v"}, Rows: rows})
+		if st[0].Min != "42" || st[0].Max != "42.0" {
+			t.Errorf("rows %v: min=%q max=%q, want min=42 max=42.0", p, st[0].Min, st[0].Max)
+		}
+	}
+}
+
+// Distinct used to key on the display string alone, so an empty string and
+// the text `""` (both drawn `""`) counted as one value.
+func TestComputeColumnStats_DistinctSeparatesKinds(t *testing.T) {
+	result := db.QueryResult{
+		Columns: []string{"v"},
+		Rows:    [][]string{{db.EmptySentinel}, {db.EmptySentinel}, {"ab"}, {"ab"}},
+		Kinds:   [][]db.Kind{{db.KindEmpty}, {db.KindText}, {db.KindText}, {db.KindBlob}},
+	}
+	if got := computeColumnStats(result)[0].Distinct; got != 4 {
+		t.Errorf("Distinct = %d, want 4", got)
+	}
+
+	// Integer and text spelling the same value stay one observation.
+	result = db.QueryResult{
+		Columns: []string{"v"},
+		Rows:    [][]string{{"1"}, {"1"}},
+		Kinds:   [][]db.Kind{{db.KindInt}, {db.KindText}},
+	}
+	if got := computeColumnStats(result)[0].Distinct; got != 1 {
+		t.Errorf("Distinct = %d, want 1", got)
+	}
+}

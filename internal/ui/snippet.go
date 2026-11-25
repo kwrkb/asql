@@ -11,10 +11,23 @@ import (
 	"github.com/kwrkb/asql/internal/snippet"
 )
 
+// snippetsSavable reports whether snippets.yaml may be written, and says why
+// not on the status bar when it may not.
+func (m *model) snippetsSavable() bool {
+	if m.snippetSt.loadErr == nil {
+		return true
+	}
+	m.setStatus(fmt.Sprintf("Not saved: snippets.yaml could not be loaded (%v); fix the file and restart", m.snippetSt.loadErr), true)
+	return false
+}
+
 func (m model) enterSnippetNamingMode() (tea.Model, tea.Cmd) {
 	query := strings.TrimSpace(m.textarea.Value())
 	if query == "" {
 		m.setStatus("No query to save", true)
+		return m, nil
+	}
+	if !m.snippetsSavable() {
 		return m, nil
 	}
 	m.snippetSt.prevMode = m.mode
@@ -49,6 +62,9 @@ func (m model) updateSnippet(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			moveCursor(&m.snippetSt.cursor, len(m.snippetSt.items), -1)
 		case "d":
 			if len(m.snippetSt.items) > 0 && m.snippetSt.cursor < len(m.snippetSt.items) {
+				if !m.snippetsSavable() {
+					return m, nil
+				}
 				// Build the new list in a fresh slice: appending onto
 				// items[:cursor] would left-shift the shared backing array
 				// before Save runs, corrupting items when Save fails.
@@ -69,6 +85,9 @@ func (m model) updateSnippet(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			query := strings.TrimSpace(m.textarea.Value())
 			if query == "" {
 				m.setStatus("No query to save", true)
+				return m, nil
+			}
+			if !m.snippetsSavable() {
 				return m, nil
 			}
 			m.snippetSt.naming = true

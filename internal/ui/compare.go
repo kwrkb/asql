@@ -48,6 +48,7 @@ type pinnedPane struct {
 	connName      string
 	table         table.Model
 	displayRows   []table.Row
+	displayKinds  [][]db.Kind // Kinds in displayRows order; nil when the result has none
 	colWidths     []int
 	colCursor     int
 	colOffset     int
@@ -74,7 +75,8 @@ func (m *model) pinCurrentResult() *pinnedPane {
 	)
 	tbl.SetStyles(unfocusedTableStyles())
 
-	// Copy displayRows
+	// Copy displayRows. displayKinds is shared, not copied: nothing writes
+	// into it, every re-sort builds a new slice.
 	rows := make([]table.Row, len(m.displayRows))
 	copy(rows, m.displayRows)
 
@@ -95,6 +97,7 @@ func (m *model) pinCurrentResult() *pinnedPane {
 		connName:      m.lastConn,
 		table:         tbl,
 		displayRows:   rows,
+		displayKinds:  m.displayKinds,
 		colWidths:     widths,
 		colCursor:     m.colCursor,
 		colOffset:     m.colOffset,
@@ -154,26 +157,72 @@ func (m *model) compareStatusSummary() string {
 	return fmt.Sprintf("Compare rows left:%d right:%d diff:%+d", left, right, right-left)
 }
 
+// cellClass is the part of a cell's Kind that its display string cannot show.
+// NULL and an empty value are drawn as sentinels a text value can also hold
+// ("NULL", `""`), and a blob as hex a text value can also hold, so those three
+// are told apart. Text, integer and float are not: a value reading "1" is the
+// same observation whether one database typed it INTEGER and the other TEXT,
+// and flagging that would make every cross-database compare light up.
+type cellClass uint8
+
+const (
+	cellPlain cellClass = iota
+	cellNull
+	cellEmpty
+	cellBlob
+)
+
+func classOf(k db.Kind) cellClass {
+	switch k {
+	case db.KindNull:
+		return cellNull
+	case db.KindEmpty:
+		return cellEmpty
+	case db.KindBlob:
+		return cellBlob
+	default:
+		return cellPlain
+	}
+}
+
+// diffSide is one pane's rows as cellDiffAt sees them. count is the number of
+// real rows: rows may hold a "(no rows)" sentinel beyond it. kinds runs
+// parallel to rows and is nil when the result carries none.
+type diffSide struct {
+	rows  []table.Row
+	kinds [][]db.Kind
+	count int
+}
+
+// kindAt reports the kind of a displayed cell, and false when this side has
+// no kind for it.
+func (s diffSide) kindAt(row, col int) (db.Kind, bool) {
+	if row >= len(s.kinds) || col >= len(s.kinds[row]) {
+		return 0, false
+	}
+	return s.kinds[row][col], true
+}
+
 // cellDiffAt compares a single cell by row/column index between two panes.
 // Rows are aligned by position (same index), not by key.
-func cellDiffAt(rowIdx, colIdx int, selfRows []table.Row, selfCount int, otherRows []table.Row, otherCount int) bool {
+func cellDiffAt(rowIdx, colIdx int, self, other diffSide) bool {
 	if rowIdx < 0 || colIdx < 0 {
 		return false
 	}
 	// No backing row (e.g. "(no rows)" sentinel): don't highlight.
-	if rowIdx >= selfCount {
+	if rowIdx >= self.count {
 		return false
 	}
 
-	selfRow := selfRows[rowIdx]
+	selfRow := self.rows[rowIdx]
 	selfHas := colIdx < len(selfRow)
 
 	// Other side has no row at this index: highlight existing cells only.
-	if rowIdx >= otherCount {
+	if rowIdx >= other.count {
 		return selfHas
 	}
 
-	otherRow := otherRows[rowIdx]
+	otherRow := other.rows[rowIdx]
 	otherHas := colIdx < len(otherRow)
 	if selfHas != otherHas {
 		return selfHas
@@ -181,35 +230,38 @@ func cellDiffAt(rowIdx, colIdx int, selfRows []table.Row, selfCount int, otherRo
 	if !selfHas {
 		return false
 	}
-	return selfRow[colIdx] != otherRow[colIdx]
+	if selfRow[colIdx] != otherRow[colIdx] {
+		return true
+	}
+	// Same display string. Only when both sides know the kind can they be
+	// told apart — SQL NULL against the text "NULL", say. A side without
+	// kinds gives no evidence either way, and guessing would highlight cells
+	// that may well be equal.
+	sk, sok := self.kindAt(rowIdx, colIdx)
+	ok, ook := other.kindAt(rowIdx, colIdx)
+	return sok && ook && classOf(sk) != classOf(ok)
 }
 
 func (m *model) activeCellDiff(rowIdx, colIdx int) bool {
 	if m.pinned == nil {
 		return false
 	}
-	return cellDiffAt(
-		rowIdx,
-		colIdx,
-		m.displayRows,
-		len(m.lastResult.Rows),
-		m.pinned.displayRows,
-		len(m.pinned.result.Rows),
-	)
+	return cellDiffAt(rowIdx, colIdx, m.activeDiffSide(), m.pinned.diffSide())
 }
 
 func (m *model) pinnedCellDiff(rowIdx, colIdx int) bool {
 	if m.pinned == nil {
 		return false
 	}
-	return cellDiffAt(
-		rowIdx,
-		colIdx,
-		m.pinned.displayRows,
-		len(m.pinned.result.Rows),
-		m.displayRows,
-		len(m.lastResult.Rows),
-	)
+	return cellDiffAt(rowIdx, colIdx, m.pinned.diffSide(), m.activeDiffSide())
+}
+
+func (m *model) activeDiffSide() diffSide {
+	return diffSide{rows: m.displayRows, kinds: m.displayKinds, count: len(m.lastResult.Rows)}
+}
+
+func (p *pinnedPane) diffSide() diffSide {
+	return diffSide{rows: p.displayRows, kinds: p.displayKinds, count: len(p.result.Rows)}
 }
 
 // pinnedVisibleColumnRange returns the visible column range for the pinned pane.
@@ -270,8 +322,12 @@ func (m *model) togglePinnedSort() {
 		p.sortCol = p.colCursor
 		p.sortDir = sortAsc
 	}
-	// Re-sort and rebuild displayRows
-	sorted := sortedRows(p.result.Rows, p.sortCol, p.sortDir)
+	// Re-sort and rebuild displayRows, with the kinds in the same order.
+	sorted, kinds := p.result.Rows, p.result.Kinds
+	if order := sortedOrder(p.result.Rows, p.sortCol, p.sortDir); order != nil {
+		sorted, kinds = permute(sorted, order), permute(kinds, order)
+	}
+	p.displayKinds = kinds
 	p.displayRows = make([]table.Row, 0, len(sorted))
 	for _, row := range sorted {
 		p.displayRows = append(p.displayRows, table.Row(row))

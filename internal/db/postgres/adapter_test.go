@@ -173,9 +173,9 @@ func TestWithParam_ParseErrorRedactsPassword(t *testing.T) {
 }
 
 func TestIntegration(t *testing.T) {
-	dsn := os.Getenv("ASQL_POSTGRES_DSN")
+	dsn := os.Getenv("ASQL_TEST_POSTGRES_DSN")
 	if dsn == "" {
-		t.Skip("ASQL_POSTGRES_DSN not set, skipping PostgreSQL integration tests")
+		t.Skip("ASQL_TEST_POSTGRES_DSN not set, skipping PostgreSQL integration tests")
 	}
 
 	a, err := Open(dsn)

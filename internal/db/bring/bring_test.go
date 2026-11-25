@@ -341,11 +341,9 @@ func TestMaterialize_FailureLeavesNoOrphanedTable(t *testing.T) {
 }
 
 func TestOpen_ConnectionSurvivesBeyondDefaultLifetime(t *testing.T) {
-	// sqlite.NewAdapter (used by Open) applies a 5-minute connection
-	// lifetime intended for file-based databases. For this private
-	// ":memory:" database, database/sql closing the connection to
-	// "refresh" it would destroy all brought tables. Open must disable
-	// the lifetime so the connection — and the data in it — survives.
+	// For this private ":memory:" database, database/sql closing the
+	// connection to "refresh" it would destroy all brought tables, so the
+	// connection must carry no lifetime.
 	conn, adapter, err := Open()
 	if err != nil {
 		t.Fatalf("Open: %v", err)

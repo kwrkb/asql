@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -88,6 +87,10 @@ type connSwitchedMsg struct {
 	conn      int    // index Prepare opened; activated only if seq still matches
 	err       error
 	reExecute bool
+	// query is what x re-executes on arrival: the editor's content when the
+	// switch was chosen. The editor stays live while Prepare runs, so reading
+	// it on arrival would send whatever was typed in the meantime.
+	query string
 }
 
 type statsComputedMsg struct {
@@ -159,6 +162,7 @@ type model struct {
 	cachedColWidths  []int       // cached column widths (recomputed only when result changes)
 	cachedCellWidths []int       // widest cell per column of lastResult; a sort reuses it
 	displayRows      []table.Row // sorted rows for windowing source
+	displayKinds     [][]db.Kind // Kinds in displayRows order; nil when the result has none
 	lastVisStart     int         // cached visible range start for rebuild optimization
 	lastVisEnd       int         // cached visible range end for rebuild optimization
 	lastColCursor    int         // colCursor at last rebuild (header highlight follows it)
@@ -193,6 +197,16 @@ func (m model) CloseAll() {
 	if m.connMgr != nil {
 		m.connMgr.CloseAll()
 	}
+}
+
+// WithLoadErrors records that snippets.yaml or profiles.yaml could not be
+// read. The lists passed to NewModel are then empty stand-ins rather than the
+// files' content, and saving them would overwrite the file and lose every
+// entry, so the overlays refuse to save while the error is set.
+func (m model) WithLoadErrors(snippetErr, profileErr error) model {
+	m.snippetSt.loadErr = snippetErr
+	m.profileSt.loadErr = profileErr
+	return m
 }
 
 // NewModel builds the TUI model. readonly marks the session as read-only: the
@@ -478,11 +492,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.setStatus(status, false)
 		m.closeProfileOverlayIfOpen()
-		if msg.reExecute {
-			query := strings.TrimSpace(m.textarea.Value())
-			if query != "" {
-				return m, tea.Batch(m.reloadTables(), m.prepareAndExecuteQuery(query))
-			}
+		if msg.reExecute && msg.query != "" {
+			return m, tea.Batch(m.reloadTables(), m.prepareAndExecuteQuery(msg.query))
 		}
 		return m, m.reloadTables()
 	case bringDoneMsg:
@@ -566,7 +577,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			// The gather is incomplete; resuming would fetch the rest and
 			// hit the same error. The next Tab starts over from what landed.
-			m.completion.pendingPrefix = ""
+			m.completion.pending, m.completion.pendingPrefix = false, ""
 			m.colCacheTrim()
 			return m, nil
 		}

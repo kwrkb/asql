@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kwrkb/asql/internal/db"
+	"github.com/kwrkb/asql/internal/profile"
 	"github.com/kwrkb/asql/internal/ui/table"
 )
 
@@ -768,5 +769,60 @@ func TestDetailMode_LongValuesFitTheScreen(t *testing.T) {
 				t.Errorf("the cursor field %q is not on screen:\n%s", label, ansi.Strip(view))
 			}
 		})
+	}
+}
+
+// The AI error comes from the endpoint's response body, so it must reach the
+// terminal through sanitize like every other externally sourced string.
+func TestAIOverlayErrorIsSanitized(t *testing.T) {
+	m := newTestModel()
+	m.mode = aiMode
+	m.aiSt.input = textinput.New()
+	m.aiSt.err = "API error 400: bad\x1b]0;pwned\x07 \x1b[31mred"
+	out := m.renderWithAIOverlay("")
+	if strings.Contains(out, "\x1b]") || strings.Contains(out, "\x07") {
+		t.Errorf("AI error reached the terminal unsanitized: %q", out)
+	}
+}
+
+// x re-executes the query that was in the editor when the switch was chosen.
+// The editor stays live while Prepare runs, and a statement typed in that
+// window must not be what runs against the new connection.
+func TestSwitchReExecutesTheQueryChosenWith(t *testing.T) {
+	m := newTestModel()
+	m.connMgr = newConnManager("base", "base.db", &stubAdapter{}, false)
+	m.connMgr.Register("other", "other.db", &stubAdapter{})
+	m.textarea.SetValue("SELECT 1")
+
+	next, cmd := m.switchProfile(profile.Profile{Name: "other", DSN: "other.db"}, true)
+	sm := next.(model)
+	msg := cmd().(connSwitchedMsg)
+	if msg.query != "SELECT 1" {
+		t.Fatalf("connSwitchedMsg.query = %q, want the editor content at selection", msg.query)
+	}
+
+	sm.textarea.SetValue("DELETE FROM t")
+	applied, _ := sm.Update(msg)
+	am := applied.(model)
+	if len(am.queryHistory) == 0 || am.queryHistory[len(am.queryHistory)-1] != "SELECT 1" {
+		t.Errorf("history = %q, want SELECT 1 to be what ran", am.queryHistory)
+	}
+}
+
+// Picking the connection already active while another switch is in flight
+// must cancel that switch, or it lands later and moves the user off the
+// connection they just chose.
+func TestChoosingTheActiveConnectionSupersedesAPendingSwitch(t *testing.T) {
+	m := newTestModel()
+	m.connMgr = newConnManager("base", "base.db", &stubAdapter{}, false)
+	m.connMgr.Register("other", "other.db", &stubAdapter{})
+
+	started, cmd := m.switchProfile(profile.Profile{Name: "other", DSN: "other.db"}, false)
+	pending := cmd().(connSwitchedMsg)
+
+	next, _ := started.(model).switchProfile(profile.Profile{Name: "base", DSN: "base.db"}, false)
+	late, _ := next.(model).Update(pending)
+	if got := late.(model).connMgr.ActiveName(); got != "base" {
+		t.Errorf("active connection = %q after the superseded switch landed, want base", got)
 	}
 }
