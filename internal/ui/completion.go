@@ -223,7 +223,7 @@ func (m *model) triggerCompletion() tea.Cmd {
 		if tableName != "" {
 			cols, cmd := m.getOrFetchColumns(tableName)
 			if cmd != nil {
-				m.completion.pendingPrefix = prefix
+				m.completion.pending, m.completion.pendingPrefix = true, prefix
 				return cmd
 			}
 			candidates = filterByPrefix(cols, filterPrefix)
@@ -243,10 +243,10 @@ func (m *model) triggerCompletion() tea.Cmd {
 	}
 
 	if fetchCmd != nil {
-		m.completion.pendingPrefix = prefix
+		m.completion.pending, m.completion.pendingPrefix = true, prefix
 		return fetchCmd
 	}
-	m.completion.pendingPrefix = ""
+	m.completion.pending, m.completion.pendingPrefix = false, ""
 
 	if len(candidates) == 0 {
 		return nil
@@ -271,12 +271,12 @@ func (m *model) triggerCompletion() tea.Cmd {
 // fetch delivered, even when there are more of them than the cache keeps.
 func (m *model) resumeCompletion() tea.Cmd {
 	defer m.colCacheTrim()
-	if m.mode != insertMode || m.completion.pendingPrefix == "" {
+	if m.mode != insertMode || !m.completion.pending {
 		return nil
 	}
 	prefix, _ := wordAtCursor(m.textarea.Value(), m.textarea.Line(), m.cursorRuneCol())
 	if prefix != m.completion.pendingPrefix {
-		m.completion.pendingPrefix = ""
+		m.completion.pending, m.completion.pendingPrefix = false, ""
 		return nil
 	}
 	return m.triggerCompletion()

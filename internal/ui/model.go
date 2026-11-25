@@ -576,7 +576,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			// The gather is incomplete; resuming would fetch the rest and
 			// hit the same error. The next Tab starts over from what landed.
-			m.completion.pendingPrefix = ""
+			m.completion.pending, m.completion.pendingPrefix = false, ""
 			m.colCacheTrim()
 			return m, nil
 		}

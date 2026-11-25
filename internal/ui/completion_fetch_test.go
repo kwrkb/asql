@@ -181,3 +181,25 @@ func TestAllColumnsCompletion_CancelledWhenAbandoned(t *testing.T) {
 		t.Errorf("editor = %q, want %q: the abandoned batch's late message killed the completion the user asked for", got, "SELECT zvalue")
 	}
 }
+
+// An empty prefix ("SELECT " then Tab) is a real completion request: on a
+// cache miss the fetch must resume it, not mistake "" for "nothing pending"
+// and drop it — which left the first Tab doing nothing.
+func TestAllColumnsCompletion_EmptyPrefixResumesAfterFetch(t *testing.T) {
+	m, _ := newCompletionModel(t, 2)
+	m.textarea.SetValue("SELECT ")
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if cmd == nil {
+		t.Fatal("first Tab on a cold cache should start a column fetch")
+	}
+	rm := drain(t, next, cmd, 4)
+
+	// Every table holds only zvalue, so the single candidate is inserted.
+	if got := rm.textarea.Value(); got != "SELECT zvalue" {
+		t.Fatalf("editor = %q after the fetch, want %q", got, "SELECT zvalue")
+	}
+	if rm.completion.pending {
+		t.Error("completion still marked pending after it ran")
+	}
+}

@@ -79,7 +79,12 @@ type completionState struct {
 	prefix        string
 	colCache      map[string][]string
 	colOrder      []string // LRU order: most recently used at end
-	pendingPrefix string   // prefix when async fetch was initiated (empty = no pending)
+	// pending marks a completion an async column fetch interrupted, and
+	// pendingPrefix is the prefix it was asked for. They are separate because
+	// "" is a legitimate prefix ("SELECT " then Tab), so the prefix alone
+	// cannot also mean "nothing pending".
+	pending       bool
+	pendingPrefix string
 	// fetchCancel abandons the outstanding batch column fetch, if any. See
 	// cancelColumnsFetch.
 	fetchCancel context.CancelFunc
