@@ -47,6 +47,10 @@ type snippetState struct {
 	naming   bool
 	input    textinput.Model
 	prevMode mode // mode before entering snippet naming via Ctrl+S
+	// loadErr is why snippets.yaml could not be read at startup. While it is
+	// set, items is not the file's content, so saving would replace the file
+	// with that empty stand-in: every save path refuses instead.
+	loadErr error
 }
 
 // profileState holds state for the connection-profile overlay (PROFILE mode).
@@ -55,6 +59,9 @@ type profileState struct {
 	cursor int
 	naming bool
 	input  textinput.Model
+	// loadErr is why profiles.yaml could not be read at startup; see
+	// snippetState.loadErr.
+	loadErr error
 }
 
 // histSearchState holds state for the history search overlay (SEARCH mode).

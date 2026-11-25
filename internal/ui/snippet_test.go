@@ -354,3 +354,50 @@ func TestSnippet_DeleteSaveFailureKeepsList(t *testing.T) {
 		}
 	}
 }
+
+// When snippets.yaml failed to load, items is an empty stand-in. Every save
+// path must refuse, or the first save replaces the user's file with it.
+func TestSnippet_LoadErrorBlocksEverySave(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+	path := filepath.Join(tmp, "asql", "snippets.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	broken := []byte("- name: a\n  query: [unterminated\n")
+	if err := os.WriteFile(path, broken, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, loadErr := snippet.Load()
+	if loadErr == nil {
+		t.Fatal("fixture should fail to parse")
+	}
+
+	steps := map[string]func(m *model) (tea.Model, tea.Cmd){
+		"Ctrl+S": func(m *model) (tea.Model, tea.Cmd) { return m.enterSnippetNamingMode() },
+		"a":      func(m *model) (tea.Model, tea.Cmd) { return m.updateSnippet(runeMsg("a")) },
+		"d":      func(m *model) (tea.Model, tea.Cmd) { return m.updateSnippet(runeMsg("d")) },
+	}
+	for name, step := range steps {
+		t.Run(name, func(t *testing.T) {
+			m := newSnippetTestModel([]snippet.Snippet{{Name: "x", Query: "SELECT 1"}})
+			m.snippetSt.loadErr = loadErr
+			m.textarea.SetValue("SELECT 2")
+			next, _ := step(m)
+			rm := next.(model)
+			if rm.snippetSt.naming {
+				t.Error("entered naming despite the load error")
+			}
+			if !rm.statusError {
+				t.Errorf("status = %q, want an error", rm.statusText)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != string(broken) {
+				t.Errorf("snippets.yaml was rewritten:\n%s", got)
+			}
+		})
+	}
+}

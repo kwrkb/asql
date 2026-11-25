@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -240,5 +242,46 @@ func TestProfile_DeleteUpdatesState(t *testing.T) {
 	}
 	if result.profileSt.items[0].Name != "a" || result.profileSt.items[1].Name != "c" {
 		t.Errorf("unexpected remaining profiles: %+v", result.profileSt.items)
+	}
+}
+
+// See TestSnippet_LoadErrorBlocksEverySave.
+func TestProfile_LoadErrorBlocksEverySave(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+	path := filepath.Join(tmp, "asql", "profiles.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	broken := []byte("- name: prod\n  dsn: [unterminated\n")
+	if err := os.WriteFile(path, broken, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, loadErr := profile.Load()
+	if loadErr == nil {
+		t.Fatal("fixture should fail to parse")
+	}
+
+	for _, key := range []string{"a", "d"} {
+		t.Run(key, func(t *testing.T) {
+			m := newProfileModel([]profile.Profile{{Name: "x", DSN: "x.db"}})
+			m.rawDSN = "other.db"
+			m.profileSt.loadErr = loadErr
+			next, _ := m.Update(runeMsg(key))
+			rm := next.(model)
+			if rm.profileSt.naming {
+				t.Error("entered naming despite the load error")
+			}
+			if !rm.statusError {
+				t.Errorf("status = %q, want an error", rm.statusText)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != string(broken) {
+				t.Errorf("profiles.yaml was rewritten:\n%s", got)
+			}
+		})
 	}
 }

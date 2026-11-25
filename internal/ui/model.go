@@ -195,6 +195,16 @@ func (m model) CloseAll() {
 	}
 }
 
+// WithLoadErrors records that snippets.yaml or profiles.yaml could not be
+// read. The lists passed to NewModel are then empty stand-ins rather than the
+// files' content, and saving them would overwrite the file and lose every
+// entry, so the overlays refuse to save while the error is set.
+func (m model) WithLoadErrors(snippetErr, profileErr error) model {
+	m.snippetSt.loadErr = snippetErr
+	m.profileSt.loadErr = profileErr
+	return m
+}
+
 // NewModel builds the TUI model. readonly marks the session as read-only: the
 // adapter passed in is expected to already be guarded, and every connection
 // opened later is guarded too.

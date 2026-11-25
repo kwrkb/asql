@@ -34,6 +34,9 @@ func (m model) updateProfile(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			moveCursor(&m.profileSt.cursor, len(m.profileSt.items), -1)
 		case "d":
 			if len(m.profileSt.items) > 0 && m.profileSt.cursor < len(m.profileSt.items) {
+				if !m.profilesSavable() {
+					return m, nil
+				}
 				// Build the new list in a fresh slice: appending onto
 				// items[:cursor] would left-shift the shared backing array
 				// before Save runs, corrupting items when Save fails.
@@ -55,6 +58,9 @@ func (m model) updateProfile(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m.switchProfile(m.profileSt.items[m.profileSt.cursor], true)
 			}
 		case "a":
+			if !m.profilesSavable() {
+				return m, nil
+			}
 			if m.rawDSN == "" {
 				m.setStatus("No active connection to save", true)
 				return m, nil
@@ -78,6 +84,16 @@ func (m model) updateProfile(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// profilesSavable reports whether profiles.yaml may be written, and says why
+// not on the status bar when it may not.
+func (m *model) profilesSavable() bool {
+	if m.profileSt.loadErr == nil {
+		return true
+	}
+	m.setStatus(fmt.Sprintf("Not saved: profiles.yaml could not be loaded (%v); fix the file and restart", m.profileSt.loadErr), true)
+	return false
 }
 
 func (m model) updateProfileNaming(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
