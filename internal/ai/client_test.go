@@ -1,10 +1,12 @@
 package ai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -88,6 +90,39 @@ func TestGenerateSQL(t *testing.T) {
 		_, err := client.GenerateSQL(context.Background(), "sqlite", "", "test")
 		if err == nil {
 			t.Error("expected error for 500 status")
+		}
+	})
+
+	t.Run("oversized response is rejected", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Valid JSON whose content alone exceeds the cap, so only the
+			// size check can reject it.
+			w.Write([]byte(`{"choices":[{"message":{"content":"`))
+			w.Write(bytes.Repeat([]byte("x"), maxResponseBytes))
+			w.Write([]byte(`"}}]}`))
+		}))
+		defer srv.Close()
+
+		client := NewClient(srv.URL, "model", "")
+		_, err := client.GenerateSQL(context.Background(), "sqlite", "", "test")
+		if err == nil || !strings.Contains(err.Error(), "exceeds") {
+			t.Errorf("err = %v, want a size error", err)
+		}
+	})
+
+	t.Run("oversized error response reports only the status", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadGateway)
+			w.Write([]byte(`{"error":{"message":"`))
+			w.Write(bytes.Repeat([]byte("x"), maxResponseBytes))
+			w.Write([]byte(`"}}`))
+		}))
+		defer srv.Close()
+
+		client := NewClient(srv.URL, "model", "")
+		_, err := client.GenerateSQL(context.Background(), "sqlite", "", "test")
+		if err == nil || err.Error() != "API error 502" {
+			t.Errorf("err = %v, want %q", err, "API error 502")
 		}
 	})
 

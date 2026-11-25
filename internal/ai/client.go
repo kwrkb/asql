@@ -11,6 +11,11 @@ import (
 	"time"
 )
 
+// maxResponseBytes caps how much of a response body is read. A chat
+// completion carrying one SQL statement is a few KiB; the cap only has to stop
+// a misbehaving endpoint from streaming an unbounded body into memory.
+const maxResponseBytes = 1 << 20
+
 type Client struct {
 	endpoint   string
 	model      string
@@ -81,12 +86,18 @@ Schema:
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	// Read one byte past the cap so an over-long body is detectable rather
+	// than silently truncated into something that might still parse.
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return "", fmt.Errorf("reading response: %w", err)
 	}
+	tooLarge := len(respBody) > maxResponseBytes
 
 	if resp.StatusCode != http.StatusOK {
+		if tooLarge {
+			return "", fmt.Errorf("API error %d", resp.StatusCode)
+		}
 		// Try to extract a structured error message (OpenAI-compatible format).
 		var errResp struct {
 			Error struct {
@@ -101,6 +112,10 @@ Schema:
 			return "", fmt.Errorf("API error %d: %s", resp.StatusCode, msg)
 		}
 		return "", fmt.Errorf("API error %d", resp.StatusCode)
+	}
+
+	if tooLarge {
+		return "", fmt.Errorf("response exceeds %d bytes", maxResponseBytes)
 	}
 
 	var chatResp chatResponse
