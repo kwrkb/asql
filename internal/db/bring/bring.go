@@ -40,13 +40,9 @@ func Open() (*sql.DB, *sqlite.Adapter, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	// sqlite.NewAdapter sets a 5-minute connection lifetime, which is safe
-	// for file-based databases (reopening the file preserves data) but
-	// fatal here: this is a private ":memory:" database that exists only
-	// inside this one connection. Closing it to "refresh" the pool would
-	// destroy every brought table, so disable the lifetime for this
-	// connection specifically.
-	conn.SetConnMaxLifetime(0)
+	// sqlite.NewAdapter keeps its single connection open for good, which is
+	// what this private ":memory:" database depends on: it exists only inside
+	// that one connection, and closing it would destroy every brought table.
 	return conn, adapter, nil
 }
 
