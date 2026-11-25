@@ -120,6 +120,7 @@ func (m model) switchToBring() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.connMgr.IsActive(bringDSN) {
+		m.switchSeq++ // supersede a switch in flight; see switchProfile
 		m.setStatus("Already on local (bring) connection", false)
 		return m, nil
 	}

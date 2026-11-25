@@ -129,6 +129,10 @@ func (m model) updateProfileNaming(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m model) switchProfile(p profile.Profile, reExecute bool) (tea.Model, tea.Cmd) {
 	if m.connMgr.IsActive(p.DSN) {
+		// Choosing the current connection is the user's latest word, so it
+		// supersedes a switch still in flight: without the bump that switch
+		// lands afterwards and moves them off the connection they just chose.
+		m.switchSeq++
 		m.mode = normalMode
 		m.textarea.Blur()
 		if reExecute {
@@ -145,11 +149,15 @@ func (m model) switchProfile(p profile.Profile, reExecute bool) (tea.Model, tea.
 	name := p.Name
 	dsn := p.DSN
 	cm := m.connMgr
+	var query string
+	if reExecute {
+		query = strings.TrimSpace(m.textarea.Value())
+	}
 	m.switchSeq++
 	seq := m.switchSeq
 	return m, func() tea.Msg {
 		idx, err := cm.Prepare(name, dsn)
-		return connSwitchedMsg{seq: seq, conn: idx, err: err, reExecute: reExecute}
+		return connSwitchedMsg{seq: seq, conn: idx, err: err, reExecute: reExecute, query: query}
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -88,6 +87,10 @@ type connSwitchedMsg struct {
 	conn      int    // index Prepare opened; activated only if seq still matches
 	err       error
 	reExecute bool
+	// query is what x re-executes on arrival: the editor's content when the
+	// switch was chosen. The editor stays live while Prepare runs, so reading
+	// it on arrival would send whatever was typed in the meantime.
+	query string
 }
 
 type statsComputedMsg struct {
@@ -488,11 +491,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.setStatus(status, false)
 		m.closeProfileOverlayIfOpen()
-		if msg.reExecute {
-			query := strings.TrimSpace(m.textarea.Value())
-			if query != "" {
-				return m, tea.Batch(m.reloadTables(), m.prepareAndExecuteQuery(query))
-			}
+		if msg.reExecute && msg.query != "" {
+			return m, tea.Batch(m.reloadTables(), m.prepareAndExecuteQuery(msg.query))
 		}
 		return m, m.reloadTables()
 	case bringDoneMsg:
