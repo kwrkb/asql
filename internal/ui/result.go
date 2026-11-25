@@ -193,12 +193,15 @@ func (m *model) toggleSort() {
 
 func (m *model) applySortedResult() {
 	result := m.lastResult
-	result.Rows = sortedRows(m.lastResult.Rows, m.sortCol, m.sortDir)
 	// Sorting is display-only: m.lastResult keeps its original row order, so its
 	// Rows and Kinds stay aligned for consumers that need them (bring, stats).
-	// This local copy is reordered, so drop its Kinds rather than leave them
-	// pointing at the wrong rows — see the invariant on db.QueryResult.Kinds.
-	result.Kinds = nil
+	// This local copy is reordered, and its Kinds go through the same order —
+	// see the invariant on db.QueryResult.Kinds — so the compare diff can still
+	// read the kind of each displayed cell.
+	if order := sortedOrder(m.lastResult.Rows, m.sortCol, m.sortDir); order != nil {
+		result.Rows = permute(m.lastResult.Rows, order)
+		result.Kinds = permute(m.lastResult.Kinds, order)
+	}
 	m.applyResultWithSort(result)
 	m.table.GotoTop()
 }
@@ -218,6 +221,7 @@ func (m *model) applyResultWithSort(result db.QueryResult) {
 		// Message-only result: set directly without windowing
 		m.cachedColWidths = nil
 		m.displayRows = nil
+		m.displayKinds = nil
 		columns := []table.Column{{Title: "Result", Width: max(m.width-6, 20)}}
 		rows := []table.Row{{sanitize(result.Message)}}
 		m.table.SetRows([]table.Row{})
@@ -259,6 +263,7 @@ func (m *model) applyResultWithSort(result db.QueryResult) {
 	}
 
 	// Save displayRows for windowing
+	m.displayKinds = result.Kinds
 	m.displayRows = make([]table.Row, 0, len(result.Rows))
 	for _, row := range result.Rows {
 		m.displayRows = append(m.displayRows, table.Row(row))

@@ -25,7 +25,15 @@ func computeColumnStats(result db.QueryResult) []columnStat {
 			s.Type = result.ColumnTypes[i]
 		}
 
-		distinct := make(map[string]struct{})
+		// Distinct values are keyed by display string and cellClass, so an
+		// empty string and the text `""`, or a blob and text spelling the
+		// same hex, count as two values. Without kinds the class is always
+		// cellPlain and this is the display string alone.
+		type distinctKey struct {
+			val   string
+			class cellClass
+		}
+		distinct := make(map[distinctKey]struct{})
 		firstNonNull := true
 
 		for rowIdx, row := range result.Rows {
@@ -41,7 +49,7 @@ func computeColumnStats(result db.QueryResult) []columnStat {
 				s.NullCnt++
 				continue
 			}
-			distinct[val] = struct{}{}
+			distinct[distinctKey{val, classOf(result.KindAt(rowIdx, i))}] = struct{}{}
 			if firstNonNull {
 				s.Min = val
 				s.Max = val

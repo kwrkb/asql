@@ -162,6 +162,7 @@ type model struct {
 	cachedColWidths  []int       // cached column widths (recomputed only when result changes)
 	cachedCellWidths []int       // widest cell per column of lastResult; a sort reuses it
 	displayRows      []table.Row // sorted rows for windowing source
+	displayKinds     [][]db.Kind // Kinds in displayRows order; nil when the result has none
 	lastVisStart     int         // cached visible range start for rebuild optimization
 	lastVisEnd       int         // cached visible range end for rebuild optimization
 	lastColCursor    int         // colCursor at last rebuild (header highlight follows it)

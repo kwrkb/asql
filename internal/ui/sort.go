@@ -191,8 +191,33 @@ func smartCompare(a, b string) int {
 // sortedRows returns a sorted copy of rows by the given column index and order.
 // The original slice is not modified.
 func sortedRows(rows [][]string, col int, dir sortOrder) [][]string {
-	if dir == sortNone || len(rows) == 0 {
+	order := sortedOrder(rows, col, dir)
+	if order == nil {
 		return rows
+	}
+	return permute(rows, order)
+}
+
+// permute returns s reordered so that element i is s[order[i]]. It returns nil
+// when s does not line up with order — a nil Kinds, for one — which is the
+// safe answer for data that has to stay parallel to the rows.
+func permute[T any](s []T, order []int) []T {
+	if len(s) != len(order) {
+		return nil
+	}
+	out := make([]T, len(order))
+	for i, j := range order {
+		out[i] = s[j]
+	}
+	return out
+}
+
+// sortedOrder returns the row indices of rows in sorted order, or nil when no
+// sort applies. Callers that carry data parallel to the rows (Kinds) apply the
+// same order to it with permute.
+func sortedOrder(rows [][]string, col int, dir sortOrder) []int {
+	if dir == sortNone || len(rows) == 0 {
+		return nil
 	}
 
 	// Decorate: parse each cell once, not once per comparison.
@@ -229,11 +254,11 @@ func sortedRows(rows [][]string, col int, dir sortOrder) [][]string {
 		return c < 0
 	})
 
-	result := make([][]string, len(rows))
+	order := make([]int, len(keys))
 	for i, k := range keys {
-		result[i] = rows[k.idx]
+		order[i] = k.idx
 	}
-	return result
+	return order
 }
 
 // sortIndicator returns the sort direction symbol for a column header.

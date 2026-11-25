@@ -17,7 +17,7 @@ func TestCellDiffAt(t *testing.T) {
 	t.Run("same value is not diff", func(t *testing.T) {
 		self := []table.Row{{"1", "alice"}}
 		other := []table.Row{{"1", "alice"}}
-		if cellDiffAt(0, 0, self, 1, other, 1) {
+		if cellDiffAt(0, 0, diffSide{rows: self, count: 1}, diffSide{rows: other, count: 1}) {
 			t.Fatal("expected no diff for identical cells")
 		}
 	})
@@ -25,7 +25,7 @@ func TestCellDiffAt(t *testing.T) {
 	t.Run("different value is diff", func(t *testing.T) {
 		self := []table.Row{{"1"}}
 		other := []table.Row{{"2"}}
-		if !cellDiffAt(0, 0, self, 1, other, 1) {
+		if !cellDiffAt(0, 0, diffSide{rows: self, count: 1}, diffSide{rows: other, count: 1}) {
 			t.Fatal("expected diff for different values")
 		}
 	})
@@ -33,7 +33,7 @@ func TestCellDiffAt(t *testing.T) {
 	t.Run("extra row highlights existing side", func(t *testing.T) {
 		self := []table.Row{{"1"}}
 		var other []table.Row
-		if !cellDiffAt(0, 0, self, 1, other, 0) {
+		if !cellDiffAt(0, 0, diffSide{rows: self, count: 1}, diffSide{rows: other, count: 0}) {
 			t.Fatal("expected diff for row existing only on self side")
 		}
 	})
@@ -41,18 +41,54 @@ func TestCellDiffAt(t *testing.T) {
 	t.Run("extra column highlights existing side", func(t *testing.T) {
 		self := []table.Row{{"1", "x"}}
 		other := []table.Row{{"1"}}
-		if !cellDiffAt(0, 1, self, 1, other, 1) {
+		if !cellDiffAt(0, 1, diffSide{rows: self, count: 1}, diffSide{rows: other, count: 1}) {
 			t.Fatal("expected diff for column existing only on self side")
 		}
-		if cellDiffAt(0, 1, other, 1, self, 1) {
+		if cellDiffAt(0, 1, diffSide{rows: other, count: 1}, diffSide{rows: self, count: 1}) {
 			t.Fatal("expected no diff for missing cell on self side")
+		}
+	})
+
+	t.Run("SQL NULL against the text NULL is diff", func(t *testing.T) {
+		rows := []table.Row{{"NULL"}}
+		self := diffSide{rows: rows, kinds: [][]db.Kind{{db.KindNull}}, count: 1}
+		other := diffSide{rows: rows, kinds: [][]db.Kind{{db.KindText}}, count: 1}
+		if !cellDiffAt(0, 0, self, other) || !cellDiffAt(0, 0, other, self) {
+			t.Fatal("expected diff between SQL NULL and the string NULL")
+		}
+	})
+
+	t.Run("empty string against a zero-length blob is diff", func(t *testing.T) {
+		rows := []table.Row{{db.EmptySentinel}}
+		self := diffSide{rows: rows, kinds: [][]db.Kind{{db.KindEmpty}}, count: 1}
+		other := diffSide{rows: rows, kinds: [][]db.Kind{{db.KindBlob}}, count: 1}
+		if !cellDiffAt(0, 0, self, other) {
+			t.Fatal("expected diff between an empty string and an empty blob")
+		}
+	})
+
+	t.Run("same text across INTEGER and TEXT columns is not diff", func(t *testing.T) {
+		rows := []table.Row{{"1"}}
+		self := diffSide{rows: rows, kinds: [][]db.Kind{{db.KindInt}}, count: 1}
+		other := diffSide{rows: rows, kinds: [][]db.Kind{{db.KindText}}, count: 1}
+		if cellDiffAt(0, 0, self, other) {
+			t.Fatal("a type difference alone must not highlight: cross-DB compare would light up")
+		}
+	})
+
+	t.Run("a side without kinds gives no evidence", func(t *testing.T) {
+		rows := []table.Row{{"NULL"}}
+		self := diffSide{rows: rows, kinds: [][]db.Kind{{db.KindNull}}, count: 1}
+		other := diffSide{rows: rows, count: 1}
+		if cellDiffAt(0, 0, self, other) {
+			t.Fatal("expected no diff when one side carries no kinds")
 		}
 	})
 
 	t.Run("sentinel row is not highlighted", func(t *testing.T) {
 		self := []table.Row{{"(no rows)", ""}}
 		other := []table.Row{{"1", "alice"}}
-		if cellDiffAt(0, 0, self, 0, other, 1) {
+		if cellDiffAt(0, 0, diffSide{rows: self, count: 0}, diffSide{rows: other, count: 1}) {
 			t.Fatal("expected no diff for sentinel row without backing data")
 		}
 	})
@@ -352,5 +388,47 @@ func TestComparePane_NarrowResizeRestoresFocus(t *testing.T) {
 	}
 	if !rm.table.Focused() {
 		t.Fatal("active table left unfocused after resize closed compare")
+	}
+}
+
+// Sorting a pane used to drop its kinds, so a sorted compare fell back to the
+// display string and missed SQL NULL against the text "NULL". The kinds have
+// to follow the rows through the sort on both sides.
+func TestCompareDiffSeesKindsThroughASort(t *testing.T) {
+	m := newTestModel()
+	pinned := db.QueryResult{
+		Columns: []string{"id", "v"},
+		Rows:    [][]string{{"2", "x"}, {"1", "NULL"}},
+		Kinds:   [][]db.Kind{{db.KindInt, db.KindText}, {db.KindInt, db.KindNull}},
+	}
+	m.applyResult(pinned)
+	m.sortCol, m.sortDir = 0, sortAsc
+	m.applySortedResult()
+	m.pinned = m.pinCurrentResult()
+
+	active := db.QueryResult{
+		Columns: []string{"id", "v"},
+		Rows:    [][]string{{"2", "x"}, {"1", "NULL"}},
+		Kinds:   [][]db.Kind{{db.KindInt, db.KindText}, {db.KindInt, db.KindText}},
+	}
+	m.applyResult(active)
+	m.sortCol, m.sortDir = 0, sortAsc
+	m.applySortedResult()
+
+	// Row 0 after the sort is id=1: NULL on the left, "NULL" on the right.
+	if !m.activeCellDiff(0, 1) || !m.pinnedCellDiff(0, 1) {
+		t.Error("sorted compare missed SQL NULL against the text NULL")
+	}
+	if m.activeCellDiff(1, 1) {
+		t.Error("identical cells highlighted after the sort")
+	}
+
+	// Re-sorting the pinned pane must carry its kinds along too.
+	m.pinned.colCursor = 0
+	m.togglePinnedSort() // asc -> desc
+	m.togglePinnedSort() // desc -> none: back to query order, id=2 first
+	m.togglePinnedSort() // none -> asc
+	if !m.pinnedCellDiff(0, 1) {
+		t.Error("pinned re-sort dropped the kinds")
 	}
 }

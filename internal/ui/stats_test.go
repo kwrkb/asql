@@ -631,3 +631,26 @@ func TestComputeColumnStats_MinMaxIndependentOfRowOrder(t *testing.T) {
 		}
 	}
 }
+
+// Distinct used to key on the display string alone, so an empty string and
+// the text `""` (both drawn `""`) counted as one value.
+func TestComputeColumnStats_DistinctSeparatesKinds(t *testing.T) {
+	result := db.QueryResult{
+		Columns: []string{"v"},
+		Rows:    [][]string{{db.EmptySentinel}, {db.EmptySentinel}, {"ab"}, {"ab"}},
+		Kinds:   [][]db.Kind{{db.KindEmpty}, {db.KindText}, {db.KindText}, {db.KindBlob}},
+	}
+	if got := computeColumnStats(result)[0].Distinct; got != 4 {
+		t.Errorf("Distinct = %d, want 4", got)
+	}
+
+	// Integer and text spelling the same value stay one observation.
+	result = db.QueryResult{
+		Columns: []string{"v"},
+		Rows:    [][]string{{"1"}, {"1"}},
+		Kinds:   [][]db.Kind{{db.KindInt}, {db.KindText}},
+	}
+	if got := computeColumnStats(result)[0].Distinct; got != 1 {
+		t.Errorf("Distinct = %d, want 1", got)
+	}
+}
