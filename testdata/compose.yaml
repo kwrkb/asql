@@ -13,12 +13,13 @@
 # layer 2 is *absent* on: they sit behind the "extra" profile, so a bare `up`
 # — which is what the workflow runs — leaves them alone, and their tests skip
 # unless their DSN is set. Ports are shifted off the defaults so a developer's
-# own server keeps its port.
+# own server keeps its port, and bound to 127.0.0.1: the credentials are in
+# this file, so a server listening on every interface is open to the network.
 services:
   mysql:
     image: mysql:8.4
     ports:
-      - "13306:3306"
+      - "127.0.0.1:13306:3306"
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: asql
@@ -33,7 +34,7 @@ services:
   postgres:
     image: postgres:17
     ports:
-      - "15432:5432"
+      - "127.0.0.1:15432:5432"
     environment:
       POSTGRES_DB: asql
       POSTGRES_USER: asql
@@ -51,7 +52,7 @@ services:
     profiles: ["extra"]
     image: mariadb:10.11
     ports:
-      - "13307:3306"
+      - "127.0.0.1:13307:3306"
     environment:
       MARIADB_ROOT_PASSWORD: root
       MARIADB_DATABASE: asql
@@ -75,7 +76,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "16432:5432"
+      - "127.0.0.1:16432:5432"
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
