@@ -195,10 +195,18 @@ func (m model) CloseAll() {
 	}
 }
 
+// SavedItems holds the startup snapshots and any errors that prevent saving them.
+type SavedItems struct {
+	Profiles       []profile.Profile
+	ProfileLoadErr error
+	Snippets       []snippet.Snippet
+	SnippetLoadErr error
+}
+
 // NewModel builds the TUI model. readonly marks the session as read-only: the
 // adapter passed in is expected to already be guarded, and every connection
 // opened later is guarded too.
-func NewModel(adapter db.DBAdapter, dbPath string, rawDSN string, connName string, aiClient *ai.Client, snippets []snippet.Snippet, profiles []profile.Profile, readonly bool) model {
+func NewModel(adapter db.DBAdapter, dbPath string, rawDSN string, connName string, aiClient *ai.Client, saved SavedItems, readonly bool) model {
 	input := textarea.New()
 
 	placeholder := db.Placeholder(adapter.Type())
@@ -295,12 +303,14 @@ func NewModel(adapter db.DBAdapter, dbPath string, rawDSN string, connName strin
 			spinner: sp,
 		},
 		snippetSt: snippetState{
-			items: snippets,
-			input: snippetIn,
+			items:   saved.Snippets,
+			loadErr: saved.SnippetLoadErr,
+			input:   snippetIn,
 		},
 		profileSt: profileState{
-			items: profiles,
-			input: profileIn,
+			items:   saved.Profiles,
+			loadErr: saved.ProfileLoadErr,
+			input:   profileIn,
 		},
 		histSearch: histSearchState{
 			input: histSearchIn,

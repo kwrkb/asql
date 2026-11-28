@@ -184,6 +184,10 @@ func main() {
 
 	profiles, profileErr := profile.Load()
 	if profileErr != nil {
+		if saveProfileName != "" {
+			fmt.Fprintf(os.Stderr, "failed to save profile: %v\n", profileErr)
+			os.Exit(1)
+		}
 		fmt.Fprintf(os.Stderr, "warning: failed to load profiles: %v\n", profileErr)
 	}
 
@@ -244,7 +248,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "warning: failed to load snippets: %v\n", snippetErr)
 	}
 
-	m := ui.NewModel(adapter, displayDSN, dbPath, connName, aiClient, snippets, profiles, flags.readonly)
+	m := ui.NewModel(adapter, displayDSN, dbPath, connName, aiClient, ui.SavedItems{
+		Profiles:       profiles,
+		ProfileLoadErr: profileErr,
+		Snippets:       snippets,
+		SnippetLoadErr: snippetErr,
+	}, flags.readonly)
 	defer m.CloseAll()
 
 	program := tea.NewProgram(m, tea.WithAltScreen())
