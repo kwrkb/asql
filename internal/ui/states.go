@@ -43,6 +43,7 @@ type aiState struct {
 // snippetState holds state for the saved-query overlay (SNIPPET mode).
 type snippetState struct {
 	items    []snippet.Snippet
+	loadErr  error
 	cursor   int
 	naming   bool
 	input    textinput.Model
@@ -51,10 +52,11 @@ type snippetState struct {
 
 // profileState holds state for the connection-profile overlay (PROFILE mode).
 type profileState struct {
-	items  []profile.Profile
-	cursor int
-	naming bool
-	input  textinput.Model
+	items   []profile.Profile
+	loadErr error
+	cursor  int
+	naming  bool
+	input   textinput.Model
 }
 
 // histSearchState holds state for the history search overlay (SEARCH mode).

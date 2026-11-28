@@ -92,7 +92,11 @@ func (m model) updateProfileNaming(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		newProfiles := profile.Upsert(m.profileSt.items, profile.Profile{Name: name, DSN: m.rawDSN})
-		if err := profile.Save(newProfiles); err != nil {
+		err := m.profileSt.loadErr
+		if err == nil {
+			err = profile.Save(newProfiles)
+		}
+		if err != nil {
 			m.setStatus(fmt.Sprintf("Save failed: %v", err), true)
 			m.profileSt.naming = false
 			m.profileSt.input.Blur()

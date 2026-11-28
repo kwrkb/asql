@@ -120,7 +120,11 @@ func (m model) updateSnippetNaming(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		newSnippets := append(append([]snippet.Snippet{}, m.snippetSt.items...), snippet.Snippet{Name: name, Query: query})
-		if err := snippet.Save(newSnippets); err != nil {
+		err := m.snippetSt.loadErr
+		if err == nil {
+			err = snippet.Save(newSnippets)
+		}
+		if err != nil {
 			m.setStatus(fmt.Sprintf("Save failed: %v", err), true)
 			m.snippetSt.naming = false
 			m.snippetSt.input.Blur()

@@ -238,6 +238,44 @@ func TestSnippetNaming_SaveSuccess(t *testing.T) {
 	}
 }
 
+func TestSnippetNaming_PreservesUnreadableSnippets(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	dir = filepath.Join(dir, "asql")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "snippets.yaml")
+	original := "- name: existing\n  query: [\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snippets, loadErr := snippet.Load()
+	if loadErr == nil {
+		t.Fatal("expected snippets to fail to load")
+	}
+
+	m := NewModel(&stubAdapter{}, "test.db", "test.db", "test", nil, SavedItems{
+		Snippets: snippets, SnippetLoadErr: loadErr,
+	}, false)
+	m.textarea.SetValue("SELECT 1")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	naming := updated.(model)
+	naming.snippetSt.input.SetValue("new")
+	updated, _ = naming.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	result := updated.(model)
+	if !result.statusError || len(result.snippetSt.items) != 0 || result.mode != insertMode {
+		t.Fatalf("expected a save failure in insert mode with no new snippets, got %q in %s with %d snippets", result.statusText, result.mode, len(result.snippetSt.items))
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatal("save replaced the unreadable snippets")
+	}
+}
+
 func TestSnippetNaming_SaveReturnsToPrevMode(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 

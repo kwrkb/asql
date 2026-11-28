@@ -376,7 +376,7 @@ func TestBring_ProvenanceKeepsTheSourceConnectionAfterASwitch(t *testing.T) {
 	}
 	t.Cleanup(func() { adapter.Close() })
 
-	m := NewModel(adapter, "prod.db", "prod.db", "prod", nil, nil, nil, false)
+	m := NewModel(adapter, "prod.db", "prod.db", "prod", nil, SavedItems{}, false)
 	accepted, _ := m.Update(queryExecutedMsg{
 		seq:    m.querySeq,
 		query:  "SELECT id FROM users",
@@ -435,7 +435,7 @@ func TestBring_ProvenanceForSidebarInsertedQuery(t *testing.T) {
 	}
 	t.Cleanup(func() { adapter.Close() })
 
-	m := NewModel(adapter, "test.db", "test.db", "src", nil, nil, nil, false)
+	m := NewModel(adapter, "test.db", "test.db", "src", nil, SavedItems{}, false)
 	m.mode = sidebarMode
 	m.sidebar.open = true
 	m.sidebar.tables = []string{"users"}

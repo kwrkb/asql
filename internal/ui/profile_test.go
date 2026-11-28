@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -173,6 +175,44 @@ func TestProfileNaming_EmptyEnterNoop(t *testing.T) {
 	result := updated.(model)
 	if !result.profileSt.naming {
 		t.Error("naming should remain true when Enter with empty name")
+	}
+}
+
+func TestProfileNaming_PreservesUnreadableProfiles(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	dir = filepath.Join(dir, "asql")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "profiles.yaml")
+	original := "- name: existing\n  dsn: [\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	profiles, loadErr := profile.Load()
+	if loadErr == nil {
+		t.Fatal("expected profiles to fail to load")
+	}
+
+	m := NewModel(&stubAdapter{}, "test.db", "test.db", "test", nil, SavedItems{
+		Profiles: profiles, ProfileLoadErr: loadErr,
+	}, false)
+	m.mode = profileMode
+	updated, _ := m.Update(runeMsg("a"))
+	naming := updated.(model)
+	naming.profileSt.input.SetValue("new")
+	updated, _ = naming.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	result := updated.(model)
+	if !result.statusError || len(result.profileSt.items) != 0 {
+		t.Fatalf("expected a save failure and no new profiles, got %q and %d profiles", result.statusText, len(result.profileSt.items))
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatal("save replaced the unreadable profiles")
 	}
 }
 
